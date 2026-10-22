@@ -119,6 +119,10 @@ function commandSound(cmd: Command, r: unknown): void {
     case 'redo':
       if (r) sound.play('undo');
       break;
+    case 'end':
+      // 마우스를 떼면 연달아 짓는 동안 오르던 글리산도를 끈다
+      sound.endStroke();
+      break;
   }
 }
 

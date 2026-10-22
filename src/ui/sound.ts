@@ -19,6 +19,12 @@ interface Settings {
 
 const clamp01 = (v: number) => Math.min(1, Math.max(0, v));
 
+/** 셰퍼드 음에서 x옥타브(0 ~ SHEPARD_OCTAVES) 높이의 음이 얼마나 크게 들리는지: 가운데가 1, 양 끝은 거의 0 */
+function shepardWeight(x: number): number {
+  const d = (x - SHEPARD_MID) / SHEPARD_WIDTH;
+  return Math.exp(-0.5 * d * d);
+}
+
 function loadSettings(): Settings {
   const d: Settings = { volume: 0.6, music: 0.35, muted: false };
   try {
@@ -35,15 +41,23 @@ function loadSettings(): Settings {
 
 /** 같은 소리를 이 간격(초)보다 빨리 다시 내지 않는다 (컨베이어를 끌면 칸마다 명령이 나오므로) */
 const GAP: Partial<Record<SoundName, number>> = { place: 0.05, remove: 0.05, rotate: 0.04, error: 0.4, chat: 0.2 };
-/** 연달아 지을 때 한 번에 한 칸씩 올라가는 음 (한 옥타브 안의 반음 수, 5음계). 다섯 번이면 한 옥타브를 돌아 처음 음으로 */
-const PLACE_STEPS = [0, 2, 4, 7, 9];
-/** 짓는 소리 사이가 이보다(초) 벌어지면 처음 음으로 돌아간다 */
+/** 짓는 소리 사이가 이보다(초) 벌어지면 처음 음(도)으로 돌아간다 (글리산도가 도는 중에는 그대로) */
 const PLACE_STREAK_GAP = 0.5;
-/** 셰퍼드 음: 가장 낮은 음(C2), 옥타브 겹 수, 가장 크게 들리는 높이(Hz), 소리가 퍼진 폭(옥타브) */
-const SHEPARD_LOW = 65.41;
-const SHEPARD_OCTAVES = 7;
-const SHEPARD_CENTER = 520;
+/**
+ * 셰퍼드 음·셰퍼드-리셋 글리산도: 한 옥타브씩 떨어진 사인파 SHEPARD_OCTAVES개를 겹친다.
+ * 가장 낮은 음(C1)에서 4옥타브 위(가운데, 약 523Hz = 도)가 가장 크고 위아래 끝으로 갈수록 사라진다.
+ * 높이 0이 도라서 배경음(C장조)과 어울린다.
+ */
+const SHEPARD_LOW = 32.7;
+const SHEPARD_OCTAVES = 8;
+const SHEPARD_MID = SHEPARD_OCTAVES / 2;
 const SHEPARD_WIDTH = 1;
+/** 드래그로 연달아 짓는 동안 글리산도가 올라가는 속도 (옥타브/초) */
+const GLISS_RATE = 0.5;
+/** 글리산도 음량 (톡 소리 뒤에 깔리는 정도) */
+const GLISS_VOL = 0.05;
+/** 짓는 톡 소리의 계단: 한 옥타브를 같은 간격으로 몇 칸에 나누는지 (6 = 온음) */
+const PLACE_STEPS_PER_OCTAVE = 6;
 
 // ───────────────────────── 배경음 악보 ─────────────────────────
 
@@ -71,9 +85,24 @@ class Sound {
   private last = new Map<SoundName, number>();
   /** 연달아 철거할 때 소리 높이를 조금씩 바꿔 기계음처럼 들리지 않게 */
   private step = 0;
-  /** 연달아 지은 횟수와 마지막으로 짓는 소리를 낸 시각 (음이 한 칸씩 올라가게) */
-  private placeStreak = 0;
+  /** 마지막으로 짓는 소리를 낸 시각, 이번 드래그(마우스를 누르고 뗄 때까지)에서 지은 수 */
   private lastPlaceAt = -1;
+  private strokePlaced = 0;
+  /**
+   * 셰퍼드 음의 높이 (옥타브 단위, 정수 부분은 들리지 않음)와 그 높이였던 시각. 연달아 짓는 동안 GLISS_RATE로 계속 오르고,
+   * 짓는 톡 소리는 이 높이를 온음 계단에 맞춰 낸다
+   */
+  private pitch = 0;
+  private pitchAt = 0;
+  /** 글리산도: 켜진 시각과 그때의 높이, 소리 마디들, 갱신 타이머 */
+  private gliss: {
+    at: number;
+    from: number;
+    gain: GainNode;
+    parts: { osc: OscillatorNode; gain: GainNode; x: number }[];
+    timer: number;
+    last: number;
+  } | null = null;
   /** 배경음: 다음 8분음표를 낼 시각(AudioContext 시간)과 지금까지 몇 번째 8분음표인지 */
   private nextNote = 0;
   private noteNo = 0;
@@ -180,11 +209,18 @@ class Sound {
     const out = this.out;
     switch (name) {
       case 'place': {
-        // 나무 블록을 내려놓는 "톡". 연달아 지으면 5음계를 따라 한 칸씩 끝없이 올라가는 것처럼 들리고 (셰퍼드 음),
-        // 잠깐 멈추면 처음 음으로
-        this.placeStreak = t - this.lastPlaceAt < PLACE_STREAK_GAP ? this.placeStreak + 1 : 0;
+        // 나무 블록을 내려놓는 "톡". 끌어서 연달아 지으면 뒤에서 셰퍼드-리셋 글리산도가 일정한 속도로 끝없이 오르고,
+        // 톡 소리는 그 높이를 온음 계단에 맞춰 낸다 (마우스를 빨리 끌든 천천히 끌든 같은 빠르기로 오르게)
+        // 따로따로 빠르게 클릭할 때도 같은 빠르기로 오르고, 잠깐 쉬면 도부터
+        if (this.gliss) this.pitch = this.glissPitch(t);
+        else if (t - this.lastPlaceAt >= PLACE_STREAK_GAP) this.pitch = 0;
+        else this.pitch += GLISS_RATE * (t - this.pitchAt);
+        this.pitchAt = t;
         this.lastPlaceAt = t;
-        this.shepard(out, PLACE_STEPS[this.placeStreak % PLACE_STEPS.length], t, 0.12, 0.22);
+        // 클릭 한 번에 하나만 지을 때는 글리산도 없이 톡만 (한 드래그에서 두 번째로 지을 때 켠다)
+        if (++this.strokePlaced >= 2 && !this.gliss) this.startGliss(ctx, t);
+        const step = Math.round(this.pitch * PLACE_STEPS_PER_OCTAVE);
+        this.shepard(out, (step * 12) / PLACE_STEPS_PER_OCTAVE, t, 0.12, 0.22);
         this.noise(ctx, t, 0.03, 0.12, 2400);
         break;
       }
@@ -307,19 +343,96 @@ class Sound {
   }
 
   /**
-   * 셰퍼드 음: 한 옥타브씩 떨어진 사인파 여러 개를, 가운데 높이(SHEPARD_CENTER)가 가장 크고 위아래로 갈수록 작게 섞는다.
+   * 셰퍼드 음: 한 옥타브씩 떨어진 사인파 여러 개를, 가운데 높이(SHEPARD_MID 옥타브 위, 약 523Hz)가 가장 크고 위아래로 갈수록 작게 섞는다.
    * 음을 한 칸씩 올리면 맨 위 음은 작아지며 사라지고 맨 아래에서 새 음이 커져서, 한 옥타브를 돌아 처음 음이 되어도
    * 계속 올라가는 것처럼 들린다. semis = 한 옥타브 안의 높이 (반음 수)
    */
   private shepard(out: AudioNode, semis: number, at: number, len: number, vol: number): void {
     for (let k = 0; k < SHEPARD_OCTAVES; k++) {
-      const f = SHEPARD_LOW * 2 ** (k + semis / 12);
-      const d = Math.log2(f / SHEPARD_CENTER) / SHEPARD_WIDTH;
-      const w = Math.exp(-0.5 * d * d);
+      const x = (k + semis / 12) % SHEPARD_OCTAVES;
+      const w = shepardWeight(x);
       if (w < 0.02) continue;
+      const f = SHEPARD_LOW * 2 ** x;
       // 반음만큼 살짝 내려앉아 "톡" 느낌은 남긴다 (한 옥타브씩 미끄러지면 옆 음과 겹쳐 올라가는 느낌이 깨짐)
       this.tone(out, 'sine', f, f * 0.94, at, len, vol * w);
     }
+  }
+
+  // ───────────────────────── 셰퍼드-리셋 글리산도 ─────────────────────────
+
+  /** 글리산도가 at 시각에 와 있는 높이 (옥타브) */
+  private glissPitch(at: number): number {
+    const g = this.gliss!;
+    return g.from + GLISS_RATE * Math.max(0, at - g.at);
+  }
+
+  /**
+   * 셰퍼드-리셋 글리산도 켜기: 옥타브 간격 사인파들이 같은 속도로 함께 미끄러져 오른다.
+   * 맨 위로 간 음은 작아져 사라지고 그 자리에서 맨 아래로 돌아와 다시 커지므로, 끝없이 오르는 것처럼 들린다.
+   * 주파수·음량은 25ms마다 앞으로의 값을 예약해 매끄럽게 잇는다
+   */
+  private startGliss(ctx: AudioContext, at: number): void {
+    const gain = ctx.createGain();
+    gain.gain.setValueAtTime(0, at);
+    gain.gain.linearRampToValueAtTime(1, at + 0.3);
+    gain.connect(this.out!);
+    const parts = [];
+    for (let k = 0; k < SHEPARD_OCTAVES; k++) {
+      const x = (k + this.pitch) % SHEPARD_OCTAVES;
+      const osc = ctx.createOscillator();
+      const g = ctx.createGain();
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(SHEPARD_LOW * 2 ** x, at);
+      g.gain.setValueAtTime(GLISS_VOL * shepardWeight(x), at);
+      osc.connect(g).connect(gain);
+      osc.start(at);
+      parts.push({ osc, gain: g, x });
+    }
+    this.gliss = { at, from: this.pitch, gain, parts, timer: 0, last: at };
+    this.gliss.timer = window.setInterval(() => this.updateGliss(), 25);
+  }
+
+  private updateGliss(): void {
+    const ctx = this.ctx!;
+    const g = this.gliss;
+    if (!g) return;
+    // 마우스를 누른 채 멈춰 있으면 (끝 명령이 안 와도) 저절로 끈다
+    if (ctx.currentTime - this.lastPlaceAt > 1.5) return this.endStroke();
+    // 예약 시각은 늘 앞으로만 (타이머가 늦게 불려도 겹치지 않게)
+    const at = Math.max(g.last + 0.005, ctx.currentTime + 0.03);
+    g.last = at;
+    const pitch = this.glissPitch(at);
+    g.parts.forEach((p, k) => {
+      const x = (((k + pitch) % SHEPARD_OCTAVES) + SHEPARD_OCTAVES) % SHEPARD_OCTAVES;
+      const f = SHEPARD_LOW * 2 ** x;
+      const vol = GLISS_VOL * shepardWeight(x);
+      if (x < p.x) {
+        // 맨 위에서 맨 아래로 돌아옴: 거의 안 들리는 곳이라 높이를 바로 바꾼다
+        p.osc.frequency.setValueAtTime(f, at);
+        p.gain.gain.setValueAtTime(vol, at);
+      } else {
+        p.osc.frequency.linearRampToValueAtTime(f, at);
+        p.gain.gain.linearRampToValueAtTime(vol, at);
+      }
+      p.x = x;
+    });
+  }
+
+  /** 마우스를 떼면 (드래그 한 번이 끝나면) 글리산도를 부드럽게 끈다. 높이는 그대로 두어 바로 이어 지으면 이어서 */
+  endStroke(): void {
+    this.strokePlaced = 0;
+    const g = this.gliss;
+    const ctx = this.ctx;
+    if (!g || !ctx) return;
+    this.gliss = null;
+    clearInterval(g.timer);
+    const at = Math.max(g.last, ctx.currentTime);
+    this.pitch = g.from + GLISS_RATE * Math.max(0, at - g.at);
+    this.pitchAt = at;
+    g.gain.gain.cancelScheduledValues(at);
+    g.gain.gain.setValueAtTime(g.gain.gain.value, at);
+    g.gain.gain.linearRampToValueAtTime(0, at + 0.4);
+    for (const p of g.parts) p.osc.stop(at + 0.45);
   }
 
   /** 종소리: 기본음 + 배음 두 개가 천천히 사라짐 */

@@ -789,10 +789,23 @@ h3 small {
 }
 #info .stop {
   display: flex;
-  align-items: center;
-  gap: 3px;
+  flex-direction: column;
+  gap: 2px;
   padding: 1px 2px;
   border: 2px solid transparent;
+}
+#info .stop .line {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+}
+/* 둘째 줄(싣기·내리기, 실을 짐)은 차례 번호 오른쪽에 맞춘다 */
+#info .stop .sub {
+  padding-left: 15px;
+}
+#info .stop .sub select[data-act='stop-item'] {
+  flex: 1;
+  min-width: 0;
 }
 #info .stop.now {
   border-color: #d9a441;

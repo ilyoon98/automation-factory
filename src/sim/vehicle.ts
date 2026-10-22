@@ -7,10 +7,11 @@ import type { ItemId } from '../data/items';
  */
 export type VehicleState = 'to-load' | 'loading' | 'to-unload' | 'unloading';
 
-/** 노선의 정류장 하나: 어느 정류장(건물 id, 0 = 안 정함)에서 싣는지 내리는지 */
+/** 노선의 정류장 하나: 어느 정류장(건물 id, 0 = 안 정함)에서 싣는지 내리는지, 싣는 곳이면 실을 아이템 (없으면 아무거나) */
 export interface RouteStop {
   id: number;
   act: 'load' | 'unload';
+  item?: ItemId | null;
 }
 
 /** 노선에 넣을 수 있는 정류장 수 */
@@ -83,8 +84,6 @@ export class Vehicle {
   lapUnloaded = 0;
   /** 배터리 (kJ, 0 ~ World.truckBattery()) */
   battery = TRUCK.battery;
-  /** 싣는 아이템 (null = 정류장에 있는 아무거나) */
-  filter: ItemId | null = null;
 
   constructor(
     readonly id: number,
@@ -103,6 +102,27 @@ export class Vehicle {
 
   get unloadId(): number {
     return this.stops.find((s) => s.act === 'unload')?.id ?? 0;
+  }
+
+  /**
+   * 트럭 전체의 싣는 아이템 (예전처럼 트럭마다 하나): 읽으면 첫 싣는 곳의 것, 쓰면 모든 싣는 곳에.
+   * 싣는 곳마다 다르게 하려면 stops[i].item
+   */
+  get filter(): ItemId | null {
+    return this.stops.find((s) => s.act === 'load')?.item ?? null;
+  }
+
+  set filter(item: ItemId | null) {
+    for (const s of this.stops) {
+      if (s.act !== 'load') continue;
+      if (item) s.item = item;
+      else delete s.item;
+    }
+  }
+
+  /** 지금 정류장에서 실을 아이템 (null = 아무거나) */
+  get stopItem(): ItemId | null {
+    return this.stops[this.stop]?.item ?? null;
   }
 
   /** 지금 가거나 서 있는 정류장 (건물 id) */

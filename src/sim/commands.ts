@@ -1,5 +1,5 @@
 import { crossesRoad, isBeltType, type BuildingType } from '../data/buildings';
-import type { ItemId } from '../data/items';
+import { ITEMS, type ItemId } from '../data/items';
 import { pasteBlueprint, type Blueprint } from './blueprint';
 import type { Building, StationMode } from './building';
 import type { Dir } from './dir';
@@ -174,7 +174,8 @@ function routeStops(raw: unknown): RouteStop[] | null {
   const stops: RouteStop[] = [];
   for (const s of raw as Partial<RouteStop>[]) {
     if (!Number.isInteger(s?.id) || (s.act !== 'load' && s.act !== 'unload')) return null;
-    stops.push({ id: s.id!, act: s.act });
+    if (s.item != null && !Object.hasOwn(ITEMS, s.item)) return null;
+    stops.push({ id: s.id!, act: s.act, ...(s.act === 'load' && s.item ? { item: s.item } : {}) });
   }
   return stops;
 }

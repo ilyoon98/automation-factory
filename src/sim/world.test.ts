@@ -1818,6 +1818,61 @@ describe('차량 운송', () => {
       expect(v.stops[1].id).toBe(again.id);
       expect(w.routeOk(v)).toBe(true);
     });
+
+    it('싣는 곳마다 실을 짐을 따로 고를 수 있다', () => {
+      const { w, a, b, a2 } = routeWorld(30);
+      a.inBuf.set('stone', 30);
+      a2.inBuf.set('stone', 30);
+      a2.inBuf.set('iron-ore', 30);
+      const v = w.buildTruck(a)!;
+      w.setStops(v, [
+        { id: a.id, act: 'load', item: 'iron-ore' },
+        { id: a2.id, act: 'load', item: 'stone' },
+        { id: b.id, act: 'unload' },
+      ]);
+      const [iron, stone] = [w.stockOf('iron-ore'), w.stockOf('stone')];
+      run(w, 60);
+      // A에서는 철광석만, A2에서는 돌만
+      expect(w.stockOf('iron-ore') - iron).toBe(30);
+      expect(w.stockOf('stone') - stone).toBe(30);
+      expect(a.inBuf.get('stone')).toBe(30);
+      expect(a2.inBuf.get('iron-ore')).toBe(30);
+      // 같은 노선으로 한 대 더 · 저장해도 곳마다의 짐이 그대로
+      expect(w.cloneTruck(v)!.stops.map((st) => st.item ?? null)).toEqual(['iron-ore', 'stone', null]);
+      const copy = World.deserialize(JSON.parse(JSON.stringify(w.serialize()))).vehicles.get(v.id)!;
+      expect(copy.stops.map((st) => st.item ?? null)).toEqual(['iron-ore', 'stone', null]);
+      // 예전 버전이 읽는 트럭 전체 짐 = 첫 싣는 곳의 것
+      expect(copy.filter).toBe('iron-ore');
+    });
+
+    it('노선 명령: 없는 아이템이면 무시하고, 내리는 곳의 짐은 버린다', () => {
+      const { w, a, b } = routeWorld();
+      const v = w.buildTruck(a)!;
+      const before = v.stops.map((st) => ({ ...st }));
+      for (const item of ['nope', 'toString']) {
+        applyCommand(w, 0, {
+          t: 'route',
+          id: v.id,
+          stops: [
+            { id: a.id, act: 'load', item },
+            { id: b.id, act: 'unload' },
+          ],
+        } as never);
+      }
+      expect(v.stops).toEqual(before);
+      applyCommand(w, 0, {
+        t: 'route',
+        id: v.id,
+        stops: [
+          { id: a.id, act: 'load', item: 'stone' },
+          { id: b.id, act: 'unload', item: 'stone' },
+        ],
+      });
+      expect(v.stops).toEqual([
+        { id: a.id, act: 'load', item: 'stone' },
+        { id: b.id, act: 'unload' },
+      ]);
+    });
   });
 
   describe('배터리 (전기 트럭)', () => {

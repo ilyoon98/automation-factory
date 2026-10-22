@@ -22,7 +22,7 @@ import { VERSION } from '../version';
 import { STATUS_LABEL, type Building, type StationMode, type Status } from '../sim/building';
 import type { Exec } from '../sim/commands';
 import { DX, DY } from '../sim/dir';
-import { ROUTE_MAX, ROUTE_MIN, VEHICLE_STATUS_LABEL, type Vehicle, type VehicleStatus } from '../sim/vehicle';
+import { ROUTE_MAX, ROUTE_MIN, VEHICLE_STATUS_LABEL, type RouteStop, type Vehicle, type VehicleStatus } from '../sim/vehicle';
 import {
   PATCH_LOW_MIN,
   describeEdit,
@@ -289,17 +289,24 @@ export class UI {
       const sel = e.target as HTMLSelectElement;
       const v = this.selectedVehicle();
       if (v) {
-        // 노선 i번째 정류장 바꾸기. 정류장을 고르면 싣기·내리기는 그 정류장 종류로 맞춘다 (바꾸고 싶으면 옆에서)
+        // 노선 i번째 정류장 바꾸기. 정류장을 고르면 싣기·내리기는 그 정류장 종류로 맞춘다 (바꾸고 싶으면 아래 줄에서).
+        // 실을 짐은 싣는 곳에만 (내리기로 바꾸면 지운다)
         const i = Number(sel.dataset.i);
-        if (sel.dataset.act === 'stop-station' || sel.dataset.act === 'stop-act') {
+        const act = sel.dataset.act ?? '';
+        if (act === 'stop-station' || act === 'stop-act' || act === 'stop-item') {
           const stops = v.stops.map((st) => ({ ...st }));
-          if (sel.dataset.act === 'stop-station') {
+          const cur = stops[i];
+          let next: RouteStop = { ...cur };
+          if (act === 'stop-station') {
             const st = game.getWorld().buildings.get(Number(sel.value));
-            stops[i] = { id: Number(sel.value), act: st?.type === 'station' ? st.stationMode : stops[i].act };
-          } else stops[i].act = sel.value === 'unload' ? 'unload' : 'load';
+            next = { ...cur, id: Number(sel.value), act: st?.type === 'station' ? st.stationMode : cur.act };
+          }
+          if (act === 'stop-act') next = { ...cur, act: sel.value === 'unload' ? 'unload' : 'load' };
+          if (act === 'stop-item') next = { ...cur, item: (sel.value || null) as ItemId | null };
+          if (next.act === 'unload' || !next.item) delete next.item;
+          stops[i] = next;
           game.exec({ t: 'route', id: v.id, stops });
         }
-        if (sel.dataset.act === 'truck-filter') game.exec({ t: 'truck-filter', id: v.id, item: (sel.value || null) as ItemId | null });
         this.update();
         return;
       }
@@ -1094,7 +1101,7 @@ export class UI {
       : homes.length
         ? w.canBuildTruck(homes[0])
         : { ok: false, reason: '정류장을 먼저 골라 주세요' };
-    const key = `v${v.id}|${v.stops.map((st) => st.id + st.act).join(',')}|${v.filter}|${w.endlessLevel('endless-truck')}|${stations.map((s) => `${s.id}${s.stationMode}`).join(',')}|${clone.reason ?? ''}`;
+    const key = `v${v.id}|${v.stops.map((st) => `${st.id}${st.act}${st.item ?? ''}`).join(',')}|${w.endlessLevel('endless-truck')}|${stations.map((s) => `${s.id}${s.stationMode}`).join(',')}|${clone.reason ?? ''}`;
     if (key !== this.infoKey) {
       this.infoKey = key;
       const opt = (sel: number) =>
@@ -1110,22 +1117,28 @@ export class UI {
           <div class="route-head"><span>노선</span><span class="muted">위에서 아래로, 끝나면 처음으로</span></div>
           ${v.stops
             .map(
-              (st, i) => `<div class="stop" data-stop="${i}"><span class="no">${i + 1}</span>
-              <select data-act="stop-station" data-i="${i}">${opt(st.id)}</select>
-              <select data-act="stop-act" data-i="${i}" title="여기서 싣는지 내리는지">
-                <option value="load" ${st.act === 'load' ? 'selected' : ''}>싣기</option>
-                <option value="unload" ${st.act === 'unload' ? 'selected' : ''}>내리기</option></select>
-              <button data-act="stop-up" data-i="${i}" title="한 칸 앞으로" ${i === 0 ? 'disabled' : ''}>▲</button>
-              <button data-act="stop-remove" data-i="${i}" title="노선에서 빼기" ${v.stops.length <= ROUTE_MIN ? 'disabled' : ''}>×</button></div>`,
+              (st, i) => `<div class="stop" data-stop="${i}">
+              <div class="line"><span class="no">${i + 1}</span>
+                <select data-act="stop-station" data-i="${i}">${opt(st.id)}</select>
+                <button data-act="stop-up" data-i="${i}" title="한 칸 앞으로" ${i === 0 ? 'disabled' : ''}>▲</button>
+                <button data-act="stop-remove" data-i="${i}" title="노선에서 빼기" ${v.stops.length <= ROUTE_MIN ? 'disabled' : ''}>×</button></div>
+              <div class="line sub">
+                <select data-act="stop-act" data-i="${i}" title="여기서 싣는지 내리는지">
+                  <option value="load" ${st.act === 'load' ? 'selected' : ''}>싣기</option>
+                  <option value="unload" ${st.act === 'unload' ? 'selected' : ''}>내리기</option></select>
+                ${
+                  st.act === 'load'
+                    ? `<select data-act="stop-item" data-i="${i}" title="정류장에 여러 아이템이 섞여 있을 때 여기서 실을 것">
+                  <option value="" ${st.item ? '' : 'selected'}>아무거나</option>
+                  ${ITEM_IDS.filter((it) => it !== 'water')
+                    .map((it) => `<option value="${it}" ${it === st.item ? 'selected' : ''}>${ITEMS[it].name}</option>`)
+                    .join('')}</select>`
+                    : ''
+                }</div></div>`,
             )
             .join('')}
           <button data-act="stop-add" ${v.stops.length >= ROUTE_MAX ? 'disabled' : ''}>+ 정류장 더하기 <span class="muted">(최대 ${ROUTE_MAX}곳)</span></button>
         </div>
-        <label class="recipe" title="싣기 정류장에 여러 아이템이 섞여 있을 때 이 트럭이 실을 것">싣는 짐 <select data-act="truck-filter">
-          <option value="" ${v.filter ? '' : 'selected'}>아무거나</option>
-          ${ITEM_IDS.filter((i) => i !== 'water')
-            .map((i) => `<option value="${i}" ${i === v.filter ? 'selected' : ''}>${ITEMS[i].name}</option>`)
-            .join('')}</select></label>
         <div class="dyn"></div>
         <div class="actions">
           <button data-act="clone-truck" ${clone.ok ? '' : 'disabled'} title="${clone.ok ? '같은 노선을 도는 트럭을 하나 더' : (clone.reason ?? '')}">
@@ -1171,8 +1184,8 @@ export class UI {
         : `<div class="row"><span>운송량</span><b>분당 ${fmtNum(perMin)}개 <span class="muted">(${Math.round(v.lastTrip)}초에 ${v.lastLoad}개)</span></b></div>`,
     );
     const hint =
-      v.status === 'waiting' && v.filter
-        ? `이 트럭이 실을 짐(${ITEMS[v.filter].name})이 싣는 정류장에 없어요. 컨베이어로 넣거나 "싣는 짐"을 바꿔 주세요.`
+      v.status === 'waiting' && v.stopItem
+        ? `여기서 실을 짐(${ITEMS[v.stopItem].name})이 정류장에 없어요. 컨베이어로 넣거나 노선에서 이 정류장의 짐을 바꿔 주세요.`
         : VEHICLE_HINT[v.status];
     if (hint) lines.push(`<p class="muted">→ ${hint}</p>`);
     el.querySelector('.dyn')!.innerHTML = lines.join('');

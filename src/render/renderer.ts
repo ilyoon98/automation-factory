@@ -6,7 +6,7 @@ import {
   isBeltType,
   type BuildingType,
 } from '../data/buildings';
-import type { ItemId } from '../data/items';
+import { ITEMS, type ItemId } from '../data/items';
 import { RECIPES } from '../data/recipes';
 import type { Presence } from '../net/session';
 import type { Blueprint } from '../sim/blueprint';
@@ -845,7 +845,7 @@ export class Renderer {
     }
   }
 
-  /** 고른 트럭의 노선: 정류장마다 점선 테두리 + "1 싣기 · 3 내리기"처럼 차례와 할 일 (지금 가는 곳은 ▶), 지금 가는 길 */
+  /** 고른 트럭의 노선: 정류장마다 점선 테두리 + "1 싣기 철광석 · 3 내리기"처럼 차례와 할 일 (지금 가는 곳은 ▶), 지금 가는 길 */
   private drawRoute(world: World, v: Vehicle): void {
     const ctx = this.ctx;
     const cam = this.cam;
@@ -854,7 +854,8 @@ export class Renderer {
     const marks = new Map<number, { labels: string[]; act: 'load' | 'unload' }>();
     v.stops.forEach((s, i) => {
       const m = marks.get(s.id) ?? { labels: [], act: s.act };
-      m.labels.push(`${i === v.stop ? '▶' : ''}${i + 1} ${s.act === 'load' ? '싣기' : '내리기'}`);
+      const what = s.act === 'load' ? `싣기${s.item ? ` ${ITEMS[s.item].name}` : ''}` : '내리기';
+      m.labels.push(`${i === v.stop ? '▶' : ''}${i + 1} ${what}`);
       marks.set(s.id, m);
     });
     for (const [id, m] of marks) {

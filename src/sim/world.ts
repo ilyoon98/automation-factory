@@ -1984,10 +1984,8 @@ export class World {
     });
     if (i < 0) return null;
     const st = this.buildings.get(v.stops[i].id)!;
-    const n = this.spawnTruck(this.stationStops(st)[0], v.stops, i);
-    // 싣는 아이템도 같게
-    n.filter = v.filter;
-    return n;
+    // 노선을 베끼면 싣는 곳마다 고른 짐도 같다
+    return this.spawnTruck(this.stationStops(st)[0], v.stops, i);
   }
 
   /** 재료를 내고 tile 칸에 트럭을 놓는다 (확인은 부르는 쪽에서). 노선의 stop번째 정류장부터 */
@@ -2047,7 +2045,7 @@ export class World {
   private otherLoadReady(v: Vehicle): boolean {
     return v.stops.some((s, i) => {
       const st = this.buildings.get(s.id);
-      return i !== v.stop && s.act === 'load' && st?.type === 'station' && this.loadableItem(v, st) !== null;
+      return i !== v.stop && s.act === 'load' && st?.type === 'station' && this.loadableItem(st, s.item ?? null) !== null;
     });
   }
 
@@ -2056,7 +2054,7 @@ export class World {
     return v.stops.some((s, i) => i !== v.stop && s.act === act);
   }
 
-  /** 트럭이 실을 아이템 (null = 아무거나). 이미 실은 짐은 그대로 둔다 */
+  /** 트럭이 모든 싣는 곳에서 실을 아이템 (null = 아무거나). 이미 실은 짐은 그대로 둔다 */
   setTruckFilter(v: Vehicle, item: ItemId | null): void {
     v.filter = item;
     v.idle = 0;
@@ -2198,14 +2196,14 @@ export class World {
     }
   }
 
-  /** 정류장 st에서 트럭 v가 지금 실을 수 있는 아이템 (고른 짐이 있으면 그것만). 없으면 null */
-  private loadableItem(v: Vehicle, st: Building): ItemId | null {
-    if (v.filter) return (st.inBuf.get(v.filter) ?? 0) > 0 ? v.filter : null;
+  /** 정류장 st에서 실을 수 있는 아이템 (item을 골랐으면 그것만, null이면 아무거나). 없으면 null */
+  private loadableItem(st: Building, item: ItemId | null): ItemId | null {
+    if (item) return (st.inBuf.get(item) ?? 0) > 0 ? item : null;
     return firstItem(st.inBuf);
   }
 
   private canLoadNow(v: Vehicle, st: Building): boolean {
-    return v.load < TRUCK.capacity && this.loadableItem(v, st) !== null;
+    return v.load < TRUCK.capacity && this.loadableItem(st, v.stopItem) !== null;
   }
 
   /**
@@ -2218,7 +2216,7 @@ export class World {
     for (const o of this.vehicles.values()) {
       if (o === v || o.state !== 'loading' || o.stopId !== v.stopId) continue;
       // 서로 다른 아이템만 싣는 트럭끼리는 기다리지 않는다
-      if (o.filter && v.filter && o.filter !== v.filter) continue;
+      if (o.stopItem && v.stopItem && o.stopItem !== v.stopItem) continue;
       // 앞 트럭이 지금 실을 게 없으면(고른 짐이 없음) 뒤 트럭이 먼저 싣는다 (정류장이 막히지 않게)
       if (!this.canLoadNow(o, st)) continue;
       if (o.arrivedAt < v.arrivedAt || (o.arrivedAt === v.arrivedAt && o.id < v.id)) {
@@ -2229,7 +2227,7 @@ export class World {
     }
     const gap = 1 / TRUCK.transfer;
     v.timer = Math.min(gap, v.timer + DT);
-    const item = this.loadableItem(v, st);
+    const item = this.loadableItem(st, v.stopItem);
     if (item) {
       v.status = 'loading';
       v.idle = 0;
@@ -2501,7 +2499,11 @@ export class World {
       v.y = s.y;
       v.angle = s.angle;
       if (s.stops?.length) {
-        v.stops = s.stops.map((st) => ({ id: st.id, act: st.act === 'unload' ? 'unload' : 'load' }));
+        v.stops = s.stops.map((st) => ({
+          id: st.id,
+          act: st.act === 'unload' ? 'unload' : 'load',
+          ...(st.act !== 'unload' && st.item ? { item: st.item } : {}),
+        }));
         v.stop = Math.min(Math.max(0, s.stop ?? 0), v.stops.length - 1);
       } else {
         // 노선이 생기기 전 저장: 두 곳을 오가는 노선으로
@@ -2510,6 +2512,8 @@ export class World {
           { id: s.unload, act: 'unload' },
         ];
         v.stop = s.state === 'to-load' || s.state === 'loading' ? 0 : 1;
+        // 트럭마다 하나였던 싣는 짐
+        v.filter = s.filter ?? null;
       }
       v.cargo = new Map(s.cargo);
       v.state = s.state;
@@ -2517,7 +2521,6 @@ export class World {
       v.idle = s.idle;
       // 배터리가 생기기 전 저장이면 가득 찬 채로
       v.battery = s.battery ?? w.truckBattery();
-      v.filter = s.filter ?? null;
       w.vehicles.set(v.id, v);
       w.nextVehicleId = Math.max(w.nextVehicleId, v.id + 1);
     }
@@ -2609,8 +2612,8 @@ export class World {
     }
     for (const v of this.vehicles.values()) {
       h.num(v.id).num(v.x).num(v.y).num(v.tile).str(v.state).num(v.timer).num(v.idle).num(v.battery);
-      h.num(v.stop).str(v.filter ?? '');
-      for (const s of v.stops) h.num(s.id).str(s.act);
+      h.num(v.stop);
+      for (const s of v.stops) h.num(s.id).str(s.act).str(s.item ?? '');
       for (const [item, n] of v.cargo) h.str(item).num(n);
     }
     return h.value;
@@ -2693,7 +2696,7 @@ export interface SavedVehicle {
   idle: number;
   /** 배터리 (kJ). 없으면 가득 */
   battery?: number;
-  /** 싣는 아이템 (없으면 아무거나) */
+  /** 싣는 아이템 (없으면 아무거나). 노선이 생기기 전 버전이 읽는 값 = 첫 싣는 곳의 것 */
   filter?: ItemId;
 }
 

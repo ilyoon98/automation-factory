@@ -55,6 +55,9 @@ export interface GameApi {
   exportSave(): void;
   /** 파일 내용으로 공장을 바꾼다. 안 되면 이유, 되면 null */
   importSave(text: string): string | null;
+  /** 새 게임·불러오기 바로 전 공장으로 되돌린다 (지금 공장과 맞바꿈). 안 되면 이유 */
+  restoreBackup(): string | null;
+  readonly hasBackup: boolean;
   /** 화면 가운데를 그 칸 좌표로 옮긴다 */
   focus(x: number, y: number): void;
   /** 지도 켜고 끄기 */
@@ -194,6 +197,12 @@ export class UI {
       if (!confirm('지금 공장 대신 이 파일의 공장을 불러올까요? 지금 공장은 사라져요 (먼저 내보내 두세요).')) return;
       const err = game.importSave(await file.text());
       this.toast(err ?? '공장을 불러왔어요');
+      if (!err) $('help').hidden = true;
+    });
+    $('btn-restore').addEventListener('click', () => {
+      if (!confirm('새 게임·파일 불러오기 바로 전의 공장으로 돌아갈까요? 지금 공장은 맞바꿔 보관해서, 한 번 더 누르면 다시 돌아와요.')) return;
+      const err = game.restoreBackup();
+      this.toast(err ?? '바로 전 공장으로 돌아왔어요');
       if (!err) $('help').hidden = true;
     });
     $('btn-new').addEventListener('click', () => {
@@ -361,6 +370,7 @@ export class UI {
     $<HTMLButtonElement>('btn-save').disabled = !save;
     $<HTMLButtonElement>('btn-new').disabled = !save;
     $<HTMLButtonElement>('btn-import').disabled = !save;
+    $<HTMLButtonElement>('btn-restore').disabled = !save || !this.game.hasBackup;
     this.updatePlayers();
   }
 

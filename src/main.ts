@@ -121,6 +121,7 @@ const game: GameApi = {
       ui.toast('새 게임은 호스트만 시작할 수 있어요');
       return;
     }
+    backupWorld();
     world = generateWorld((Math.random() * 2 ** 31) | 0);
     game.input.selectedId = null;
     game.input.tool = null;
@@ -148,20 +149,63 @@ const game: GameApi = {
     } catch {
       return '공장 파일이 아니에요';
     }
-    if (!w.resItem.includes('water')) addLakes(w, w.seed);
-    world = w;
-    game.input.selectedId = null;
-    game.input.selectedVehicle = null;
-    game.input.tool = null;
-    game.input.paste = null;
-    centerOnHub();
-    game.save();
-    // 방장이면 손님들에게도 새 공장을 보낸다
-    session.worldReplaced();
-    ui.update();
+    backupWorld();
+    replaceWorld(w);
     return null;
   },
+  restoreBackup() {
+    if (!session.canSave) return '같이 하는 동안 손님은 되돌릴 수 없어요';
+    let w: World;
+    try {
+      const raw = localStorage.getItem(BACKUP_KEY);
+      if (!raw) return '되돌릴 공장이 없어요';
+      w = World.deserialize(JSON.parse(raw));
+    } catch {
+      return '보관한 공장을 읽지 못했어요';
+    }
+    // 지금 공장과 맞바꿔 둔다 (한 번 더 누르면 다시 돌아오게)
+    backupWorld();
+    replaceWorld(w);
+    return null;
+  },
+  get hasBackup() {
+    return hasBackup;
+  },
 };
+
+/** 새 게임·파일 불러오기·되돌리기로 공장이 통째로 바뀌기 바로 전의 공장 (한 칸만) */
+const BACKUP_KEY = 'automation-game/save-backup';
+let hasBackup = (() => {
+  try {
+    return localStorage.getItem(BACKUP_KEY) !== null;
+  } catch {
+    return false;
+  }
+})();
+
+function backupWorld(): void {
+  try {
+    localStorage.setItem(BACKUP_KEY, JSON.stringify(world.serialize()));
+    hasBackup = true;
+  } catch (err) {
+    // 아주 큰 공장이면 저장 공간이 모자랄 수 있다. 되돌리기만 못 할 뿐 바꾸기는 그대로 한다
+    console.warn('되돌리기용 보관 실패', err);
+  }
+}
+
+/** 다른 공장으로 바꾼다 (불러오기·되돌리기). 저장하고, 방장이면 손님들에게도 보낸다 */
+function replaceWorld(w: World): void {
+  if (!w.resItem.includes('water')) addLakes(w, w.seed);
+  world = w;
+  game.input.selectedId = null;
+  game.input.selectedVehicle = null;
+  game.input.tool = null;
+  game.input.paste = null;
+  centerOnHub();
+  game.save();
+  session.worldReplaced();
+  ui.update();
+}
 
 game.input = new Input(canvas, camera, {
   getWorld: () => world,

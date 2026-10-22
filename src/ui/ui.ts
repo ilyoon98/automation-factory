@@ -15,7 +15,7 @@ import {
 } from '../data/buildings';
 import { ITEMS, ITEM_IDS, type ItemId, type ItemStack } from '../data/items';
 import { RECIPES, recipesFor, type MachineKind } from '../data/recipes';
-import { ENDLESS_REQUIRES, ENDLESS_TECHS, TECHS, TECH_BY_ID, TECH_CATEGORIES, endlessCost, type TechCategory } from '../data/tech';
+import { ENDLESS_BY_ID, ENDLESS_REQUIRES, ENDLESS_TECHS, TECHS, TECH_BY_ID, TECH_CATEGORIES, endlessCost, type TechCategory } from '../data/tech';
 import type { Input } from '../input/input';
 import { lanRoomCheck, type Session } from '../net/session';
 import { VERSION } from '../version';
@@ -286,8 +286,13 @@ export class UI {
       if (!id) return;
       game.exec({ t: 'research', id }, (ok) => {
         if (!ok) return;
-        const t = TECH_BY_ID[id];
-        this.toast(`연구 완료: ${t.icon} ${t.name}`);
+        // 끝없는 연구는 TECH_BY_ID에 없다 (단계로 알린다)
+        const e = ENDLESS_BY_ID[id];
+        this.toast(
+          e
+            ? `연구 완료: ${e.icon} ${e.name} ${game.getWorld().endlessLevel(id)}단계`
+            : `연구 완료: ${TECH_BY_ID[id].icon} ${TECH_BY_ID[id].name}`,
+        );
         this.update();
       });
     });
@@ -1009,7 +1014,7 @@ export class UI {
     const stations = w.stations();
     const home = w.buildings.get(v.loadId) ?? w.buildings.get(v.unloadId);
     const clone = home ? w.canBuildTruck(home) : { ok: false, reason: '정류장을 먼저 골라 주세요' };
-    const key = `v${v.id}|${v.loadId}|${v.unloadId}|${v.filter}|${stations.map((s) => `${s.id}${s.stationMode}`).join(',')}|${clone.reason ?? ''}`;
+    const key = `v${v.id}|${v.loadId}|${v.unloadId}|${v.filter}|${w.endlessLevel('endless-truck')}|${stations.map((s) => `${s.id}${s.stationMode}`).join(',')}|${clone.reason ?? ''}`;
     if (key !== this.infoKey) {
       this.infoKey = key;
       const opt = (sel: number) =>
@@ -1020,7 +1025,7 @@ export class UI {
       el.innerHTML = `<header><span class="swatch" style="background:#d9a441"></span><h3>트럭 ${v.id}</h3>
           <button class="x" data-act="close">×</button></header>
         <p class="muted">두 정류장을 오가요. 싣는 곳에서 가득 차거나 ${TRUCK.wait}초 동안 새 짐이 없으면 출발하고,
-          내리는 곳에서 다 내리면 돌아와요. 한 번에 ${TRUCK.capacity}개, 초당 ${TRUCK.speed}칸.</p>
+          내리는 곳에서 다 내리면 돌아와요. 한 번에 ${TRUCK.capacity}개, 초당 ${fmtNum(w.truckSpeed())}칸.</p>
         <label class="recipe">싣는 곳 <select data-act="route-load">${opt(v.loadId)}</select></label>
         <label class="recipe">내리는 곳 <select data-act="route-unload">${opt(v.unloadId)}</select></label>
         <label class="recipe" title="싣기 정류장에 여러 아이템이 섞여 있을 때 이 트럭이 실을 것">싣는 짐 <select data-act="truck-filter">

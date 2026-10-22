@@ -2150,6 +2150,16 @@ export class World {
     }
   }
 
+  /** 정류장 st에서 트럭 v가 지금 실을 수 있는 아이템 (고른 짐이 있으면 그것만). 없으면 null */
+  private loadableItem(v: Vehicle, st: Building): ItemId | null {
+    if (v.filter) return (st.inBuf.get(v.filter) ?? 0) > 0 ? v.filter : null;
+    return firstItem(st.inBuf);
+  }
+
+  private canLoadNow(v: Vehicle, st: Building): boolean {
+    return v.load < TRUCK.capacity && this.loadableItem(v, st) !== null;
+  }
+
   /** 가득 차면 출발. 덜 찼어도 잠깐(TRUCK.wait) 새 짐이 없으면 있는 만큼 싣고 출발 */
   private loadTruck(v: Vehicle, st: Building): void {
     if (v.load >= TRUCK.capacity) return this.leave(v, 'to-unload');
@@ -2158,6 +2168,8 @@ export class World {
       if (o === v || o.state !== 'loading' || o.loadId !== v.loadId) continue;
       // 서로 다른 아이템만 싣는 트럭끼리는 기다리지 않는다
       if (o.filter && v.filter && o.filter !== v.filter) continue;
+      // 앞 트럭이 지금 실을 게 없으면(고른 짐이 없음) 뒤 트럭이 먼저 싣는다 (정류장이 막히지 않게)
+      if (!this.canLoadNow(o, st)) continue;
       if (o.arrivedAt < v.arrivedAt || (o.arrivedAt === v.arrivedAt && o.id < v.id)) {
         v.status = 'queued';
         v.idle = 0;
@@ -2166,7 +2178,7 @@ export class World {
     }
     const gap = 1 / TRUCK.transfer;
     v.timer = Math.min(gap, v.timer + DT);
-    const item = v.filter ? ((st.inBuf.get(v.filter) ?? 0) > 0 ? v.filter : null) : firstItem(st.inBuf);
+    const item = this.loadableItem(v, st);
     if (item) {
       v.status = 'loading';
       v.idle = 0;

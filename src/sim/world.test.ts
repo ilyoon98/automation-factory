@@ -1584,6 +1584,20 @@ describe('차량 운송', () => {
     expect(v.status).toBe('no-station');
   });
 
+  it('먼저 온 트럭이 고른 짐이 없으면, 뒤 트럭이 정류장에 있는 짐을 먼저 싣는다 (정류장이 막히지 않음)', () => {
+    const { w, a } = roadWorld(0);
+    a.inBuf.set('copper-ore', 30);
+    const ironOnly = w.buildTruck(a)!;
+    applyCommand(w, 0, { t: 'truck-filter', id: ironOnly.id, item: 'iron-ore' });
+    run(w, 1); // 철만 싣는 트럭이 먼저 서서 기다린다
+    expect(ironOnly.status).toBe('waiting');
+    const any = w.cloneTruck(ironOnly)!;
+    applyCommand(w, 0, { t: 'truck-filter', id: any.id, item: null });
+    run(w, 3);
+    expect(any.cargo.get('copper-ore')).toBeGreaterThan(10);
+    expect(ironOnly.load).toBe(0);
+  });
+
   it('두 정류장 사이 길 길이를 알려 주고, 도로가 끊기면 null', () => {
     const { w, a, b } = roadWorld();
     const len = w.routeLength(a.id, b.id)!;

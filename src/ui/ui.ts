@@ -208,7 +208,7 @@ export class UI {
       this.toast(err ?? '바로 전 공장으로 돌아왔어요');
       if (!err) $('help').hidden = true;
     });
-    // 효과음: 위쪽 버튼은 켜기·끄기, 도움말 창 아래에서 음량
+    // 효과음·배경음: 위쪽 버튼은 둘 다 켜기·끄기, 도움말 창 아래에서 각각 음량
     $('btn-sound').addEventListener('click', () => {
       sound.toggleMute();
       this.updateSound();
@@ -218,6 +218,10 @@ export class UI {
       sound.setVolume(Number((e.target as HTMLInputElement).value) / 100);
       this.updateSound();
       sound.play('place');
+    });
+    $('music-volume').addEventListener('input', (e) => {
+      sound.setMusicVolume(Number((e.target as HTMLInputElement).value) / 100);
+      this.updateSound();
     });
     this.updateSound();
     $('btn-new').addEventListener('click', () => {
@@ -502,13 +506,16 @@ export class UI {
   }
 
   private updateSound(): void {
-    const off = sound.muted || sound.volume <= 0;
+    const off = sound.muted || (sound.volume <= 0 && sound.musicVolume <= 0);
     const btn = $('btn-sound');
     btn.textContent = off ? '🔇' : '🔊';
     btn.classList.toggle('off', off);
     const pct = Math.round(sound.volume * 100);
     $<HTMLInputElement>('sound-volume').value = String(pct);
     $('sound-volume-text').textContent = sound.muted ? '꺼짐' : `${pct}%`;
+    const music = Math.round(sound.musicVolume * 100);
+    $<HTMLInputElement>('music-volume').value = String(music);
+    $('music-volume-text').textContent = sound.muted ? '꺼짐' : `${music}%`;
   }
 
   toast(msg: string, ms = 1800): void {

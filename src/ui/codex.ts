@@ -452,7 +452,7 @@ export class Codex {
           left: TRUCK.cost.map((c) => chip(c.item, `×${c.count}`)).join('<span class="plus">+</span>'),
           mid: label('🔨 정류장에서'),
           right: plain('🚚 트럭'),
-          tag: `한 번에 ${TRUCK.capacity}개<br>초당 ${TRUCK.speed}칸`,
+          tag: `한 번에 ${TRUCK.capacity}개<br>초당 ${TRUCK.speed}칸<br>충전 한 번에 ${(TRUCK.battery / TRUCK.drive) * TRUCK.speed}칸`,
           cls: locked ? 'locked' : '',
         }),
       ]);

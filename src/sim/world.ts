@@ -55,6 +55,8 @@ export interface PowerState {
   capacity: number;
   supply: number;
   satisfaction: number;
+  /** demand 중 트럭 충전 몫 (kW) */
+  charge: number;
 }
 
 /** 저장 파일의 콘텐츠 개정. 1: 먼 광맥을 줄였다 */
@@ -236,7 +238,7 @@ export class World {
   guideDone = new Set<string>();
   /** 빈 땅에서 흙을 캘 수 있는지 ("흙 정제" 연구) */
   dirtMining = false;
-  power: PowerState = { demand: 0, capacity: HUB_BASE_POWER, supply: 0, satisfaction: 1 };
+  power: PowerState = { demand: 0, capacity: HUB_BASE_POWER, supply: 0, satisfaction: 1, charge: 0 };
   time = 0;
   /** 지금까지 돈 틱 수 (저장하지 않는다. 같이 하기 스냅샷에만 넣는다) */
   private tickNo = 0;
@@ -1397,6 +1399,10 @@ export class World {
         }
       }
     }
+    // 정류장에 선 트럭의 충전도 공장 전력을 쓴다 (모자라면 기계처럼 같은 비율로 느려진다)
+    let charge = 0;
+    for (const v of this.vehicles.values()) charge += this.chargeWant(v);
+    demand += charge;
     const free = HUB_BASE_POWER + solar;
     const capacity = free + hydros.length * HYDRO_POWER + gens.length * GENERATOR_POWER;
     const supply = Math.min(demand, capacity);
@@ -1409,7 +1415,7 @@ export class World {
     const genLoad = gens.length ? rest / gens.length : 0;
     this.burn(hydros, hydroLoad, WATER_ENERGY);
     this.burn(gens, genLoad, COAL_ENERGY);
-    this.power = { demand, capacity, supply, satisfaction };
+    this.power = { demand, capacity, supply, satisfaction, charge };
   }
 
   /** 발전기들이 load(kW)만큼 한 틱 동안 연료(석탄·물)를 쓴다. 연료 1개 = unit kJ */
@@ -1981,14 +1987,36 @@ export class World {
     return best;
   }
 
-  private updateVehicle(v: Vehicle): void {
+  /** 싣는 곳·내리는 곳이 서로 다른 정류장으로 정해져 있는지 */
+  private routeOk(v: Vehicle): boolean {
     const load = this.buildings.get(v.loadId);
     const unload = this.buildings.get(v.unloadId);
-    if (load?.type !== 'station' || unload?.type !== 'station' || load === unload) {
+    return load?.type === 'station' && unload?.type === 'station' && load !== unload;
+  }
+
+  /**
+   * 이번 틱에 충전하고 싶은 전력 (kW). 정류장에 서 있고(싣는 중·내리는 중) 배터리가 덜 찼을 때만.
+   * updatePower(수요 계산)와 updateVehicle(실제 충전)이 같은 값을 쓰도록 한곳에서 정한다.
+   */
+  private chargeWant(v: Vehicle): number {
+    if (v.state !== 'loading' && v.state !== 'unloading') return 0;
+    if (!this.routeOk(v) || batteryFull(v)) return 0;
+    return Math.min(TRUCK.charge, (TRUCK.battery - v.battery) / DT);
+  }
+
+  private updateVehicle(v: Vehicle): void {
+    const load = this.buildings.get(v.loadId)!;
+    const unload = this.buildings.get(v.unloadId)!;
+    if (!this.routeOk(v)) {
       v.status = 'no-station';
       return;
     }
-    // 연료를 붙이면 여기서 확인한다 (지금은 연료 없이 달린다)
+    // 정류장에 서 있으면 충전 (전력이 모자라면 그 비율만큼만)
+    const want = this.chargeWant(v);
+    if (want > 0) {
+      v.battery = Math.min(TRUCK.battery, v.battery + want * this.power.satisfaction * DT);
+      if (batteryFull(v)) v.battery = TRUCK.battery;
+    }
     if (v.state === 'to-load' || v.state === 'to-unload') {
       if (!this.drive(v, v.state === 'to-load' ? load : unload)) return;
       v.state = v.state === 'to-load' ? 'loading' : 'unloading';
@@ -2001,9 +2029,19 @@ export class World {
     else this.unloadTruck(v, unload);
   }
 
-  /** 정류장 st까지 한 틱만큼 달린다. 도착해 있으면 true */
+  /** 정류장 st까지 한 틱만큼 달린다. 달린 거리만큼 배터리를 쓰고, 배터리가 없으면 천천히. 도착해 있으면 true */
   private drive(v: Vehicle, st: Building): boolean {
-    let step = TRUCK.speed * DT;
+    const empty = v.battery <= 0;
+    const full = TRUCK.speed * DT * (empty ? TRUCK.emptySpeed : 1);
+    const [arrived, left] = this.move(v, st, full);
+    // 한 칸에 drive / speed kJ
+    v.battery = Math.max(0, v.battery - ((full - left) * TRUCK.drive) / TRUCK.speed);
+    if (empty && v.status === 'moving') v.status = 'no-battery';
+    return arrived;
+  }
+
+  /** step 칸만큼 길을 따라 움직인다. [도착했는지, 남은 거리] */
+  private move(v: Vehicle, st: Building, step: number): [boolean, number] {
     for (;;) {
       const tx = (v.tile % this.width) + 0.5;
       const ty = Math.floor(v.tile / this.width) + 0.5;
@@ -2015,7 +2053,7 @@ export class World {
           v.x += ((tx - v.x) / d) * step;
           v.y += ((ty - v.y) / d) * step;
           v.status = 'moving';
-          return false;
+          return [false, 0];
         }
         v.x = tx;
         v.y = ty;
@@ -2029,12 +2067,12 @@ export class World {
       }
       if (!v.path) {
         v.status = 'no-route';
-        return false;
+        return [false, step];
       }
-      if (v.path.length === 0) return true;
+      if (v.path.length === 0) return [true, step];
       if (step <= 0) {
         v.status = 'moving';
-        return false;
+        return [false, 0];
       }
       v.tile = v.path.shift()!;
     }
@@ -2042,7 +2080,7 @@ export class World {
 
   /** 가득 차면 출발. 덜 찼어도 잠깐(TRUCK.wait) 새 짐이 없으면 있는 만큼 싣고 출발 */
   private loadTruck(v: Vehicle, st: Building): void {
-    if (v.load >= TRUCK.capacity) return this.depart(v, 'to-unload');
+    if (v.load >= TRUCK.capacity) return this.leave(v, 'to-unload');
     // 먼저 온 트럭부터 하나씩 채운다 (여럿이 나눠 실으면 모두 덜 찬 채로 떠나게 된다)
     for (const o of this.vehicles.values()) {
       if (o === v || o.state !== 'loading' || o.loadId !== v.loadId) continue;
@@ -2067,13 +2105,17 @@ export class World {
     }
     v.idle += DT;
     v.status = v.load > 0 ? 'loading' : 'waiting';
-    if (v.load > 0 && v.idle >= TRUCK.wait) this.depart(v, 'to-unload');
+    if (v.load > 0 && v.idle >= TRUCK.wait) this.leave(v, 'to-unload');
   }
 
   /** 다 내리면 싣는 곳으로. 내리기 정류장은 앞으로 내보낼 칸에, 싣기 정류장은 다른 트럭이 실어 갈 칸에 내린다 */
   private unloadTruck(v: Vehicle, st: Building): void {
     const item = firstItem(v.cargo);
     if (!item) {
+      if (!batteryFull(v)) {
+        v.status = 'charging';
+        return;
+      }
       if (v.tripStart >= 0) v.lastTrip = this.time - v.tripStart;
       v.tripStart = this.time;
       return this.depart(v, 'to-load');
@@ -2096,6 +2138,15 @@ export class World {
     v.state = state;
     v.timer = 0;
     v.idle = 0;
+  }
+
+  /** 떠날 준비가 됐어도 배터리가 다 찰 때까지는 충전한다 (그동안 짐은 계속 싣는다) */
+  private leave(v: Vehicle, state: VehicleState): void {
+    if (!batteryFull(v)) {
+      v.status = 'charging';
+      return;
+    }
+    this.depart(v, state);
   }
 
   // ───────────────────────── 배치 캐시 ─────────────────────────
@@ -2245,6 +2296,7 @@ export class World {
         state: v.state,
         timer: v.timer,
         idle: v.idle,
+        battery: v.battery,
       })),
     };
   }
@@ -2308,6 +2360,8 @@ export class World {
       v.state = s.state;
       v.timer = s.timer;
       v.idle = s.idle;
+      // 배터리가 생기기 전 저장이면 가득 찬 채로
+      v.battery = s.battery ?? TRUCK.battery;
       w.vehicles.set(v.id, v);
       w.nextVehicleId = Math.max(w.nextVehicleId, v.id + 1);
     }
@@ -2395,7 +2449,7 @@ export class World {
       for (const it of b.items) h.str(it.item).num(it.pos).num(it.n);
     }
     for (const v of this.vehicles.values()) {
-      h.num(v.id).num(v.x).num(v.y).num(v.tile).str(v.state).num(v.timer).num(v.idle);
+      h.num(v.id).num(v.x).num(v.y).num(v.tile).str(v.state).num(v.timer).num(v.idle).num(v.battery);
       h.num(v.loadId).num(v.unloadId);
       for (const [item, n] of v.cargo) h.str(item).num(n);
     }
@@ -2473,6 +2527,8 @@ export interface SavedVehicle {
   state: VehicleState;
   timer: number;
   idle: number;
+  /** 배터리 (kJ). 없으면 가득 */
+  battery?: number;
 }
 
 export interface SaveData {
@@ -2648,6 +2704,11 @@ function sumOf(m: Map<ItemId, number>): number {
 function firstItem(m: Map<ItemId, number>): ItemId | null {
   for (const [item, n] of m) if (n > 0) return item;
   return null;
+}
+
+/** 트럭 배터리가 다 찼는지 (더하고 나눌 때 생기는 아주 작은 오차는 봐준다) */
+function batteryFull(v: Vehicle): boolean {
+  return v.battery >= TRUCK.battery - 1e-6;
 }
 
 function isCrafter(b: Building): boolean {

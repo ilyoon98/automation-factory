@@ -737,8 +737,10 @@ export class Renderer {
     }
     this.blit(`truck:${dir}`, fill <= 0 ? 0 : fill < 0.5 ? 1 : 2, sx, sy);
     if (this.lod) return;
-    if (v.status === 'no-route' || v.status === 'no-station' || v.status === 'unload-full') {
-      this.blit(v.status === 'unload-full' ? 'badge:alert-full' : 'badge:alert', 0, sx + 4 * u, sy - 7 * u);
+    if (v.status === 'no-route' || v.status === 'no-station' || v.status === 'unload-full' || v.status === 'no-battery') {
+      // 꽉 참·배터리 없음은 주황(멈추지는 않음), 나머지는 빨강
+      const orange = v.status === 'unload-full' || v.status === 'no-battery';
+      this.blit(orange ? 'badge:alert-full' : 'badge:alert', 0, sx + 4 * u, sy - 7 * u);
     }
   }
 

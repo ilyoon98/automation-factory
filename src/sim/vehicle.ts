@@ -1,3 +1,4 @@
+import { TRUCK } from '../data/buildings';
 import type { ItemId } from '../data/items';
 
 /** 싣는 곳으로 가는 중 → 싣는 중 → 내리는 곳으로 가는 중 → 내리는 중 → 다시 처음 */
@@ -10,6 +11,8 @@ export type VehicleStatus =
   | 'waiting'
   | 'unloading'
   | 'unload-full'
+  | 'charging'
+  | 'no-battery'
   | 'no-route'
   | 'no-station';
 
@@ -20,13 +23,16 @@ export const VEHICLE_STATUS_LABEL: Record<VehicleStatus, string> = {
   waiting: '짐 기다리는 중',
   unloading: '내리는 중',
   'unload-full': '내릴 곳이 꽉 참',
+  charging: '충전 중',
+  'no-battery': '배터리 없음 (천천히)',
   'no-route': '길 없음',
   'no-station': '정류장을 골라 주세요',
 };
 
 /**
  * 트럭. 건물이 아니라 도로 위를 달리는 차라서 칸을 차지하지 않는다 (트럭끼리 겹쳐 지나간다).
- * 싣는 정류장과 내리는 정류장 두 곳을 오간다. 연료는 아직 없다 (나중에 붙일 자리: updateVehicle).
+ * 싣는 정류장과 내리는 정류장 두 곳을 오간다.
+ * 전기 트럭: 달리면 배터리가 줄고, 정류장에 서 있는 동안 공장 전력으로 충전한다.
  */
 export class Vehicle {
   /** 칸 좌표. 칸 가운데는 (tx + 0.5, ty + 0.5) */
@@ -57,6 +63,8 @@ export class Vehicle {
   tripStart = -1;
   lastTrip = 0;
   lastLoad = 0;
+  /** 배터리 (kJ, 0 ~ TRUCK.battery) */
+  battery = TRUCK.battery;
 
   constructor(
     readonly id: number,

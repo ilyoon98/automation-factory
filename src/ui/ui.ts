@@ -80,6 +80,8 @@ const VEHICLE_STATUS_COLOR: Record<VehicleStatus, string> = {
   queued: '#8a7a66',
   waiting: '#8a7a66',
   'unload-full': '#e8893a',
+  charging: '#3f8a3a',
+  'no-battery': '#e8893a',
   'no-route': '#c0392b',
   'no-station': '#c0392b',
 };
@@ -87,6 +89,7 @@ const VEHICLE_STATUS_COLOR: Record<VehicleStatus, string> = {
 /** 트럭이 멈춰 있을 때 할 일 */
 const VEHICLE_HINT: Partial<Record<VehicleStatus, string>> = {
   waiting: '싣는 정류장에 짐이 없어요. 컨베이어로 정류장에 넣어 주세요.',
+  'no-battery': `배터리가 떨어져 천천히 가요. 정류장에 닿으면 충전해요. 한 번 충전으로 ${(TRUCK.battery / TRUCK.drive) * TRUCK.speed}칸까지 가니, 길이 더 길면 중간에 싣기 정류장을 두고 트럭 두 대로 나눠 나르세요 (갈아싣기).`,
   'unload-full': '내리는 정류장이 꽉 찼어요. 정류장 앞(노란 화살표)으로 짐이 빠져나가는지 확인하세요.',
   'no-route': '두 정류장 사이 도로가 끊겼어요. 도로를 이어 주세요.',
   'no-station': '싣는 곳과 내리는 곳을 서로 다른 정류장으로 골라 주세요.',
@@ -561,7 +564,8 @@ export class UI {
       <div class="bar"><div style="width:${usage * 100}%;background:${color}"></div></div>
       <div class="row"><span>사용 / 공급</span><b>${Math.round(p.demand)} / ${Math.round(p.capacity)} kW</b></div>
       <div class="row"><span>기계 속도</span><b style="color:${color}">${pct}%</b></div>
-      ${parts.length > 1 ? `<p class="muted power-src">${parts.join(' · ')} kW</p>` : ''}`;
+      ${parts.length > 1 ? `<p class="muted power-src">${parts.join(' · ')} kW</p>` : ''}
+      ${p.charge > 0 ? `<p class="muted power-src">사용 중 트럭 충전 ${Math.round(p.charge)} kW</p>` : ''}`;
   }
 
   private updateStock(w: World): void {
@@ -987,6 +991,14 @@ export class UI {
     const cargo = [...v.cargo].filter(([, n]) => n > 0).map(([i, n]) => `${itemIcon(i)}${n}`).join(' ');
     lines.push(`<div class="row"><span>짐</span><b>${cargo || '<span class="muted">없음</span>'} <span class="muted">${v.load} / ${TRUCK.capacity}</span></b></div>`);
     lines.push(`<div class="bar"><div style="width:${(v.load / TRUCK.capacity) * 100}%;background:#c9b27a"></div></div>`);
+    // 배터리: 남은 양과 그만큼 갈 수 있는 칸 수. 충전 중이면 공장 전력이 모자란 만큼 느려진다
+    const charge = v.battery / TRUCK.battery;
+    const range = Math.floor((v.battery / TRUCK.drive) * TRUCK.speed);
+    const charging = v.status === 'charging' || ((v.state === 'loading' || v.state === 'unloading') && charge < 1);
+    const rate = charging ? ` · 충전 ${Math.round(TRUCK.charge * w.power.satisfaction)}kW` : '';
+    const batColor = charge > 0.5 ? '#3f8a3a' : charge > 0.2 ? '#b7791f' : '#c0392b';
+    lines.push(`<div class="row"><span>배터리</span><b>${Math.round(charge * 100)}% <span class="muted">${range}칸${rate}</span></b></div>`);
+    lines.push(`<div class="bar"><div style="width:${charge * 100}%;background:${batColor}"></div></div>`);
     const perMin = v.perMinute;
     lines.push(
       perMin === null

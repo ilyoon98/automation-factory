@@ -54,8 +54,8 @@ const SHEPARD_MID = SHEPARD_OCTAVES / 2;
 const SHEPARD_WIDTH = 1;
 /** 드래그로 연달아 짓는 동안 글리산도가 올라가는 속도 (옥타브/초) */
 const GLISS_RATE = 0.5;
-/** 글리산도 음량 (톡 소리 뒤에 깔리는 정도) */
-const GLISS_VOL = 0.05;
+/** 글리산도 음량 (톡 소리에 묻히지 않고 오르는 게 들리게) */
+const GLISS_VOL = 0.12;
 /** 짓는 톡 소리의 계단: 한 옥타브를 같은 간격으로 몇 칸에 나누는지 (6 = 온음) */
 const PLACE_STEPS_PER_OCTAVE = 6;
 

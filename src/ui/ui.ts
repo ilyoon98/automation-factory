@@ -659,7 +659,7 @@ export class UI {
     const todo = GUIDE.filter((s) => !w.guideDone.has(s.title));
     const head = `<h3>목표 <small>${GUIDE.length - todo.length}/${GUIDE.length}</small></h3>`;
     if (todo.length === 0) {
-      $('guide').innerHTML = `${head}<p class="muted">모든 목표 달성! 자유롭게 공장을 키워 보세요.</p>`;
+      $('guide').innerHTML = `${head}<p class="muted">모든 목표 달성! 끝없는 연구(T)로 자유롭게 공장을 키워 보세요.</p>`;
       return;
     }
     const [now, ...next] = todo;

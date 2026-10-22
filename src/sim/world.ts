@@ -1896,6 +1896,26 @@ export class World {
   }
 
   /**
+   * 두 정류장 사이 도로 길이 (칸, 한쪽). 길이 없거나 정류장이 아니면 null.
+   * 정보창에서 매번 길을 찾지 않도록, 도로·정류장이 바뀌기 전까지 마지막 결과를 기억한다 (시뮬레이션과 무관).
+   */
+  routeLength(loadId: number, unloadId: number): number | null {
+    const key = `${loadId}|${unloadId}|${this.roadVersion}`;
+    if (this.routeCache?.key === key) return this.routeCache.len;
+    const a = this.buildings.get(loadId);
+    const b = this.buildings.get(unloadId);
+    let len: number | null = null;
+    if (a?.type === 'station' && b?.type === 'station' && a !== b) {
+      const start = this.stationStops(a)[0];
+      const p = start === undefined ? null : this.findPath(start, new Set(this.stationStops(b)));
+      len = p ? p.length : null;
+    }
+    this.routeCache = { key, len };
+    return len;
+  }
+  private routeCache: { key: string; len: number | null } | null = null;
+
+  /**
    * 도로를 따라 from에서 targets 중 가장 가까운 칸까지 지나갈 칸들 (from은 빼고, 도착 칸은 넣고).
    * from이 이미 targets면 빈 배열, 갈 수 없으면 null. from은 도로가 아니어도 된다 (밑의 도로가 철거된 트럭).
    */

@@ -1569,6 +1569,17 @@ describe('차량 운송', () => {
     expect(v.status).toBe('no-station');
   });
 
+  it('두 정류장 사이 길 길이를 알려 주고, 도로가 끊기면 null', () => {
+    const { w, a, b } = roadWorld();
+    const len = w.routeLength(a.id, b.id)!;
+    expect(len).toBeGreaterThan(15);
+    expect(len).toBeLessThan(30);
+    w.remove(w.buildingAt(12, 6)!);
+    expect(w.routeLength(a.id, b.id)).toBeNull();
+    w.place('road', 12, 6, 0);
+    expect(w.routeLength(a.id, b.id)).toBe(len);
+  });
+
   it('싣는 짐을 고르면 그 아이템만 싣고, 서로 다른 짐을 싣는 트럭끼리는 차례를 기다리지 않는다', () => {
     const { w, a } = roadWorld(40);
     a.inBuf.set('copper-ore', 40);

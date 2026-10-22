@@ -1032,6 +1032,15 @@ export class UI {
     const batColor = charge > 0.5 ? '#3f8a3a' : charge > 0.2 ? '#b7791f' : '#c0392b';
     lines.push(`<div class="row"><span>배터리</span><b>${Math.round(charge * 100)}% <span class="muted">${range}칸${rate}</span></b></div>`);
     lines.push(`<div class="bar"><div style="width:${charge * 100}%;background:${batColor}"></div></div>`);
+    // 길 길이: 배터리 가득일 때 갈 수 있는 칸보다 길면 중간에 배터리가 떨어진다
+    const len = w.routeLength(v.loadId, v.unloadId);
+    const fullRange = Math.floor((w.truckBattery() / TRUCK.drive) * TRUCK.speed);
+    if (len !== null) {
+      const ok = len <= fullRange;
+      lines.push(
+        `<div class="row"><span>길 (한쪽)</span><b>${len}칸 <span ${ok ? 'class="muted"' : 'style="color:#c0392b"'}>${ok ? `· 가득이면 ${fullRange}칸` : `· 배터리가 모자라요 (가득 ${fullRange}칸)`}</span></b></div>`,
+      );
+    }
     const perMin = v.perMinute;
     lines.push(
       perMin === null

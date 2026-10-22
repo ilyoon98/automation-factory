@@ -8,6 +8,9 @@ const LANE_H = 32;
 const GAP = 48;
 /** 너무 빨리 연달아 보내지 않게 (ms) */
 const SEND_GAP_MS = 400;
+/** 기억해 두는 지난 채팅 수와, 입력창을 열 때 위에 보여 주는 수 (흘러가는 걸 놓쳤을 때 다시 보려고) */
+const HISTORY = 30;
+const LOG_SHOW = 6;
 
 /**
  * 채팅: Enter(또는 위쪽 채팅 버튼)로 입력창을 열고 보내면, 메시지가 화면 오른쪽에서 왼쪽으로 쭉 흘러가다 사라진다.
@@ -20,9 +23,14 @@ export class Chat {
   /** 줄마다 마지막 메시지 꼬리가 화면에 다 들어오는 시각 (ms). 그 뒤에야 같은 줄에 다음 메시지를 띄운다 */
   private laneFree: number[] = [];
   private sentAt = 0;
+  /** 지난 채팅 (이름·색은 받은 때 그대로) */
+  private history: { name: string; color: string; text: string; mine: boolean }[] = [];
+  private log = document.createElement('div');
 
   constructor(private session: Session) {
     this.input.maxLength = CHAT_MAX;
+    this.log.className = 'chat-log';
+    this.box.append(this.log);
 
     window.addEventListener('keydown', (e) => {
       if (e.key !== 'Enter' || e.isComposing) return;
@@ -51,8 +59,26 @@ export class Chat {
   open(): void {
     this.input.placeholder =
       this.session.role === 'solo' ? '혼자 할 땐 내 화면에만 보여요' : `모두에게 보내기 (${this.session.players}명)`;
+    this.renderLog();
     this.box.hidden = false;
     this.input.focus();
+  }
+
+  /** 입력창 위에 최근 채팅 몇 줄 */
+  private renderLog(): void {
+    const recent = this.history.slice(-LOG_SHOW);
+    this.log.hidden = recent.length === 0;
+    this.log.replaceChildren(
+      ...recent.map((m) => {
+        const row = document.createElement('div');
+        if (m.mine) row.className = 'mine';
+        const who = document.createElement('b');
+        who.textContent = m.name;
+        who.style.color = m.color;
+        row.append(who, document.createTextNode(m.text));
+        return row;
+      }),
+    );
   }
 
   close(): void {
@@ -83,6 +109,9 @@ export class Chat {
     who.style.color = s.colorOf(from);
     el.append(who, document.createTextNode(text));
     this.flow.append(el);
+    this.history.push({ name: who.textContent, color: who.style.color, text, mine: from === s.me });
+    if (this.history.length > HISTORY) this.history.shift();
+    if (!this.box.hidden) this.renderLog();
 
     const w = el.offsetWidth;
     const W = this.flow.clientWidth;

@@ -882,6 +882,34 @@ h3 small {
   flex: 1;
   min-width: 0;
 }
+/* 입력창 위 최근 채팅 (흘러간 걸 놓쳤을 때) */
+#chat-box .chat-log {
+  position: absolute;
+  left: -3px;
+  right: -3px;
+  bottom: calc(100% + 6px);
+  background: rgba(59, 39, 22, 0.84);
+  border: 2px solid var(--ink);
+  box-shadow: 3px 3px 0 rgba(20, 12, 6, 0.3);
+  padding: 4px 10px;
+  color: var(--paper);
+  line-height: 18px;
+}
+#chat-box .chat-log[hidden] {
+  display: none;
+}
+#chat-box .chat-log div {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+#chat-box .chat-log b {
+  font-weight: 400;
+  margin-right: 8px;
+}
+#chat-box .chat-log .mine {
+  color: #f6d77e;
+}
 
 /* 지도: 오른쪽 아래, 툴바 위 */
 #minimap {

@@ -101,6 +101,10 @@ const VEHICLE_HINT: Partial<Record<VehicleStatus, string>> = {
 
 const STATION_MODE_NAME: Record<StationMode, string> = { load: '싣기', unload: '내리기' };
 
+/** 통계 창 재고 그래프: 게임 시간 10초마다 한 번, 60개 = 최근 10분 */
+const STOCK_SAMPLE_SEC = 10;
+const STOCK_SAMPLES = 60;
+
 /** 상태(작동 중, 재료 부족 등)를 보여 주는 건물 */
 const HAS_STATUS: BuildingType[] = [
   'miner',
@@ -140,6 +144,10 @@ export class UI {
   private roomsOnStart: boolean;
   /** 통계 창을 마지막으로 그린 시각 (1초마다만 다시 그려서 숫자가 덜 흔들리고 클릭이 씹히지 않게) */
   private statsAt = 0;
+  /** 허브 재고 기록 (통계 창 그래프용). 게임 시간 STOCK_SAMPLE_SEC초마다, 최근 STOCK_SAMPLES개. 화면 쪽에만 둔다 */
+  private stockHist = new Map<ItemId, number[]>();
+  private histWorld: World | null = null;
+  private histNext = 0;
 
   constructor(private game: GameApi) {
     this.roomsOnStart = game.net.desktop;
@@ -530,6 +538,7 @@ export class UI {
     this.updateGuide(w);
     this.updateInfo(w);
     if (!$('research').hidden) this.updateResearch(w);
+    this.sampleStock(w);
     if (!$('stats').hidden) this.updateStatsPanel(w);
     this.updateTooltip(w);
     this.codex.refresh();
@@ -1185,6 +1194,42 @@ export class UI {
    * 아이템마다 분당 만드는 양·쓰는 양 (지금 / 모든 기계 100%일 때), 허브 입고, 재고.
    * 100%일 때 모자라면 어떤 기계가 몇 대 더 필요한지까지.
    */
+  /** 허브 재고를 게임 시간 기준으로 띄엄띄엄 적어 둔다. 공장이 바뀌면(새 게임·불러오기·방 참가) 처음부터 */
+  private sampleStock(w: World): void {
+    if (w !== this.histWorld || w.time < this.histNext - STOCK_SAMPLE_SEC) {
+      this.histWorld = w;
+      this.stockHist.clear();
+      this.histNext = 0;
+    }
+    if (w.time < this.histNext) return;
+    this.histNext = (Math.floor(w.time / STOCK_SAMPLE_SEC) + 1) * STOCK_SAMPLE_SEC;
+    for (const i of ITEM_IDS) {
+      const n = w.stockOf(i);
+      let h = this.stockHist.get(i);
+      if (!h) {
+        if (!n) continue;
+        h = [];
+        this.stockHist.set(i, h);
+      }
+      h.push(n);
+      if (h.length > STOCK_SAMPLES) h.shift();
+    }
+  }
+
+  /** 재고 기록을 픽셀 막대그래프로 (오른쪽이 지금). 늘면 초록, 줄면 빨강 */
+  private stockSpark(i: ItemId): string {
+    const h = this.stockHist.get(i);
+    if (!h || h.length < 2) return '<small>–</small>';
+    const H = 16;
+    const max = Math.max(...h, 1);
+    const x0 = STOCK_SAMPLES - h.length;
+    const d = h.map((n, k) => `M${x0 + k + 0.5} ${H}V${H - Math.max(1, Math.round((n / max) * H))}`).join('');
+    const diff = h[h.length - 1] - h[0];
+    // 그대로인 줄은 흐리게 (늘거나 준 줄이 눈에 띄도록)
+    const color = diff > 0 ? 'var(--good)' : diff < 0 ? 'var(--bad)' : 'var(--lo)';
+    return `<svg class="spark" width="${STOCK_SAMPLES}" height="${H}" viewBox="0 0 ${STOCK_SAMPLES} ${H}"><path d="${d}" stroke="${color}" stroke-width="1"/></svg>`;
+  }
+
   private updateStatsPanel(w: World): void {
     const now = performance.now();
     if (now - this.statsAt < 1000) return;
@@ -1206,6 +1251,7 @@ export class UI {
           <td class="${short ? 'neg' : netMax > 0.05 ? 'pos' : ''}">${sign(netMax)}${fix ? `<br><small>${fix}</small>` : ''}</td>
           <td>${w.incomePerMinute(i) || '<small>–</small>'}</td>
           <td>${w.stockOf(i)}</td>
+          <td>${this.stockSpark(i)}</td>
         </tr>`;
       })
       .join('');
@@ -1213,8 +1259,8 @@ export class UI {
       <p class="muted">분당 개수. "지금"은 기계마다 최근 15초 평균을 더한 것, "/" 뒤는 모든 기계가 100%로 돌 때.
         <b>100%일 때 남음</b>이 빨간 줄은 기계를 다 돌리면 모자라는 아이템이에요 (재료 기계를 늘리거나 쓰는 기계를 줄이기).</p>
       <table class="stats-table">
-        <thead><tr><th>아이템</th><th>만들기</th><th>쓰기</th><th>지금 남음</th><th>100%일 때 남음</th><th>허브 입고</th><th>허브 재고</th></tr></thead>
-        <tbody>${rows || '<tr><td colspan="7" class="muted">아직 아무것도 만들지 않아요</td></tr>'}</tbody>
+        <thead><tr><th>아이템</th><th>만들기</th><th>쓰기</th><th>지금 남음</th><th>100%일 때 남음</th><th>허브 입고</th><th>허브 재고</th><th title="게임 시간 10초마다 잰 허브 재고. 오른쪽이 지금">재고 흐름 (10분)</th></tr></thead>
+        <tbody>${rows || '<tr><td colspan="8" class="muted">아직 아무것도 만들지 않아요</td></tr>'}</tbody>
       </table></div>`;
   }
 

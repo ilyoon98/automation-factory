@@ -990,6 +990,13 @@ h3 small {
 .stats-table .neg {
   color: var(--bad);
 }
+/* 재고 흐름 막대 (1칸 = 10초) */
+.stats-table .spark {
+  display: block;
+  margin-left: auto;
+  shape-rendering: crispEdges;
+  background: var(--paper-2);
+}
 
 /* 모달 */
 .modal {

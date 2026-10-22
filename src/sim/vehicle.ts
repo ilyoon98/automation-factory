@@ -63,8 +63,10 @@ export class Vehicle {
   tripStart = -1;
   lastTrip = 0;
   lastLoad = 0;
-  /** 배터리 (kJ, 0 ~ TRUCK.battery) */
+  /** 배터리 (kJ, 0 ~ World.truckBattery()) */
   battery = TRUCK.battery;
+  /** 싣는 아이템 (null = 정류장에 있는 아무거나) */
+  filter: ItemId | null = null;
 
   constructor(
     readonly id: number,

@@ -1947,7 +1947,10 @@ export class World {
   cloneTruck(v: Vehicle): Vehicle | null {
     const st = this.buildings.get(v.loadId) ?? this.buildings.get(v.unloadId);
     if (!st || st.type !== 'station' || !this.canBuildTruck(st).ok) return null;
-    return this.spawnTruck(this.stationStops(st)[0], v.loadId, v.unloadId);
+    const n = this.spawnTruck(this.stationStops(st)[0], v.loadId, v.unloadId);
+    // 싣는 아이템도 같게
+    n.filter = v.filter;
+    return n;
   }
 
   /** 재료를 내고 tile 칸에 트럭을 놓는다 (확인은 부르는 쪽에서) */
@@ -1980,6 +1983,12 @@ export class World {
     v.state = v.load > 0 ? 'to-unload' : 'to-load';
     v.pathTo = 0;
     v.timer = 0;
+    v.idle = 0;
+  }
+
+  /** 트럭이 실을 아이템 (null = 아무거나). 이미 실은 짐은 그대로 둔다 */
+  setTruckFilter(v: Vehicle, item: ItemId | null): void {
+    v.filter = item;
     v.idle = 0;
   }
 
@@ -2127,6 +2136,8 @@ export class World {
     // 먼저 온 트럭부터 하나씩 채운다 (여럿이 나눠 실으면 모두 덜 찬 채로 떠나게 된다)
     for (const o of this.vehicles.values()) {
       if (o === v || o.state !== 'loading' || o.loadId !== v.loadId) continue;
+      // 서로 다른 아이템만 싣는 트럭끼리는 기다리지 않는다
+      if (o.filter && v.filter && o.filter !== v.filter) continue;
       if (o.arrivedAt < v.arrivedAt || (o.arrivedAt === v.arrivedAt && o.id < v.id)) {
         v.status = 'queued';
         v.idle = 0;
@@ -2135,7 +2146,7 @@ export class World {
     }
     const gap = 1 / TRUCK.transfer;
     v.timer = Math.min(gap, v.timer + DT);
-    const item = firstItem(st.inBuf);
+    const item = v.filter ? ((st.inBuf.get(v.filter) ?? 0) > 0 ? v.filter : null) : firstItem(st.inBuf);
     if (item) {
       v.status = 'loading';
       v.idle = 0;
@@ -2341,6 +2352,7 @@ export class World {
         timer: v.timer,
         idle: v.idle,
         battery: v.battery,
+        ...(v.filter ? { filter: v.filter } : {}),
       })),
     };
   }
@@ -2407,6 +2419,7 @@ export class World {
       v.idle = s.idle;
       // 배터리가 생기기 전 저장이면 가득 찬 채로
       v.battery = s.battery ?? w.truckBattery();
+      v.filter = s.filter ?? null;
       w.vehicles.set(v.id, v);
       w.nextVehicleId = Math.max(w.nextVehicleId, v.id + 1);
     }
@@ -2496,7 +2509,7 @@ export class World {
     }
     for (const v of this.vehicles.values()) {
       h.num(v.id).num(v.x).num(v.y).num(v.tile).str(v.state).num(v.timer).num(v.idle).num(v.battery);
-      h.num(v.loadId).num(v.unloadId);
+      h.num(v.loadId).num(v.unloadId).str(v.filter ?? '');
       for (const [item, n] of v.cargo) h.str(item).num(n);
     }
     return h.value;
@@ -2575,6 +2588,8 @@ export interface SavedVehicle {
   idle: number;
   /** 배터리 (kJ). 없으면 가득 */
   battery?: number;
+  /** 싣는 아이템 (없으면 아무거나) */
+  filter?: ItemId;
 }
 
 export interface SaveData {

@@ -1569,6 +1569,26 @@ describe('차량 운송', () => {
     expect(v.status).toBe('no-station');
   });
 
+  it('싣는 짐을 고르면 그 아이템만 싣고, 서로 다른 짐을 싣는 트럭끼리는 차례를 기다리지 않는다', () => {
+    const { w, a } = roadWorld(40);
+    a.inBuf.set('copper-ore', 40);
+    const iron = w.buildTruck(a)!;
+    const copper = w.cloneTruck(iron)!;
+    applyCommand(w, 0, { t: 'truck-filter', id: iron.id, item: 'iron-ore' });
+    applyCommand(w, 0, { t: 'truck-filter', id: copper.id, item: 'copper-ore' });
+    run(w, 3);
+    // 둘 다 동시에 싣는 중 (한 대가 다른 한 대를 기다리지 않음)
+    expect(iron.cargo.get('iron-ore')).toBeGreaterThan(10);
+    expect(copper.cargo.get('copper-ore')).toBeGreaterThan(10);
+    expect(iron.cargo.get('copper-ore') ?? 0).toBe(0);
+    expect(copper.cargo.get('iron-ore') ?? 0).toBe(0);
+    // 같은 길로 한 대 더 만들면 싣는 짐도 따라간다
+    expect(w.cloneTruck(copper)!.filter).toBe('copper-ore');
+    // 저장·불러오기
+    const copy = World.deserialize(JSON.parse(JSON.stringify(w.serialize())));
+    expect(copy.vehicles.get(iron.id)!.filter).toBe('iron-ore');
+  });
+
   describe('배터리 (전기 트럭)', () => {
     /** cond가 될 때까지 한 틱씩 (최대 sec초) */
     const until = (w: World, cond: () => boolean, sec = 60) => {

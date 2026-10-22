@@ -30,6 +30,7 @@ export type Command =
   | { t: 'clone-truck'; id: number }
   | { t: 'remove-truck'; id: number }
   | { t: 'route'; id: number; loadId: number; unloadId: number }
+  | { t: 'truck-filter'; id: number; item: ItemId | null }
   | { t: 'undo' }
   | { t: 'redo' };
 
@@ -62,6 +63,7 @@ export interface CommandResults {
   'clone-truck': Vehicle | null;
   'remove-truck': boolean;
   route: void;
+  'truck-filter': void;
   undo: { ops: EditOp[]; skipped: number } | null;
   redo: { ops: EditOp[]; skipped: number } | null;
 }
@@ -150,6 +152,11 @@ function run(w: World, c: Command): CommandResults[Command['t']] {
     case 'route': {
       const v = w.vehicles.get(c.id);
       if (v) w.setRoute(v, c.loadId, c.unloadId);
+      return;
+    }
+    case 'truck-filter': {
+      const v = w.vehicles.get(c.id);
+      if (v) w.setTruckFilter(v, c.item);
       return;
     }
     case 'undo':

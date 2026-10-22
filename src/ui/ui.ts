@@ -252,6 +252,7 @@ export class UI {
         const id = Number(sel.value);
         if (sel.dataset.act === 'route-load') game.exec({ t: 'route', id: v.id, loadId: id, unloadId: v.unloadId });
         if (sel.dataset.act === 'route-unload') game.exec({ t: 'route', id: v.id, loadId: v.loadId, unloadId: id });
+        if (sel.dataset.act === 'truck-filter') game.exec({ t: 'truck-filter', id: v.id, item: (sel.value || null) as ItemId | null });
         this.update();
         return;
       }
@@ -987,7 +988,7 @@ export class UI {
     const stations = w.stations();
     const home = w.buildings.get(v.loadId) ?? w.buildings.get(v.unloadId);
     const clone = home ? w.canBuildTruck(home) : { ok: false, reason: '정류장을 먼저 골라 주세요' };
-    const key = `v${v.id}|${v.loadId}|${v.unloadId}|${stations.map((s) => `${s.id}${s.stationMode}`).join(',')}|${clone.reason ?? ''}`;
+    const key = `v${v.id}|${v.loadId}|${v.unloadId}|${v.filter}|${stations.map((s) => `${s.id}${s.stationMode}`).join(',')}|${clone.reason ?? ''}`;
     if (key !== this.infoKey) {
       this.infoKey = key;
       const opt = (sel: number) =>
@@ -1001,6 +1002,11 @@ export class UI {
           내리는 곳에서 다 내리면 돌아와요. 한 번에 ${TRUCK.capacity}개, 초당 ${TRUCK.speed}칸.</p>
         <label class="recipe">싣는 곳 <select data-act="route-load">${opt(v.loadId)}</select></label>
         <label class="recipe">내리는 곳 <select data-act="route-unload">${opt(v.unloadId)}</select></label>
+        <label class="recipe" title="싣기 정류장에 여러 아이템이 섞여 있을 때 이 트럭이 실을 것">싣는 짐 <select data-act="truck-filter">
+          <option value="" ${v.filter ? '' : 'selected'}>아무거나</option>
+          ${ITEM_IDS.filter((i) => i !== 'water')
+            .map((i) => `<option value="${i}" ${i === v.filter ? 'selected' : ''}>${ITEMS[i].name}</option>`)
+            .join('')}</select></label>
         <div class="dyn"></div>
         <div class="actions">
           <button data-act="clone-truck" ${clone.ok ? '' : 'disabled'} title="${clone.ok ? '같은 두 정류장을 오가는 트럭을 하나 더' : (clone.reason ?? '')}">
@@ -1032,7 +1038,10 @@ export class UI {
         ? `<div class="row"><span>운송량</span><b class="muted">한 바퀴 돌면 나와요</b></div>`
         : `<div class="row"><span>운송량</span><b>분당 ${fmtNum(perMin)}개 <span class="muted">(${Math.round(v.lastTrip)}초에 ${v.lastLoad}개)</span></b></div>`,
     );
-    const hint = VEHICLE_HINT[v.status];
+    const hint =
+      v.status === 'waiting' && v.filter
+        ? `이 트럭이 실을 짐(${ITEMS[v.filter].name})이 싣는 정류장에 없어요. 컨베이어로 넣거나 "싣는 짐"을 바꿔 주세요.`
+        : VEHICLE_HINT[v.status];
     if (hint) lines.push(`<p class="muted">→ ${hint}</p>`);
     el.querySelector('.dyn')!.innerHTML = lines.join('');
   }

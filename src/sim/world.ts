@@ -19,7 +19,7 @@ import {
 } from '../data/buildings';
 import { ITEM_IDS, type ItemId, type ItemStack } from '../data/items';
 import { RECIPES, type MachineKind, type Recipe } from '../data/recipes';
-import { INITIAL_BUILDINGS, INITIAL_RECIPES, TECH_BY_ID } from '../data/tech';
+import { ENDLESS_BY_ID, ENDLESS_REQUIRES, INITIAL_BUILDINGS, INITIAL_RECIPES, TECH_BY_ID, endlessCost } from '../data/tech';
 import { Building, addTo, countOf, type BeltItem, type StationMode } from './building';
 import { DX, DY, opposite, rotateCW, type Dir } from './dir';
 import { Vehicle, type VehicleState } from './vehicle';
@@ -234,6 +234,8 @@ export class World {
   unlockedBuildings = new Set<BuildingType>(INITIAL_BUILDINGS);
   unlockedRecipes = new Set<string>(INITIAL_RECIPES);
   researched = new Set<string>();
+  /** 끝없는 연구 단계 (연구 id → 단계, 없으면 0) */
+  levels = new Map<string, number>();
   /** 이룬 목표(가이드)의 제목. 한 번 이루면 저장에 남아 다시 앞 목표로 돌아가지 않는다 */
   guideDone = new Set<string>();
   /** 빈 땅에서 흙을 캘 수 있는지 ("흙 정제" 연구) */
@@ -839,8 +841,14 @@ export class World {
 
   /** 지금 하는 작업 1회에 걸리는 시간 (초) */
   craftTime(b: Building): number {
-    if (isMinerType(b.type)) return 1 / (b.def.speed ?? 1);
-    return this.recipeOf(b)?.time ?? 1;
+    if (isMinerType(b.type)) return 1 / ((b.def.speed ?? 1) * this.boost('endless-mining'));
+    return (this.recipeOf(b)?.time ?? 1) / this.boost('endless-crafting');
+  }
+
+  /** 끝없는 연구로 빨라진 배율 (1 = 그대로, 3단계면 1.3) */
+  boost(id: string): number {
+    const t = ENDLESS_BY_ID[id];
+    return 1 + (t ? t.step * (this.levels.get(id) ?? 0) : 0);
   }
 
   /** 채굴기·제련로·조립기의 최근 생산 현황. 그 밖의 건물이나 레시피가 없으면 null */
@@ -859,11 +867,11 @@ export class World {
             : null
           : patchItem;
       if (!item) return null;
-      maxOut = [{ item, count: 60 * (b.def.speed ?? 1) }];
+      maxOut = [{ item, count: 60 / this.craftTime(b) }];
     } else {
       const r = this.recipeOf(b);
       if (!r) return null;
-      const perMin = 60 / r.time;
+      const perMin = 60 / this.craftTime(b);
       maxOut = r.outputs.map((o) => ({ item: o.item, count: o.count * perMin }));
       maxIn = r.inputs.map((i) => ({ item: i.item, count: i.count * perMin }));
     }
@@ -1245,6 +1253,12 @@ export class World {
   // ───────────────────────── 연구 ─────────────────────────
 
   canResearch(id: string): PlaceCheck {
+    const e = ENDLESS_BY_ID[id];
+    if (e) {
+      if (!this.researched.has(ENDLESS_REQUIRES)) return { ok: false, reason: '광맥 독립 뒤에 열려요' };
+      if (!this.canAfford(endlessCost(e, this.endlessLevel(id) + 1))) return { ok: false, reason: '재료 부족' };
+      return { ok: true };
+    }
     const t = TECH_BY_ID[id];
     if (!t) return { ok: false, reason: '없는 연구' };
     if (this.researched.has(id)) return { ok: false, reason: '완료됨' };
@@ -1255,9 +1269,22 @@ export class World {
 
   research(id: string): boolean {
     if (!this.canResearch(id).ok) return false;
+    const e = ENDLESS_BY_ID[id];
+    if (e) {
+      // 끝없는 연구는 한 단계씩 오른다
+      const level = this.endlessLevel(id) + 1;
+      for (const c of endlessCost(e, level)) addTo(this.stock, c.item, -c.count);
+      this.levels.set(id, level);
+      return true;
+    }
     for (const c of TECH_BY_ID[id].cost) addTo(this.stock, c.item, -c.count);
     this.applyTech(id);
     return true;
+  }
+
+  /** 끝없는 연구의 지금 단계 */
+  endlessLevel(id: string): number {
+    return this.levels.get(id) ?? 0;
   }
 
   /** 연구 효과만 적용 (비용 없음). 불러오기에서도 쓴다. */
@@ -2256,6 +2283,7 @@ export class World {
         .map(([id, m]): [number, number, number] => [id, m.initial, m.item ? ITEM_IDS.indexOf(m.item) : -1]),
       stock: [...this.stock],
       researched: [...this.researched],
+      ...(this.levels.size ? { levels: [...this.levels] } : {}),
       guide: [...this.guideDone],
       buildings: [...this.buildings.values()].map((b) => ({
         id: b.id,
@@ -2323,6 +2351,7 @@ export class World {
     w.patchesDirty = true;
     w.stock = new Map(data.stock);
     for (const id of data.researched) w.applyTech(id);
+    w.levels = new Map(data.levels ?? []);
     w.guideDone = new Set(data.guide ?? []);
     for (const s of data.buildings) {
       const b = new Building(s.id, s.type, s.x, s.y, s.dir);
@@ -2439,6 +2468,7 @@ export class World {
     h.num(this.tickNo).num(this.nextId).num(this.nextVehicleId).num(this.time);
     for (const [item, n] of this.stock) h.str(item).num(n);
     h.num(this.researched.size);
+    for (const [id, n] of this.levels) h.str(id).num(n);
     for (let i = 0; i < this.resAmount.length; i++) if (this.resItem[i]) h.num(i).num(this.resAmount[i]);
     for (const b of this.buildings.values()) {
       h.num(b.id).str(b.type).num(b.x).num(b.y).num(b.dir).str(b.recipe ?? '').str(b.filter ?? '');
@@ -2548,6 +2578,8 @@ export interface SaveData {
   patchMeta?: [number, number, number][];
   stock: [ItemId, number][];
   researched: string[];
+  /** 끝없는 연구 [연구 id, 단계] (없으면 모두 0) */
+  levels?: [string, number][];
   /** 이룬 목표 제목들 */
   guide?: string[];
   buildings: SavedBuilding[];

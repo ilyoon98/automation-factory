@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { TRUCK } from '../data/buildings';
-import { TECHS } from '../data/tech';
+import { ENDLESS_BY_ID, TECHS, endlessCost } from '../data/tech';
 import { copyArea, pasteBlueprint } from './blueprint';
 import { applyCommand } from './commands';
 import type { Dir } from './dir';
@@ -1139,6 +1139,55 @@ describe('연구', () => {
     // 물류(철판 100 + 기어 50): 제련로 1대(분당 30)로도 몇 분이면 철판이 모인다
     run(w, 300);
     expect(w.stockOf('iron-plate')).toBeGreaterThanOrEqual(100);
+  });
+
+  describe('끝없는 연구', () => {
+    const rich = () => {
+      const w = generateWorld(1);
+      for (const it of ['steel', 'circuit', 'concrete', 'brick'] as const) w.stock.set(it, 100000);
+      return w;
+    };
+
+    it('광맥 독립 뒤에만 열리고, 단계마다 비용이 1.5배로 오른다', () => {
+      const w = rich();
+      expect(w.canResearch('endless-mining').reason).toBe('광맥 독립 뒤에 열려요');
+      w.applyTech('ore-independence');
+      const steel = w.stockOf('steel');
+      expect(w.research('endless-mining')).toBe(true);
+      expect(w.research('endless-mining')).toBe(true);
+      expect(w.research('endless-mining')).toBe(true);
+      expect(w.endlessLevel('endless-mining')).toBe(3);
+      // 100 + 150 + 225
+      expect(steel - w.stockOf('steel')).toBe(475);
+      expect(endlessCost(ENDLESS_BY_ID['endless-mining'], 4)[0].count).toBe(338);
+    });
+
+    it('채굴기와 기계가 단계마다 10%씩 빨라진다 (생산 현황 최대치도)', () => {
+      const w = makeWorld(); // 모든 연구 완료
+      for (const it of ['steel', 'circuit', 'concrete', 'brick'] as const) w.stock.set(it, 100000);
+      ore(w, 10, 10, 2, 500);
+      const miner = w.place('miner', 10, 10, 0)!;
+      const smelter = w.place('smelter', 20, 20, 0)!;
+      smelter.recipe = 'iron-plate';
+      const mine0 = w.craftTime(miner);
+      const smelt0 = w.craftTime(smelter);
+      w.research('endless-mining');
+      w.research('endless-mining');
+      w.research('endless-crafting');
+      expect(w.craftTime(miner)).toBeCloseTo(mine0 / 1.2, 9);
+      expect(w.craftTime(smelter)).toBeCloseTo(smelt0 / 1.1, 9);
+    });
+
+    it('저장·불러오기와 체크섬에 단계가 들어간다', () => {
+      const w = rich();
+      w.applyTech('ore-independence');
+      const before = w.checksum();
+      w.research('endless-crafting');
+      expect(w.checksum()).not.toBe(before);
+      const copy = World.deserialize(JSON.parse(JSON.stringify(w.serialize())));
+      expect(copy.endlessLevel('endless-crafting')).toBe(1);
+      expect(copy.boost('endless-crafting')).toBeCloseTo(1.1, 9);
+    });
   });
 });
 

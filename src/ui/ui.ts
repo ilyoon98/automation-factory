@@ -15,7 +15,7 @@ import {
 } from '../data/buildings';
 import { ITEMS, ITEM_IDS, type ItemId, type ItemStack } from '../data/items';
 import { RECIPES, recipesFor, type MachineKind } from '../data/recipes';
-import { TECHS, TECH_BY_ID, TECH_CATEGORIES, type TechCategory } from '../data/tech';
+import { ENDLESS_REQUIRES, ENDLESS_TECHS, TECHS, TECH_BY_ID, TECH_CATEGORIES, endlessCost, type TechCategory } from '../data/tech';
 import type { Input } from '../input/input';
 import { lanRoomCheck, type Session } from '../net/session';
 import { VERSION } from '../version';
@@ -1083,20 +1083,48 @@ export class UI {
     if (!this.researchTab) {
       const ready = TECHS.find((t) => !w.researched.has(t.id) && w.canResearch(t.id).ok);
       const open = TECHS.find((t) => !w.researched.has(t.id) && t.requires.every((r) => w.researched.has(r)));
-      this.researchTab = (ready ?? open ?? TECHS[0]).category;
+      // 다 마쳤으면 끝없는 연구 탭으로
+      this.researchTab = ready?.category ?? open?.category ?? (w.researched.has(ENDLESS_REQUIRES) ? 'endless' : TECHS[0].category);
     }
     const tab = this.researchTab;
-    const key = tab + TECHS.map((t) => `${w.researched.has(t.id) ? 1 : 0}${w.canResearch(t.id).ok ? 1 : 0}`).join('');
+    const key =
+      tab +
+      TECHS.map((t) => `${w.researched.has(t.id) ? 1 : 0}${w.canResearch(t.id).ok ? 1 : 0}`).join('') +
+      ENDLESS_TECHS.map((t) => `${w.endlessLevel(t.id)}${w.canResearch(t.id).ok ? 1 : 0}`).join(',');
     if (key !== this.researchKey) {
       this.researchKey = key;
       const tabs = TECH_CATEGORIES.map((c) => {
-        const list = TECHS.filter((t) => t.category === c.id);
-        const done = list.filter((t) => w.researched.has(t.id)).length;
-        const ready = list.some((t) => !w.researched.has(t.id) && w.canResearch(t.id).ok);
+        let count: string;
+        let ready: boolean;
+        if (c.id === 'endless') {
+          count = `${ENDLESS_TECHS.reduce((n, t) => n + w.endlessLevel(t.id), 0)}단계`;
+          ready = ENDLESS_TECHS.some((t) => w.canResearch(t.id).ok);
+        } else {
+          const list = TECHS.filter((t) => t.category === c.id);
+          count = `${list.filter((t) => w.researched.has(t.id)).length}/${list.length}`;
+          ready = list.some((t) => !w.researched.has(t.id) && w.canResearch(t.id).ok);
+        }
         return `<button data-rtab="${c.id}" class="${c.id === tab ? 'active' : ''}" title="${ready ? '지금 연구할 수 있는 게 있어요' : ''}">
-          ${c.icon} ${c.name} <small>${done}/${list.length}</small>${ready ? '<span class="ready"></span>' : ''}</button>`;
+          ${c.icon} ${c.name} <small>${count}</small>${ready ? '<span class="ready"></span>' : ''}</button>`;
       }).join('');
-      const cards = TECHS.filter((t) => t.category === tab).map((t) => {
+      const costHtml = (list: ItemStack[]) =>
+        list.map((c) => `<span class="c">${itemLink(c.item, false)}<span data-have="${c.item}"></span>/${c.count}</span>`).join(' ');
+      // 끝없는 연구: 단계와 지금 효과, 다음 단계 비용
+      const endless = ENDLESS_TECHS.map((t) => {
+        const level = w.endlessLevel(t.id);
+        const check = w.canResearch(t.id);
+        const open = w.researched.has(ENDLESS_REQUIRES);
+        const now = Math.round(t.step * level * 100);
+        const req = open ? '' : `<div class="req">선행: ${TECH_BY_ID[ENDLESS_REQUIRES].icon} ${TECH_BY_ID[ENDLESS_REQUIRES].name}</div>`;
+        return `<div class="tech ${open ? 'open' : 'locked'}">
+          <h4><span class="ticon">${t.icon}</span>${t.name} <small class="muted">${level}단계</small></h4>
+          <p>${t.description}<br><small>지금 +${now}% → 다음 단계 +${now + Math.round(t.step * 100)}%</small></p>
+          ${req}
+          <div class="cost">${costHtml(endlessCost(t, level + 1))}</div>
+          <button data-tech="${t.id}" ${check.ok ? '' : 'disabled'}>${check.ok ? `${level + 1}단계 연구하기` : (check.reason ?? '')}</button>
+        </div>`;
+      });
+      const cards = tab === 'endless' ? endless.join('') : TECHS.filter((t) => t.category === tab).map((t) => {
         const done = w.researched.has(t.id);
         const check = w.canResearch(t.id);
         const reqOk = t.requires.every((r) => w.researched.has(r));

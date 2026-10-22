@@ -1,14 +1,15 @@
 import type { BuildingType } from './buildings';
 import type { ItemStack } from './items';
 
-/** 연구 창의 탭 */
-export type TechCategory = 'production' | 'logistics' | 'power' | 'resources';
+/** 연구 창의 탭 (endless = 끝없는 연구, TECHS가 아니라 ENDLESS_TECHS) */
+export type TechCategory = 'production' | 'logistics' | 'power' | 'resources' | 'endless';
 
 export const TECH_CATEGORIES: { id: TechCategory; name: string; icon: string }[] = [
   { id: 'production', name: '생산', icon: '⚙️' },
   { id: 'logistics', name: '물류', icon: '🚚' },
   { id: 'power', name: '전력', icon: '⚡' },
   { id: 'resources', name: '자원', icon: '⛏️' },
+  { id: 'endless', name: '끝없는', icon: '📈' },
 ];
 
 export interface Tech {
@@ -233,3 +234,56 @@ export const TECHS: Tech[] = [
 ];
 
 export const TECH_BY_ID: Record<string, Tech> = Object.fromEntries(TECHS.map((t) => [t.id, t]));
+
+/**
+ * 끝없는 연구: 최종 목표(광맥 독립)를 마친 뒤 단계마다 올리는 연구. 끝이 없다.
+ * 단계마다 효과가 step만큼 더해지고(+10%), 다음 단계 비용은 1.5배.
+ */
+export interface EndlessTech {
+  id: string;
+  name: string;
+  icon: string;
+  description: string;
+  /** 1단계 비용 */
+  base: ItemStack[];
+  /** 단계당 효과 (0.1 = 10% 빨라짐) */
+  step: number;
+}
+
+export const ENDLESS_REQUIRES = 'ore-independence';
+export const ENDLESS_GROWTH = 1.5;
+
+export const ENDLESS_TECHS: EndlessTech[] = [
+  {
+    id: 'endless-mining',
+    icon: '⛏️',
+    name: '채굴 속도',
+    description: '모든 채굴기·고급 채굴기·양수기가 단계마다 10% 빨라져요. 광맥은 그만큼 빨리 줄어요.',
+    base: [
+      { item: 'steel', count: 100 },
+      { item: 'circuit', count: 100 },
+      { item: 'concrete', count: 20 },
+    ],
+    step: 0.1,
+  },
+  {
+    id: 'endless-crafting',
+    icon: '⚙️',
+    name: '기계 속도',
+    description: '제련로·조립기·분쇄기 같은 모든 기계가 단계마다 10% 빨라져요. 전력은 그대로예요.',
+    base: [
+      { item: 'brick', count: 100 },
+      { item: 'circuit', count: 150 },
+      { item: 'concrete', count: 20 },
+    ],
+    step: 0.1,
+  },
+];
+
+export const ENDLESS_BY_ID: Record<string, EndlessTech> = Object.fromEntries(ENDLESS_TECHS.map((t) => [t.id, t]));
+
+/** level 단계로 올리는 비용 (level = 1부터) */
+export function endlessCost(t: EndlessTech, level: number): ItemStack[] {
+  const k = ENDLESS_GROWTH ** (level - 1);
+  return t.base.map((c) => ({ item: c.item, count: Math.ceil(c.count * k) }));
+}

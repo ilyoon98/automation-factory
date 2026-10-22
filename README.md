@@ -63,12 +63,15 @@ Electron으로 게임 화면을 창에 담고, 같이 하기 서버와 방 찾�
    npm version minor --no-git-tag-version   # 큰 변경: 0.1.x → 0.2.0
    ```
    또는 `package.json`의 `"version"`을 직접 고친다.
-2. 올리기:
+2. 바뀐 점 적기: `docs/바뀐점.md`에 `## 0.1.1` 절을 만들어 적는다. 올릴 때 그 절이 릴리스 설명에 들어간다 (없으면 설명 없이 올라간다).
+3. 올리기:
    ```bash
    npm run release
    ```
-   빌드한 다음 깃허브 릴리스 `v0.1.1`을 만들고 설치 파일·`latest.yml`·`.blockmap`을 올린다. 끝나면 `https://github.com/ilyoon98/automation-factory/releases` 에 보인다.
-3. 친구들은 다음에 게임을 켤 때 업데이트 알림을 본다.
+   빌드한 다음 숨김 릴리스 `v0.1.1`을 만들어 설치 파일 → `.blockmap` → `latest.yml` 차례로 올리고, 다 올라가면 공개한다. 끝나면 `https://github.com/ilyoon98/automation-factory/releases` 에 보인다.
+   - 올리기는 electron-builder가 아니라 `scripts/build-exe.mjs`가 직접 한다. electron-builder에게 맡겼더니 0.2.0 때 같은 태그로 릴리스가 둘 생겨 파일이 나뉘어 올라갔다.
+   - 중간에 끊기면 `npm run release`를 다시 하면 된다. 올리다 만 숨김 릴리스나 방금(2시간 안) 공개한 릴리스를 찾아 파일을 새 빌드로 바꿔 올린다.
+4. 친구들은 다음에 게임을 켤 때 업데이트 알림을 본다.
 
 - **같은 버전 번호로 두 번 올리지 않는다.** 이미 그 버전을 받은 사람에게는 업데이트가 안 뜬다. 고쳤으면 버전을 올려서 다시 올린다.
 - 버전이 다른 사람끼리는 같이 하기가 안 된다 (아래 "버전 확인"). 새 버전을 올리면 모두 업데이트하라고 알린다.

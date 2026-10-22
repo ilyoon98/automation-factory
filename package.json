@@ -1,0 +1,71 @@
+{
+  "name": "automation-game",
+  "productName": "자동화 공장",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "main": "electron/main.mjs",
+  "scripts": {
+    "dev": "vite",
+    "host": "vite --host",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "app": "npm run build && electron .",
+    "exe": "npm run build && node scripts/build-exe.mjs",
+    "release": "npm run build && node scripts/build-exe.mjs --publish"
+  },
+  "build": {
+    "appId": "kr.automation-factory.game",
+    "electronDist": "node_modules/electron/dist",
+    "directories": {
+      "output": "release",
+      "buildResources": "build"
+    },
+    "files": [
+      "dist/**",
+      "electron/**",
+      "server/**",
+      "package.json"
+    ],
+    "win": {
+      "target": "nsis",
+      "icon": "build/icon.ico"
+    },
+    "nsis": {
+      "oneClick": true,
+      "perMachine": false,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "자동화 공장",
+      "runAfterFinish": true,
+      "deleteAppDataOnUninstall": false,
+      "language": "1042",
+      "installerLanguages": [
+        "ko_KR"
+      ],
+      "artifactName": "AutomationFactory-Setup-${version}.${ext}"
+    },
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "ilyoon98",
+        "repo": "automation-factory",
+        "releaseType": "release"
+      }
+    ]
+  },
+  "devDependencies": {
+    "electron": "^39.8.10",
+    "electron-builder": "^26.15.3",
+    "galmuri": "^2.40.3",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.4",
+    "vitest": "^5.0.5"
+  },
+  "dependencies": {
+    "electron-updater": "^6.8.9",
+    "ws": "^8.22.0"
+  }
+}

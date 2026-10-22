@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>자동화 공장</title>
+    <link rel="icon" href="/favicon.ico" />
+  </head>
+  <body>
+    <canvas id="game"></canvas>
+
+    <div id="topbar">
+      <div class="brand">자동화 공장</div>
+      <div id="clock">0:00</div>
+      <div class="speed">
+        <button data-speed="0" title="일시정지 (Space)">⏸</button>
+        <button data-speed="1">1×</button>
+        <button data-speed="2">2×</button>
+        <button data-speed="4">4×</button>
+      </div>
+      <div class="speed">
+        <button id="btn-undo" title="되돌리기 (Ctrl+Z)">↶</button>
+        <button id="btn-redo" title="다시 하기 (Ctrl+Y)">↷</button>
+      </div>
+      <div id="net" hidden></div>
+      <button id="btn-chat" title="채팅 — 같이 하면 모두의 화면에 흘러가요">채팅 <kbd>Enter</kbd></button>
+      <div class="spacer"></div>
+      <button id="btn-codex" title="아이템별 얻는 법·쓰는 곳">도감 <kbd>G</kbd></button>
+      <button id="btn-rates" title="기계마다 분당 생산량과 가동률 표시">생산량 <kbd>I</kbd></button>
+      <button id="btn-stats" title="공장 전체 아이템별 생산·소비, 모자란 것">통계 <kbd>P</kbd></button>
+      <button id="btn-map" title="맵 전체 지도 (광맥·호수·도로·트럭)">지도 <kbd>M</kbd></button>
+      <button id="btn-research">연구 <kbd>T</kbd></button>
+      <button id="btn-save">저장</button>
+      <button id="btn-new">새 게임</button>
+      <button id="btn-help">도움말 <kbd>H</kbd></button>
+    </div>
+
+    <div id="players" hidden></div>
+
+    <div id="left">
+      <section id="ore-alerts" hidden></section>
+      <section id="guide"></section>
+      <section id="power"></section>
+      <section id="stock"></section>
+    </div>
+
+    <aside id="info" hidden></aside>
+    <div id="holding" hidden></div>
+    <div id="bottom">
+      <div id="tabs"></div>
+      <div id="palette"></div>
+      <div id="palette-bar" hidden><div class="thumb"></div></div>
+    </div>
+    <canvas id="minimap" hidden title="지도 · 누르거나 끌면 그리로 가요 (M으로 켜고 끄기)"></canvas>
+    <div id="tooltip" hidden></div>
+    <div id="toast"></div>
+    <!-- 채팅: 메시지가 오른쪽에서 왼쪽으로 흘러간다 -->
+    <div id="chat-flow"></div>
+    <div id="chat-box" hidden><span>채팅</span><input type="text" autocomplete="off" spellcheck="false" /></div>
+
+    <div id="research" class="modal" hidden></div>
+    <!-- 통계 표의 아이템을 누르면 도감이 그 위에 열리도록 도감을 뒤에 둔다 -->
+    <div id="stats" class="modal" hidden></div>
+    <div id="codex" class="modal" hidden></div>
+
+    <div id="help" class="modal" hidden>
+      <div class="panel">
+        <header><h2>자동화 공장</h2><button class="x" data-act="close-modal">×</button></header>
+        <p>광맥에서 광석을 캐서 컨베이어로 옮기고, 제련·조립해서 허브로 보내세요.
+          허브에 모인 아이템으로 새 건물을 짓고 연구를 해요. 기계마다 속도가 달라서 생기는
+          <b>잉여와 부족</b>을 분배기로 조절하는 게 핵심이에요.</p>
+        <table class="keys">
+          <tr><td>좌클릭</td><td>건물 배치 · 이미 있는 건물을 누르면 설정 창 (도구를 들고 있어도)</td></tr>
+          <tr><td>좌클릭 드래그</td><td>컨베이어를 끌어서 연속 배치 (방향 자동) · 빈손이면 화면 이동</td></tr>
+          <tr><td>Ctrl + 드래그</td><td>영역 복사 → 좌클릭으로 붙여넣기 (방향·레시피 유지)</td></tr>
+          <tr><td>우클릭 (드래그)</td><td>철거 — 재료와 안에 든 아이템 100% 환급. 누른 채 끌면 지나간 칸을 줄줄이</td></tr>
+          <tr><td>Shift + 우클릭 드래그</td><td>사각형 영역 안을 한 번에 철거</td></tr>
+          <tr><td>Ctrl+Z · Ctrl+Y</td><td>되돌리기 · 다시 하기 (짓기·철거·회전·설정. 드래그 한 번이 한 단계, 위쪽 ↶ ↷ 버튼도)</td></tr>
+          <tr><td>휠 · 가운데 드래그 · WASD</td><td>줌 · 화면 이동</td></tr>
+          <tr><td>Z · X · C · V · B / Tab</td><td>툴바 탭 바꾸기 (물류 · 생산 · 전력 · 보관 · 운송). Shift+Tab은 반대로</td></tr>
+          <tr><td>1 ~ 9</td><td>지금 탭의 N번째 건물 고르기 (한 번 더 누르면 해제)</td></tr>
+          <tr><td>R · Shift+R</td><td>회전 · 반대로 회전 (마우스 아래 건물이 있으면 그 건물, 빈 칸이면 들고 있는 도구)</td></tr>
+          <tr><td>Q</td><td>마우스 아래 건물과 같은 도구 집기</td></tr>
+          <tr><td>F · Alt + 클릭</td><td>같이 하기: 핑 — 모두의 화면에 "여기 보세요" 표시 (화면 밖이면 가장자리 화살표)</td></tr>
+          <tr><td>Enter</td><td>채팅 — 입력하고 Enter로 보내면 화면 아무 높이에서 오른쪽에서 왼쪽으로 흘러가요 (같이 하면 모두에게). Esc는 취소</td></tr>
+          <tr><td>Esc</td><td>도구 · 선택 해제</td></tr>
+          <tr><td>Space</td><td>일시정지</td></tr>
+          <tr><td>I</td><td>생산량 표시 켜기/끄기 (기계 위 숫자 = 분당 생산, 초록 ≥90% · 노랑 ≥50% · 빨강 가동률)</td></tr>
+          <tr><td>G</td><td>도감: 아이템별 얻는 법 · 쓰는 곳 (아이템을 눌러도 열려요)</td></tr>
+          <tr><td>M</td><td>지도 켜고 끄기: 맵 전체의 광맥 · 호수 · 도로 · 트럭. 누르거나 끌면 그리로 가요</td></tr>
+          <tr><td>P</td><td>공장 통계: 아이템마다 분당 만드는 양 · 쓰는 양, 모두 100%로 돌면 모자란 것과 기계 몇 대가 더 필요한지</td></tr>
+          <tr><td>T · H</td><td>연구 · 도움말</td></tr>
+        </table>
+        <h3>규칙</h3>
+        <ul>
+          <li>채굴기·제련로·조립기는 <b>노란 화살표(출구) 쪽으로만</b> 내보내요. R로 돌릴 수 있어요.
+            출구가 컨베이어·허브·다른 기계에 닿아 있으면 거기로 들어가요.</li>
+          <li>재료는 출구를 뺀 나머지 면에서, 건물 <b>쪽을 향한</b> 컨베이어로 넣어요.</li>
+          <li>분배기는 <b>흰 화살표(뒤)가 입구</b>, 노란 화살표 세 개가 출구예요.</li>
+          <li>제련로는 처음 들어온 재료로 레시피를 정해요. 조립기는 클릭해서 레시피를 골라요.</li>
+          <li>고속 컨베이어를 들고 일반 컨베이어 위를 드래그하면 위에 있던 아이템은 그대로 두고 바로 교체돼요.</li>
+          <li>지하 컨베이어(물류 탭 3번)는 입구를 놓고 같은 방향으로 최대 4칸 건너 하나 더 놓으면 출구가 돼요. 그 사이로 다른 컨베이어가 지나가도 돼요.</li>
+          <li>병합기는 뒤·양옆 세 곳에서 받아 앞으로 내보내요. 컨베이어 옆구리로 합류시키면 본선이 꽉 찼을 때 옆줄이 못 들어가니, 꽉 찬 줄끼리 합칠 때는 병합기를 쓰세요.</li>
+          <li>분배기는 출구에 번갈아 나눠 주고, 우선 분배기는 앞쪽이 막혔을 때만 옆으로 넘겨요.</li>
+          <li>전력이 모자라면 모든 기계가 같은 비율로 느려져요. 허브가 기본 300kW를 줘요.</li>
+          <li>"차량 운송" 연구 뒤에는 운송 탭(B)에서 도로와 정류장을 지어요. 도로를 드래그로 깔고, 양 끝 도로 옆에
+            싣기 정류장(컨베이어로 받음)과 내리기 정류장(앞으로 내보냄)을 놓은 뒤, 정류장을 클릭해 "트럭 만들기".
+            트럭을 클릭하면 오가는 정류장을 바꿀 수 있어요. 컨베이어는 지하 컨베이어로 도로 밑을 지나가게 하세요.</li>
+          <li>광맥은 캐면 줄어들어요. 돌 광맥만 무한이에요. 지금 속도로 10분 안에 바닥날 광맥이나 바닥난 광맥은
+            왼쪽 위에 경고가 떠요. 누르면 그 광맥의 채굴기로 가요 (여러 대면 누를 때마다 다음 채굴기).</li>
+          <li>후반에는 "흙 정제" 연구로 빈 땅에서 흙을 캐요. 흙 → 분쇄기(자갈·모래) → 세척기(모래 + 물) → 분리기(철 정광 7 · 구리 정광 2 · 슬래그 1) → 제련로. 물은 호수에 양수기를 놓아 얻어요.</li>
+          <li>석탄도 바닥나요. "재생 에너지"로 태양광 패널(늘 100kW)·수력 발전기(물로 최대 600kW)를, "전기 제강"으로 전기로(철판 2 → 강철, 전력 450kW)를 지으면 석탄 없이 돌아가요.
+            전력은 허브·태양광 → 수력 → 석탄 발전기 순으로 써서, 석탄은 마지막까지 아껴요.</li>
+        </ul>
+        <p class="muted">진행은 30초마다 브라우저에 자동 저장돼요.</p>
+      </div>
+    </div>
+
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

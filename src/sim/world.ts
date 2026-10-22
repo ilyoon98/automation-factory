@@ -1731,7 +1731,7 @@ export class World {
   private updateBelt(b: Building): void {
     const items: BeltItem[] = b.items;
     if (items.length === 0) return;
-    const step = (b.def.speed ?? BELT_SPEED) * DT;
+    const step = (b.def.speed ?? BELT_SPEED) * this.boost('endless-belt') * DT;
     const len = this.beltLength(b);
     let limit = this.frontLimit(b, len);
     for (let i = 0; i < items.length; i++) {

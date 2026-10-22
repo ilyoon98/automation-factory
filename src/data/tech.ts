@@ -279,6 +279,18 @@ export const ENDLESS_TECHS: EndlessTech[] = [
     step: 0.1,
   },
   {
+    id: 'endless-belt',
+    icon: '⏩',
+    name: '컨베이어 속도',
+    description: '모든 컨베이어(고속·지하 포함)가 단계마다 10% 빨라져요. 한 줄로 더 많이 나를 수 있어요.',
+    base: [
+      { item: 'steel', count: 100 },
+      { item: 'gear', count: 200 },
+      { item: 'circuit', count: 100 },
+    ],
+    step: 0.1,
+  },
+  {
     id: 'endless-truck',
     icon: '🚚',
     name: '트럭 성능',

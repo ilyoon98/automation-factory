@@ -1178,6 +1178,21 @@ describe('연구', () => {
       expect(w.craftTime(smelter)).toBeCloseTo(smelt0 / 1.1, 9);
     });
 
+    it('컨베이어 속도: 단계마다 컨베이어 위 아이템이 10% 빨리 간다', () => {
+      const speedAfter = (levels: number) => {
+        const w = makeWorld();
+        for (const it of ['steel', 'circuit', 'gear'] as const) w.stock.set(it, 100000);
+        for (let i = 0; i < levels; i++) expect(w.research('endless-belt')).toBe(true);
+        const belt = w.place('belt', 15, 15, 0)!;
+        belt.items.push({ item: 'iron-ore', pos: 0, n: 1 });
+        run(w, 0.25);
+        return belt.items[0].pos;
+      };
+      const base = speedAfter(0);
+      expect(base).toBeGreaterThan(0);
+      expect(speedAfter(2)).toBeCloseTo(base * 1.2, 6);
+    });
+
     it('트럭 성능: 단계마다 트럭이 10% 빨라지고 배터리도 10% 커진다 (칸당 전기는 그대로)', () => {
       const w = makeWorld();
       for (const it of ['steel', 'circuit', 'gear'] as const) w.stock.set(it, 100000);

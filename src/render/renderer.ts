@@ -163,7 +163,7 @@ export class Renderer {
     }
 
     // 컨베이어 무늬가 흐르는 위치 (칸 단위, 0~0.5. 종류마다 속도가 다르다)
-    const phase = (b: Building) => (world.time * (b.def.speed ?? BELT_SPEED)) % 0.5;
+    const phase = (b: Building) => (world.time * (b.def.speed ?? BELT_SPEED) * world.boost('endless-belt')) % 0.5;
     const isLine = (b: Building) => isLineType(b.type);
     for (const b of visible) if (b.type === 'road') this.drawRoad(world, b);
     for (const b of visible) {

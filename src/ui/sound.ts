@@ -35,10 +35,15 @@ function loadSettings(): Settings {
 
 /** 같은 소리를 이 간격(초)보다 빨리 다시 내지 않는다 (컨베이어를 끌면 칸마다 명령이 나오므로) */
 const GAP: Partial<Record<SoundName, number>> = { place: 0.05, remove: 0.05, rotate: 0.04, error: 0.4, chat: 0.2 };
-/** 연달아 지을 때 한 번에 한 칸씩 올라가는 음 (반음 수, 5음계). 끝까지 가면 맨 위 음을 유지 */
-const PLACE_STEPS = [0, 2, 4, 7, 9, 12, 14, 16, 19];
+/** 연달아 지을 때 한 번에 한 칸씩 올라가는 음 (한 옥타브 안의 반음 수, 5음계). 다섯 번이면 한 옥타브를 돌아 처음 음으로 */
+const PLACE_STEPS = [0, 2, 4, 7, 9];
 /** 짓는 소리 사이가 이보다(초) 벌어지면 처음 음으로 돌아간다 */
 const PLACE_STREAK_GAP = 0.5;
+/** 셰퍼드 음: 가장 낮은 음(C2), 옥타브 겹 수, 가장 크게 들리는 높이(Hz), 소리가 퍼진 폭(옥타브) */
+const SHEPARD_LOW = 65.41;
+const SHEPARD_OCTAVES = 7;
+const SHEPARD_CENTER = 520;
+const SHEPARD_WIDTH = 1;
 
 // ───────────────────────── 배경음 악보 ─────────────────────────
 
@@ -175,11 +180,11 @@ class Sound {
     const out = this.out;
     switch (name) {
       case 'place': {
-        // 나무 블록을 내려놓는 "톡". 연달아 지으면 5음계를 따라 한 칸씩 올라가고, 잠깐 멈추면 처음 음으로
+        // 나무 블록을 내려놓는 "톡". 연달아 지으면 5음계를 따라 한 칸씩 끝없이 올라가는 것처럼 들리고 (셰퍼드 음),
+        // 잠깐 멈추면 처음 음으로
         this.placeStreak = t - this.lastPlaceAt < PLACE_STREAK_GAP ? this.placeStreak + 1 : 0;
         this.lastPlaceAt = t;
-        const k = 2 ** (PLACE_STEPS[Math.min(this.placeStreak, PLACE_STEPS.length - 1)] / 12);
-        this.tone(out, 'triangle', 520 * k, 260 * k, t, 0.09, 0.5);
+        this.shepard(out, PLACE_STEPS[this.placeStreak % PLACE_STEPS.length], t, 0.12, 0.22);
         this.noise(ctx, t, 0.03, 0.12, 2400);
         break;
       }
@@ -299,6 +304,22 @@ class Sound {
     o.connect(g).connect(out);
     o.start(at);
     o.stop(at + len + 0.02);
+  }
+
+  /**
+   * 셰퍼드 음: 한 옥타브씩 떨어진 사인파 여러 개를, 가운데 높이(SHEPARD_CENTER)가 가장 크고 위아래로 갈수록 작게 섞는다.
+   * 음을 한 칸씩 올리면 맨 위 음은 작아지며 사라지고 맨 아래에서 새 음이 커져서, 한 옥타브를 돌아 처음 음이 되어도
+   * 계속 올라가는 것처럼 들린다. semis = 한 옥타브 안의 높이 (반음 수)
+   */
+  private shepard(out: AudioNode, semis: number, at: number, len: number, vol: number): void {
+    for (let k = 0; k < SHEPARD_OCTAVES; k++) {
+      const f = SHEPARD_LOW * 2 ** (k + semis / 12);
+      const d = Math.log2(f / SHEPARD_CENTER) / SHEPARD_WIDTH;
+      const w = Math.exp(-0.5 * d * d);
+      if (w < 0.02) continue;
+      // 반음만큼 살짝 내려앉아 "톡" 느낌은 남긴다 (한 옥타브씩 미끄러지면 옆 음과 겹쳐 올라가는 느낌이 깨짐)
+      this.tone(out, 'sine', f, f * 0.94, at, len, vol * w);
+    }
   }
 
   /** 종소리: 기본음 + 배음 두 개가 천천히 사라짐 */

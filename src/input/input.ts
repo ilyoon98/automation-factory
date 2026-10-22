@@ -45,8 +45,8 @@ const ROTATABLE: BuildingType[] = [
 /**
  * 마우스 중심 조작.
  * - 좌클릭: 배치 (도구 선택 시) / 건물 선택 (빈손) / 빈손 드래그는 화면 이동
- * - Ctrl + 좌클릭 드래그: 영역 복사 → 좌클릭으로 붙여넣기
- * - 우클릭(드래그): 철거, Shift + 우클릭 드래그: 사각형 영역 철거
+ * - Ctrl + 좌클릭 드래그: 영역 복사 → 좌클릭으로 붙여넣기, 우클릭(또는 Esc)으로 취소
+ * - 우클릭(드래그): 철거, Ctrl + 우클릭 드래그: 사각형 영역 철거 (복사와 같은 Ctrl + 드래그라 헷갈리지 않게)
  * - Ctrl+Z / Ctrl+Y: 되돌리기 / 다시 하기 (마우스를 누르고 뗄 때까지가 한 단계)
  * - 가운데 드래그: 화면 이동, 휠: 줌
  */
@@ -61,7 +61,7 @@ export class Input implements ViewState {
   selectedVehicle: number | null = null;
   /** Ctrl 드래그 중인 복사 영역 */
   selection: { x0: number; y0: number; x1: number; y1: number } | null = null;
-  /** Shift + 우클릭 드래그 중인 철거 영역 */
+  /** Ctrl + 우클릭 드래그 중인 철거 영역 */
   removeArea: { x0: number; y0: number; x1: number; y1: number } | null = null;
   /** 붙여넣기 대기 중인 청사진 */
   paste: Blueprint | null = null;
@@ -156,7 +156,15 @@ export class Input implements ViewState {
     this.last = t;
     if (e.button === 1) return this.startPan(e);
     if (e.button === 2) {
-      if (e.shiftKey) {
+      // 복사한 걸 들고 있으면 우클릭은 철거가 아니라 붙여넣기 취소
+      if (this.paste) {
+        this.paste = null;
+        this.mode = 'none';
+        this.cb.toast('붙여넣기 취소');
+        this.cb.changed();
+        return;
+      }
+      if (e.ctrlKey || e.metaKey) {
         this.mode = 'remove-area';
         this.removeArea = { x0: t.x, y0: t.y, x1: t.x, y1: t.y };
         return;
@@ -279,7 +287,7 @@ export class Input implements ViewState {
         this.paste = bp;
         this.tool = null;
         this.selectedId = null;
-        this.cb.toast(`${bp.entries.length}개 복사 — 클릭해서 붙여넣기 (Esc 취소)`);
+        this.cb.toast(`${bp.entries.length}개 복사 — 클릭해서 붙여넣기 (우클릭·Esc 취소)`);
       }
       this.cb.changed();
     }
@@ -458,7 +466,7 @@ export class Input implements ViewState {
     this.singleRemovals = [...this.singleRemovals.filter((t) => now - t < 8000), now];
     if (this.singleRemovals.length < 3) return;
     this.removeTipShown = true;
-    this.cb.toast('팁: 우클릭한 채 끌면 지나간 칸을, Shift+우클릭으로 끌면 사각형 안을 한 번에 철거해요');
+    this.cb.toast('팁: 우클릭한 채 끌면 지나간 칸을, Ctrl+우클릭으로 끌면 사각형 안을 한 번에 철거해요');
   }
 
   /** Ctrl+Z / Ctrl+Y (위쪽 ↶ ↷ 버튼도) */

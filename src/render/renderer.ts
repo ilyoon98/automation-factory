@@ -28,7 +28,7 @@ export interface ViewState {
   /** 고른 트럭 */
   selectedVehicle: number | null;
   selection: { x0: number; y0: number; x1: number; y1: number } | null;
-  /** Shift + 우클릭 드래그 중인 철거 영역 */
+  /** Ctrl + 우클릭 드래그 중인 철거 영역 */
   removeArea: { x0: number; y0: number; x1: number; y1: number } | null;
   paste: Blueprint | null;
   /** 들고 있는 도구로 지으면 들어갈 설정 (레시피 id 또는 분류기 아이템) */

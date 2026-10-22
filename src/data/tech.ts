@@ -278,6 +278,18 @@ export const ENDLESS_TECHS: EndlessTech[] = [
     ],
     step: 0.1,
   },
+  {
+    id: 'endless-truck',
+    icon: '🚚',
+    name: '트럭 성능',
+    description: '트럭이 단계마다 10% 빨라지고 배터리도 10% 커져요. 칸당 드는 전기와 충전 속도는 그대로예요.',
+    base: [
+      { item: 'steel', count: 150 },
+      { item: 'gear', count: 100 },
+      { item: 'circuit', count: 100 },
+    ],
+    step: 0.1,
+  },
 ];
 
 export const ENDLESS_BY_ID: Record<string, EndlessTech> = Object.fromEntries(ENDLESS_TECHS.map((t) => [t.id, t]));

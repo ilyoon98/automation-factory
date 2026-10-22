@@ -93,7 +93,7 @@ const VEHICLE_STATUS_COLOR: Record<VehicleStatus, string> = {
 /** 트럭이 멈춰 있을 때 할 일 */
 const VEHICLE_HINT: Partial<Record<VehicleStatus, string>> = {
   waiting: '싣는 정류장에 짐이 없어요. 컨베이어로 정류장에 넣어 주세요.',
-  'no-battery': `배터리가 떨어져 천천히 가요. 정류장에 닿으면 충전해요. 한 번 충전으로 ${(TRUCK.battery / TRUCK.drive) * TRUCK.speed}칸까지 가니, 길이 더 길면 중간에 싣기 정류장을 두고 트럭 두 대로 나눠 나르세요 (갈아싣기).`,
+  'no-battery': `배터리가 떨어져 천천히 가요. 정류장에 닿으면 충전해요. 한 번 충전으로 기본 ${(TRUCK.battery / TRUCK.drive) * TRUCK.speed}칸까지 가니(끝없는 연구 "트럭 성능"으로 늘어요), 길이 더 길면 중간에 싣기 정류장을 두고 트럭 두 대로 나눠 나르세요 (갈아싣기).`,
   'unload-full': '내리는 정류장이 꽉 찼어요. 정류장 앞(노란 화살표)으로 짐이 빠져나가는지 확인하세요.',
   'no-route': '두 정류장 사이 도로가 끊겼어요. 도로를 이어 주세요.',
   'no-station': '싣는 곳과 내리는 곳을 서로 다른 정류장으로 골라 주세요.',
@@ -1010,7 +1010,7 @@ export class UI {
     lines.push(`<div class="row"><span>짐</span><b>${cargo || '<span class="muted">없음</span>'} <span class="muted">${v.load} / ${TRUCK.capacity}</span></b></div>`);
     lines.push(`<div class="bar"><div style="width:${(v.load / TRUCK.capacity) * 100}%;background:#c9b27a"></div></div>`);
     // 배터리: 남은 양과 그만큼 갈 수 있는 칸 수. 충전 중이면 공장 전력이 모자란 만큼 느려진다
-    const charge = v.battery / TRUCK.battery;
+    const charge = v.battery / w.truckBattery();
     const range = Math.floor((v.battery / TRUCK.drive) * TRUCK.speed);
     const charging = v.status === 'charging' || ((v.state === 'loading' || v.state === 'unloading') && charge < 1);
     const rate = charging ? ` · 충전 ${Math.round(TRUCK.charge * w.power.satisfaction)}kW` : '';

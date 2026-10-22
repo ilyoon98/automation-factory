@@ -1178,6 +1178,34 @@ describe('연구', () => {
       expect(w.craftTime(smelter)).toBeCloseTo(smelt0 / 1.1, 9);
     });
 
+    it('트럭 성능: 단계마다 트럭이 10% 빨라지고 배터리도 10% 커진다 (칸당 전기는 그대로)', () => {
+      const w = makeWorld();
+      for (const it of ['steel', 'circuit', 'gear'] as const) w.stock.set(it, 100000);
+      w.stock.set('iron-ore', 0);
+      const a = w.place('station', 20, 4, 0)!;
+      const b = w.place('station', 3, 10, 3)!;
+      w.setStationMode(b, 'unload');
+      for (let x = 5; x <= 21; x++) w.place('road', x, 6, 0);
+      for (let y = 7; y <= 10; y++) w.place('road', 5, y, 0);
+      const old = w.buildTruck(a)!;
+      expect(w.research('endless-truck')).toBe(true);
+      expect(w.research('endless-truck')).toBe(true);
+      expect(w.truckBattery()).toBeCloseTo(TRUCK.battery * 1.2, 9);
+      expect(w.truckSpeed()).toBeCloseTo(TRUCK.speed * 1.2, 9);
+      // 새 트럭은 커진 배터리가 가득, 먼저 있던 트럭은 정류장에서 마저 채운다
+      const v = w.buildTruck(a)!;
+      expect(v.battery).toBeCloseTo(TRUCK.battery * 1.2, 9);
+      expect(old.battery).toBe(TRUCK.battery);
+      a.inBuf.set('iron-ore', 100);
+      for (let i = 0; i < 60 * 30 && v.state !== 'to-unload'; i++) w.tick();
+      run(w, 0.5);
+      const x0 = v.x;
+      const b0 = v.battery;
+      run(w, 1);
+      expect(Math.abs(x0 - v.x)).toBeCloseTo(TRUCK.speed * 1.2, 6);
+      expect(b0 - v.battery).toBeCloseTo(TRUCK.speed * 1.2 * (TRUCK.drive / TRUCK.speed), 6);
+    });
+
     it('저장·불러오기와 체크섬에 단계가 들어간다', () => {
       const w = rich();
       w.applyTech('ore-independence');

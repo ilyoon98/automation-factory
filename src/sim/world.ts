@@ -1954,6 +1954,7 @@ export class World {
   private spawnTruck(tile: number, loadId: number, unloadId: number): Vehicle {
     for (const c of TRUCK.cost) addTo(this.stock, c.item, -c.count);
     const v = new Vehicle(this.nextVehicleId++, tile, this.width);
+    v.battery = this.truckBattery();
     v.loadId = loadId;
     v.unloadId = unloadId;
     this.vehicles.set(v.id, v);
@@ -2027,8 +2028,23 @@ export class World {
    */
   private chargeWant(v: Vehicle): number {
     if (v.state !== 'loading' && v.state !== 'unloading') return 0;
-    if (!this.routeOk(v) || batteryFull(v)) return 0;
-    return Math.min(TRUCK.charge, (TRUCK.battery - v.battery) / DT);
+    if (!this.routeOk(v) || this.batteryFull(v)) return 0;
+    return Math.min(TRUCK.charge, (this.truckBattery() - v.battery) / DT);
+  }
+
+  /** 트럭 배터리 크기 (kJ). 끝없는 연구 "트럭 성능"으로 커진다 */
+  truckBattery(): number {
+    return TRUCK.battery * this.boost('endless-truck');
+  }
+
+  /** 트럭 속도 (칸/초). 끝없는 연구 "트럭 성능"으로 빨라진다 */
+  truckSpeed(): number {
+    return TRUCK.speed * this.boost('endless-truck');
+  }
+
+  /** 배터리가 다 찼는지 (더하고 나눌 때 생기는 아주 작은 오차는 봐준다) */
+  private batteryFull(v: Vehicle): boolean {
+    return v.battery >= this.truckBattery() - 1e-6;
   }
 
   private updateVehicle(v: Vehicle): void {
@@ -2041,8 +2057,8 @@ export class World {
     // 정류장에 서 있으면 충전 (전력이 모자라면 그 비율만큼만)
     const want = this.chargeWant(v);
     if (want > 0) {
-      v.battery = Math.min(TRUCK.battery, v.battery + want * this.power.satisfaction * DT);
-      if (batteryFull(v)) v.battery = TRUCK.battery;
+      v.battery = Math.min(this.truckBattery(), v.battery + want * this.power.satisfaction * DT);
+      if (this.batteryFull(v)) v.battery = this.truckBattery();
     }
     if (v.state === 'to-load' || v.state === 'to-unload') {
       if (!this.drive(v, v.state === 'to-load' ? load : unload)) return;
@@ -2059,9 +2075,9 @@ export class World {
   /** 정류장 st까지 한 틱만큼 달린다. 달린 거리만큼 배터리를 쓰고, 배터리가 없으면 천천히. 도착해 있으면 true */
   private drive(v: Vehicle, st: Building): boolean {
     const empty = v.battery <= 0;
-    const full = TRUCK.speed * DT * (empty ? TRUCK.emptySpeed : 1);
+    const full = this.truckSpeed() * DT * (empty ? TRUCK.emptySpeed : 1);
     const [arrived, left] = this.move(v, st, full);
-    // 한 칸에 drive / speed kJ
+    // 한 칸에 drive / speed kJ (기본 속도 기준: 빨라져도 칸당 드는 전기는 같다)
     v.battery = Math.max(0, v.battery - ((full - left) * TRUCK.drive) / TRUCK.speed);
     if (empty && v.status === 'moving') v.status = 'no-battery';
     return arrived;
@@ -2139,7 +2155,7 @@ export class World {
   private unloadTruck(v: Vehicle, st: Building): void {
     const item = firstItem(v.cargo);
     if (!item) {
-      if (!batteryFull(v)) {
+      if (!this.batteryFull(v)) {
         v.status = 'charging';
         return;
       }
@@ -2169,7 +2185,7 @@ export class World {
 
   /** 떠날 준비가 됐어도 배터리가 다 찰 때까지는 충전한다 (그동안 짐은 계속 싣는다) */
   private leave(v: Vehicle, state: VehicleState): void {
-    if (!batteryFull(v)) {
+    if (!this.batteryFull(v)) {
       v.status = 'charging';
       return;
     }
@@ -2390,7 +2406,7 @@ export class World {
       v.timer = s.timer;
       v.idle = s.idle;
       // 배터리가 생기기 전 저장이면 가득 찬 채로
-      v.battery = s.battery ?? TRUCK.battery;
+      v.battery = s.battery ?? w.truckBattery();
       w.vehicles.set(v.id, v);
       w.nextVehicleId = Math.max(w.nextVehicleId, v.id + 1);
     }
@@ -2736,11 +2752,6 @@ function sumOf(m: Map<ItemId, number>): number {
 function firstItem(m: Map<ItemId, number>): ItemId | null {
   for (const [item, n] of m) if (n > 0) return item;
   return null;
-}
-
-/** 트럭 배터리가 다 찼는지 (더하고 나눌 때 생기는 아주 작은 오차는 봐준다) */
-function batteryFull(v: Vehicle): boolean {
-  return v.battery >= TRUCK.battery - 1e-6;
 }
 
 function isCrafter(b: Building): boolean {

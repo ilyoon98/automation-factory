@@ -593,7 +593,7 @@ export class UI {
       <div class="row"><span>사용 / 공급</span><b>${Math.round(p.demand)} / ${Math.round(p.capacity)} kW</b></div>
       <div class="row"><span>기계 속도</span><b style="color:${color}">${pct}%</b></div>
       ${parts.length > 1 ? `<p class="muted power-src">${parts.join(' · ')} kW</p>` : ''}
-      ${p.charge > 0 ? `<p class="muted power-src">사용 중 트럭 충전 ${Math.round(p.charge)} kW</p>` : ''}`;
+      ${p.charge > 0 ? `<p class="muted power-src">사용 중 ${Math.round(p.charge)} kW는 트럭 충전</p>` : ''}`;
   }
 
   private updateStock(w: World): void {
@@ -952,6 +952,17 @@ export class UI {
           const sum = known.reduce((s, r) => s + r, 0);
           lines.push(
             `<div class="row"><span>트럭 운송량</span><b>${known.length ? `분당 ${fmtNum(sum)}개` : '<span class="muted">한 바퀴 돌면 나와요</span>'}</b></div>`,
+          );
+        }
+        // 여기 서서 충전하는 트럭 (공장 전력을 쓴다)
+        const charging = w.trucksOf(b).filter(
+          (t) =>
+            ((t.state === 'loading' && t.loadId === b.id) || (t.state === 'unloading' && t.unloadId === b.id)) &&
+            t.battery < w.truckBattery() - 1e-6,
+        ).length;
+        if (charging) {
+          lines.push(
+            `<div class="row"><span>충전 중</span><b>트럭 ${charging}대 <span class="muted">${Math.round(charging * TRUCK.charge * w.power.satisfaction)} kW</span></b></div>`,
           );
         }
         const rows = [...box]

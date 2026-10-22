@@ -22,7 +22,7 @@ import { VERSION } from '../version';
 import { STATUS_LABEL, type Building, type StationMode, type Status } from '../sim/building';
 import type { Exec } from '../sim/commands';
 import { DX, DY } from '../sim/dir';
-import { VEHICLE_STATUS_LABEL, type Vehicle, type VehicleStatus } from '../sim/vehicle';
+import { ROUTE_MAX, ROUTE_MIN, VEHICLE_STATUS_LABEL, type Vehicle, type VehicleStatus } from '../sim/vehicle';
 import {
   PATCH_LOW_MIN,
   describeEdit,
@@ -100,11 +100,18 @@ const VEHICLE_HINT: Partial<Record<VehicleStatus, string>> = {
   waiting: '싣는 정류장에 짐이 없어요. 컨베이어로 정류장에 넣어 주세요.',
   'no-battery': `배터리가 떨어져 천천히 가요. 정류장에 닿으면 충전해요. 한 번 충전으로 기본 ${(TRUCK.battery / TRUCK.drive) * TRUCK.speed}칸까지 가니(끝없는 연구 "트럭 성능"으로 늘어요), 길이 더 길면 중간에 싣기 정류장을 두고 트럭 두 대로 나눠 나르세요 (갈아싣기).`,
   'unload-full': '내리는 정류장이 꽉 찼어요. 정류장 앞(노란 화살표)으로 짐이 빠져나가는지 확인하세요.',
-  'no-route': '두 정류장 사이 도로가 끊겼어요. 도로를 이어 주세요.',
-  'no-station': '싣는 곳과 내리는 곳을 서로 다른 정류장으로 골라 주세요.',
+  'no-route': '다음 정류장으로 가는 도로가 끊겼어요. 도로를 이어 주세요.',
+  'no-station': '노선의 정류장을 모두 골라 주세요. 바로 다음 정류장은 서로 달라야 해요.',
 };
 
 const STATION_MODE_NAME: Record<StationMode, string> = { load: '싣기', unload: '내리기' };
+
+/** 트럭이 이 정류장에서 하는 일 (정류장 정보창 트럭 목록) */
+function stationRole(v: Vehicle, stationId: number): string {
+  const acts = new Set(v.stops.filter((s) => s.id === stationId).map((s) => s.act));
+  if (acts.size === 2) return '여기서 싣고 내리기';
+  return acts.has('load') ? '여기서 싣기' : '여기에 내리기';
+}
 
 /** 통계 창 재고 그래프: 게임 시간 10초마다 한 번, 60개 = 최근 10분 */
 const STOCK_SAMPLE_SEC = 10;
@@ -282,9 +289,16 @@ export class UI {
       const sel = e.target as HTMLSelectElement;
       const v = this.selectedVehicle();
       if (v) {
-        const id = Number(sel.value);
-        if (sel.dataset.act === 'route-load') game.exec({ t: 'route', id: v.id, loadId: id, unloadId: v.unloadId });
-        if (sel.dataset.act === 'route-unload') game.exec({ t: 'route', id: v.id, loadId: v.loadId, unloadId: id });
+        // 노선 i번째 정류장 바꾸기. 정류장을 고르면 싣기·내리기는 그 정류장 종류로 맞춘다 (바꾸고 싶으면 옆에서)
+        const i = Number(sel.dataset.i);
+        if (sel.dataset.act === 'stop-station' || sel.dataset.act === 'stop-act') {
+          const stops = v.stops.map((st) => ({ ...st }));
+          if (sel.dataset.act === 'stop-station') {
+            const st = game.getWorld().buildings.get(Number(sel.value));
+            stops[i] = { id: Number(sel.value), act: st?.type === 'station' ? st.stationMode : stops[i].act };
+          } else stops[i].act = sel.value === 'unload' ? 'unload' : 'load';
+          game.exec({ t: 'route', id: v.id, stops });
+        }
         if (sel.dataset.act === 'truck-filter') game.exec({ t: 'truck-filter', id: v.id, item: (sel.value || null) as ItemId | null });
         this.update();
         return;
@@ -770,7 +784,10 @@ export class UI {
     }
     // 정류장은 트럭 목록과 "트럭 만들기" 버튼 상태가 바뀌면 다시 만든다
     if (b.type === 'station') {
-      srcKey = `${b.stationMode}:${w.trucksOf(b).map((t) => `${t.id}${t.loadId}`).join(',')}:${w.canBuildTruck(b).reason ?? ''}`;
+      srcKey = `${b.stationMode}:${w
+        .trucksOf(b)
+        .map((t) => `${t.id}${t.stops.map((st) => st.id + st.act).join('-')}`)
+        .join(',')}:${w.canBuildTruck(b).reason ?? ''}`;
     }
     const key = `${b.id}|${b.recipe}|${b.filter}|${w.unlockedRecipes.size}|${srcKey}`;
     if (key !== this.infoKey) {
@@ -808,7 +825,7 @@ export class UI {
       const rows = trucks
         .map(
           (t) =>
-            `<button class="truck-row" data-truck="${t.id}">🚚 트럭 ${t.id} · ${t.loadId === b.id ? '여기서 싣기' : '여기에 내리기'}
+            `<button class="truck-row" data-truck="${t.id}">🚚 트럭 ${t.id} · ${stationRole(t, b.id)}
               <span class="muted" data-truck-status="${t.id}"></span></button>`,
         )
         .join('');
@@ -1029,7 +1046,8 @@ export class UI {
         // 여기 서서 충전하는 트럭 (공장 전력을 쓴다)
         const charging = w.trucksOf(b).filter(
           (t) =>
-            ((t.state === 'loading' && t.loadId === b.id) || (t.state === 'unloading' && t.unloadId === b.id)) &&
+            (t.state === 'loading' || t.state === 'unloading') &&
+            t.stopId === b.id &&
             t.battery < w.truckBattery() - 1e-6,
         ).length;
         if (charging) {
@@ -1069,9 +1087,14 @@ export class UI {
     const el = $('info');
     el.hidden = false;
     const stations = w.stations();
-    const home = w.buildings.get(v.loadId) ?? w.buildings.get(v.unloadId);
-    const clone = home ? w.canBuildTruck(home) : { ok: false, reason: '정류장을 먼저 골라 주세요' };
-    const key = `v${v.id}|${v.loadId}|${v.unloadId}|${v.filter}|${w.endlessLevel('endless-truck')}|${stations.map((s) => `${s.id}${s.stationMode}`).join(',')}|${clone.reason ?? ''}`;
+    // 같은 노선으로 한 대 더: 노선에서 처음 들르는 정류장 옆에 만든다 (world.cloneTruck과 같은 순서)
+    const homes = v.stops.map((st) => w.buildings.get(st.id)).filter((st): st is Building => st?.type === 'station');
+    const clone = homes.find((st) => w.canBuildTruck(st).ok)
+      ? { ok: true as const, reason: undefined }
+      : homes.length
+        ? w.canBuildTruck(homes[0])
+        : { ok: false, reason: '정류장을 먼저 골라 주세요' };
+    const key = `v${v.id}|${v.stops.map((st) => st.id + st.act).join(',')}|${v.filter}|${w.endlessLevel('endless-truck')}|${stations.map((s) => `${s.id}${s.stationMode}`).join(',')}|${clone.reason ?? ''}`;
     if (key !== this.infoKey) {
       this.infoKey = key;
       const opt = (sel: number) =>
@@ -1081,10 +1104,23 @@ export class UI {
           .join('');
       el.innerHTML = `<header><img class="swatch" src="${truckIconUrl()}" alt=""><h3>트럭 ${v.id}</h3>
           <button class="x" data-act="close">×</button></header>
-        <p class="muted">두 정류장을 오가요. 싣는 곳에서 가득 차거나 ${TRUCK.wait}초 동안 새 짐이 없으면 출발하고,
-          내리는 곳에서 다 내리면 돌아와요. 한 번에 ${TRUCK.capacity}개, 초당 ${fmtNum(w.truckSpeed())}칸.</p>
-        <label class="recipe">싣는 곳 <select data-act="route-load">${opt(v.loadId)}</select></label>
-        <label class="recipe">내리는 곳 <select data-act="route-unload">${opt(v.unloadId)}</select></label>
+        <p class="muted">노선의 정류장을 차례대로 돌아요. 싣는 곳에서는 가득 차거나 ${TRUCK.wait}초 동안 새 짐이 없으면,
+          내리는 곳에서는 다 내리면 다음 정류장으로 가요. 한 번에 ${TRUCK.capacity}개, 초당 ${fmtNum(w.truckSpeed())}칸.</p>
+        <div class="route">
+          <div class="route-head"><span>노선</span><span class="muted">위에서 아래로, 끝나면 처음으로</span></div>
+          ${v.stops
+            .map(
+              (st, i) => `<div class="stop" data-stop="${i}"><span class="no">${i + 1}</span>
+              <select data-act="stop-station" data-i="${i}">${opt(st.id)}</select>
+              <select data-act="stop-act" data-i="${i}" title="여기서 싣는지 내리는지">
+                <option value="load" ${st.act === 'load' ? 'selected' : ''}>싣기</option>
+                <option value="unload" ${st.act === 'unload' ? 'selected' : ''}>내리기</option></select>
+              <button data-act="stop-up" data-i="${i}" title="한 칸 앞으로" ${i === 0 ? 'disabled' : ''}>▲</button>
+              <button data-act="stop-remove" data-i="${i}" title="노선에서 빼기" ${v.stops.length <= ROUTE_MIN ? 'disabled' : ''}>×</button></div>`,
+            )
+            .join('')}
+          <button data-act="stop-add" ${v.stops.length >= ROUTE_MAX ? 'disabled' : ''}>+ 정류장 더하기 <span class="muted">(최대 ${ROUTE_MAX}곳)</span></button>
+        </div>
         <label class="recipe" title="싣기 정류장에 여러 아이템이 섞여 있을 때 이 트럭이 실을 것">싣는 짐 <select data-act="truck-filter">
           <option value="" ${v.filter ? '' : 'selected'}>아무거나</option>
           ${ITEM_IDS.filter((i) => i !== 'water')
@@ -1092,17 +1128,18 @@ export class UI {
             .join('')}</select></label>
         <div class="dyn"></div>
         <div class="actions">
-          <button data-act="clone-truck" ${clone.ok ? '' : 'disabled'} title="${clone.ok ? '같은 두 정류장을 오가는 트럭을 하나 더' : (clone.reason ?? '')}">
-            🚚 같은 길로 한 대 더 <span class="muted">${TRUCK.cost.map((c) => `${itemIcon(c.item)}${c.count}`).join(' ')}</span></button>
+          <button data-act="clone-truck" ${clone.ok ? '' : 'disabled'} title="${clone.ok ? '같은 노선을 도는 트럭을 하나 더' : (clone.reason ?? '')}">
+            🚚 같은 노선으로 한 대 더 <span class="muted">${TRUCK.cost.map((c) => `${itemIcon(c.item)}${c.count}`).join(' ')}</span></button>
           <button data-act="follow">📍 트럭으로 가기</button>
           <button data-act="remove-truck" class="danger">철거 (Del)</button>
         </div>`;
     }
     const lines: string[] = [];
-    const goingToLoad = v.state === 'to-load' || v.state === 'loading';
-    const st = w.buildings.get(goingToLoad ? v.loadId : v.unloadId);
+    const st = w.buildings.get(v.stopId);
     let state = VEHICLE_STATUS_LABEL[v.status];
-    if (v.status === 'moving' && st) state += ` → 정류장 ${st.stationNo} (${goingToLoad ? '실으러' : '내리러'})`;
+    if (v.status === 'moving' && st) state += ` → 정류장 ${st.stationNo} (${v.stops[v.stop].act === 'load' ? '실으러' : '내리러'})`;
+    // 노선에서 지금 가거나 서 있는 정류장 표시
+    el.querySelectorAll<HTMLElement>('.route [data-stop]').forEach((row) => row.classList.toggle('now', Number(row.dataset.stop) === v.stop));
     lines.push(`<div class="row"><span>상태</span><b style="color:${VEHICLE_STATUS_COLOR[v.status]}">${state}</b></div>`);
     const cargo = [...v.cargo].filter(([, n]) => n > 0).map(([i, n]) => `${itemIcon(i)}${n}`).join(' ');
     lines.push(`<div class="row"><span>짐</span><b>${cargo || '<span class="muted">없음</span>'} <span class="muted">${v.load} / ${TRUCK.capacity}</span></b></div>`);
@@ -1115,13 +1152,16 @@ export class UI {
     const batColor = charge > 0.5 ? '#3f8a3a' : charge > 0.2 ? '#b7791f' : '#c0392b';
     lines.push(`<div class="row"><span>배터리</span><b>${Math.round(charge * 100)}% <span class="muted">${range}칸${rate}</span></b></div>`);
     lines.push(`<div class="bar"><div style="width:${charge * 100}%;background:${batColor}"></div></div>`);
-    // 길 길이: 배터리 가득일 때 갈 수 있는 칸보다 길면 중간에 배터리가 떨어진다
-    const len = w.routeLength(v.loadId, v.unloadId);
+    // 길 길이: 정류장마다 충전하므로, 가장 긴 구간이 배터리 가득일 때 갈 수 있는 칸보다 길면 중간에 배터리가 떨어진다
+    const legs = w.routeLegs(v.stops);
     const fullRange = Math.floor((w.truckBattery() / TRUCK.drive) * TRUCK.speed);
-    if (len !== null) {
-      const ok = len <= fullRange;
+    if (legs) {
+      const longest = Math.max(...legs);
+      const total = legs.reduce((a, b) => a + b, 0);
+      const ok = longest <= fullRange;
+      const what = legs.length === 2 ? `${legs[0]}칸 (한쪽)` : `한 바퀴 ${total}칸 · 가장 긴 구간 ${longest}칸`;
       lines.push(
-        `<div class="row"><span>길 (한쪽)</span><b>${len}칸 <span ${ok ? 'class="muted"' : 'style="color:#c0392b"'}>${ok ? `· 가득이면 ${fullRange}칸` : `· 배터리가 모자라요 (가득 ${fullRange}칸)`}</span></b></div>`,
+        `<div class="row"><span>길</span><b>${what} <span ${ok ? 'class="muted"' : 'style="color:#c0392b"'}>${ok ? `· 가득이면 ${fullRange}칸` : `· 배터리가 모자라요 (가득 ${fullRange}칸)`}</span></b></div>`,
       );
     }
     const perMin = v.perMinute;
@@ -1164,6 +1204,21 @@ export class UI {
       if (act === 'remove-truck') {
         this.game.exec({ t: 'remove-truck', id: v.id });
         input.selectedVehicle = null;
+      }
+      // 노선 편집: 정류장 더하기·빼기·한 칸 앞으로
+      const i = Number((e.target as HTMLElement).closest<HTMLElement>('[data-i]')?.dataset.i);
+      const stops = v.stops.map((st) => ({ ...st }));
+      if (act === 'stop-add' && stops.length < ROUTE_MAX) {
+        stops.push({ id: 0, act: stops[stops.length - 1].act === 'load' ? 'unload' : 'load' });
+        this.game.exec({ t: 'route', id: v.id, stops });
+      }
+      if (act === 'stop-remove' && stops.length > ROUTE_MIN) {
+        stops.splice(i, 1);
+        this.game.exec({ t: 'route', id: v.id, stops });
+      }
+      if (act === 'stop-up' && i > 0) {
+        [stops[i - 1], stops[i]] = [stops[i], stops[i - 1]];
+        this.game.exec({ t: 'route', id: v.id, stops });
       }
       this.update();
       return;

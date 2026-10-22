@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { TRUCK } from '../data/buildings';
+import { STATION_CAPACITY, TRUCK } from '../data/buildings';
 import { ENDLESS_BY_ID, TECHS, endlessCost } from '../data/tech';
 import { copyArea, pasteBlueprint } from './blueprint';
 import { applyCommand } from './commands';
@@ -1627,6 +1627,197 @@ describe('차량 운송', () => {
     // 저장·불러오기
     const copy = World.deserialize(JSON.parse(JSON.stringify(w.serialize())));
     expect(copy.vehicles.get(iron.id)!.filter).toBe('iron-ore');
+  });
+
+  describe('노선 (여러 정류장)', () => {
+    /**
+     * roadWorld와 같은 길에 정류장 두 개를 더한다.
+     * 싣기 정류장 A2 (12,4)~(13,5): 길(y=6) 위쪽. 내리기 정류장 B2 (12,7)~(13,8): 길 아래쪽, 앞이 길이라 내보낼 곳이 없다.
+     */
+    function routeWorld(ore = 20) {
+      const r = roadWorld(ore);
+      const a2 = r.w.place('station', 12, 4, 0)!;
+      const b2 = r.w.place('station', 12, 7, 0)!;
+      r.w.setStationMode(b2, 'unload');
+      return { ...r, a2, b2 };
+    }
+
+    it('두 싣기 정류장을 차례로 들러 모아서 한 곳에 내린다', () => {
+      const { w, a, b, a2 } = routeWorld(20);
+      a2.inBuf.set('stone', 20);
+      const v = w.buildTruck(a)!;
+      w.setStops(v, [
+        { id: a.id, act: 'load' },
+        { id: a2.id, act: 'load' },
+        { id: b.id, act: 'unload' },
+      ]);
+      const [iron, stone] = [w.stockOf('iron-ore'), w.stockOf('stone')];
+      run(w, 60);
+      expect(w.stockOf('iron-ore') - iron).toBe(20);
+      expect(w.stockOf('stone') - stone).toBe(20);
+    });
+
+    it('빈 싣는 곳에서는 잠깐 기다렸다가, 노선의 다른 싣는 곳에 짐이 있으면 빈 채로 넘어간다', () => {
+      const { w, a, b, a2 } = routeWorld(0);
+      a.inBuf.clear();
+      a2.inBuf.set('stone', 10);
+      const v = w.buildTruck(a)!;
+      w.setStops(v, [
+        { id: a.id, act: 'load' },
+        { id: a2.id, act: 'load' },
+        { id: b.id, act: 'unload' },
+      ]);
+      const stone = w.stockOf('stone');
+      run(w, TRUCK.wait - 1);
+      expect(v.stop).toBe(0); // 아직 기다리는 중
+      run(w, 60);
+      expect(w.stockOf('stone') - stone).toBe(10);
+      // 이제 어디에도 짐이 없으면 빈 바퀴를 돌지 않고 싣는 곳에서 기다린다
+      run(w, 60);
+      expect(v.state).toBe('loading');
+      expect(v.status).toBe('waiting');
+    });
+
+    it('내릴 곳이 꽉 차면 남은 짐을 싣고 노선의 다음 내리는 곳으로 간다 (두 곳 노선이면 기다린다)', () => {
+      const { w, a, b, b2 } = routeWorld(50);
+      b2.outBuf.set('stone', STATION_CAPACITY);
+      const v = w.buildTruck(a)!;
+      w.setStops(v, [
+        { id: a.id, act: 'load' },
+        { id: b2.id, act: 'unload' },
+        { id: b.id, act: 'unload' },
+      ]);
+      const iron = w.stockOf('iron-ore');
+      run(w, 90);
+      expect(w.stockOf('iron-ore') - iron).toBe(50);
+      // 두 곳만 오가면 꽉 찬 곳에서 기다린다 (예전과 같음)
+      const two = routeWorld(50);
+      two.b2.outBuf.set('stone', STATION_CAPACITY);
+      const t = two.w.buildTruck(two.a)!;
+      two.w.setStops(t, [
+        { id: two.a.id, act: 'load' },
+        { id: two.b2.id, act: 'unload' },
+      ]);
+      run(two.w, 60);
+      expect(t.status).toBe('unload-full');
+    });
+
+    it('한 바퀴 = 노선 끝까지 돌기: 걸린 시간과 그동안 내린 개수로 운송량을 잰다', () => {
+      const { w, a, b, a2 } = routeWorld(100);
+      a2.inBuf.set('stone', 100);
+      const v = w.buildTruck(a)!;
+      w.setStops(v, [
+        { id: a.id, act: 'load' },
+        { id: a2.id, act: 'load' },
+        { id: b.id, act: 'unload' },
+      ]);
+      run(w, 60);
+      expect(v.lastTrip).toBeGreaterThan(0);
+      expect(v.lastLoad).toBe(TRUCK.capacity); // A에서 가득 차서 A2는 들르기만
+      expect(v.perMinute).toBeCloseTo((v.lastLoad / v.lastTrip) * 60);
+    });
+
+    it('노선은 저장·불러오기 뒤에도 그대로, 노선이 생기기 전 저장은 두 곳 노선으로 읽는다', () => {
+      const { w, a, b, a2 } = routeWorld();
+      const v = w.buildTruck(a)!;
+      const stops = [
+        { id: a.id, act: 'load' as const },
+        { id: a2.id, act: 'load' as const },
+        { id: b.id, act: 'unload' as const },
+      ];
+      w.setStops(v, stops);
+      run(w, 5);
+      const copy = World.deserialize(JSON.parse(JSON.stringify(w.serialize()))).vehicles.get(v.id)!;
+      expect(copy.stops).toEqual(stops);
+      expect(copy.stop).toBe(v.stop);
+      // 예전 저장: 싣는 곳·내리는 곳·상태만 있다
+      const old = JSON.parse(JSON.stringify(w.serialize()));
+      for (const s of old.vehicles) {
+        delete s.stops;
+        delete s.stop;
+        [s.load, s.unload, s.state] = [a.id, b.id, 'to-unload'];
+      }
+      const o = World.deserialize(old).vehicles.get(v.id)!;
+      expect(o.stops).toEqual([
+        { id: a.id, act: 'load' },
+        { id: b.id, act: 'unload' },
+      ]);
+      expect(o.stop).toBe(1);
+    });
+
+    it('노선 명령: 정류장이 모자라거나 모양이 틀리면 무시하고, 노선이 바뀌면 확인값도 바뀐다', () => {
+      const { w, a, b, a2 } = routeWorld();
+      const v = w.buildTruck(a)!;
+      const before = v.stops.map((s) => ({ ...s }));
+      applyCommand(w, 0, { t: 'route', id: v.id, stops: [{ id: a.id, act: 'load' }] });
+      applyCommand(w, 0, { t: 'route', id: v.id, stops: [{ id: a.id, act: 'load' }, { id: b.id, act: 'fly' }] } as never);
+      expect(v.stops).toEqual(before);
+      const sum = w.checksum();
+      applyCommand(w, 0, {
+        t: 'route',
+        id: v.id,
+        stops: [
+          { id: a.id, act: 'load' },
+          { id: a2.id, act: 'load' },
+          { id: b.id, act: 'unload' },
+        ],
+      });
+      expect(v.stops.length).toBe(3);
+      expect(w.checksum()).not.toBe(sum);
+    });
+
+    it('정류장을 고르지 않았거나 바로 다음 정류장이 같으면 멈추고 알려 준다', () => {
+      const { w, a, b } = routeWorld();
+      const v = w.buildTruck(a)!;
+      w.setStops(v, [
+        { id: a.id, act: 'load' },
+        { id: b.id, act: 'unload' },
+        { id: 0, act: 'load' },
+      ]);
+      run(w, 1);
+      expect(v.status).toBe('no-station');
+      w.setStops(v, [
+        { id: a.id, act: 'load' },
+        { id: b.id, act: 'unload' },
+        { id: b.id, act: 'unload' },
+      ]);
+      run(w, 1);
+      expect(v.status).toBe('no-station');
+    });
+
+    it('같은 노선으로 한 대 더, 트럭 철거를 되돌려도 노선이 그대로', () => {
+      const { w, a, b, a2 } = routeWorld();
+      const v = w.edit(() => w.buildTruck(a))!;
+      const stops = [
+        { id: a.id, act: 'load' as const },
+        { id: a2.id, act: 'load' as const },
+        { id: b.id, act: 'unload' as const },
+      ];
+      w.setStops(v, stops);
+      const c = w.cloneTruck(v)!;
+      expect(c.stops).toEqual(stops);
+      w.edit(() => w.removeVehicle(v));
+      w.undo();
+      const back = [...w.vehicles.values()].find((t) => t.id !== c.id)!;
+      expect(back.stops).toEqual(stops);
+    });
+
+    it('노선의 정류장을 철거했다가 되돌리면 노선이 새 정류장에 다시 이어진다', () => {
+      const { w, a, b, a2 } = routeWorld();
+      const v = w.buildTruck(a)!;
+      w.setStops(v, [
+        { id: a.id, act: 'load' },
+        { id: a2.id, act: 'load' },
+        { id: b.id, act: 'unload' },
+      ]);
+      w.edit(() => w.remove(a2));
+      run(w, 1);
+      expect(v.status).toBe('no-station');
+      w.undo();
+      const again = w.stations().find((s) => s.x === 12 && s.y === 4)!;
+      expect(v.stops[1].id).toBe(again.id);
+      expect(w.routeOk(v)).toBe(true);
+    });
   });
 
   describe('배터리 (전기 트럭)', () => {

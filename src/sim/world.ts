@@ -22,7 +22,7 @@ import { RECIPES, type MachineKind, type Recipe } from '../data/recipes';
 import { ENDLESS_BY_ID, ENDLESS_REQUIRES, INITIAL_BUILDINGS, INITIAL_RECIPES, TECH_BY_ID, endlessCost } from '../data/tech';
 import { Building, addTo, countOf, type BeltItem, type StationMode } from './building';
 import { DX, DY, opposite, rotateCW, type Dir } from './dir';
-import { Vehicle, type VehicleState } from './vehicle';
+import { ROUTE_MIN, Vehicle, type RouteStop, type VehicleState } from './vehicle';
 
 export const TICK_RATE = 60;
 export const DT = 1 / TICK_RATE;
@@ -105,8 +105,7 @@ export type EditOp =
 interface TruckEdit {
   id: number;
   tile: number;
-  loadId: number;
-  unloadId: number;
+  stops: RouteStop[];
 }
 
 /** 플레이어 한 사람의 되돌리기 기록 */
@@ -710,9 +709,9 @@ export class World {
       // 내리기 정류장: 쌓인 것 + 여기로 오는 트럭의 짐 + 그 트럭이 싣는 정류장에 쌓인 것
       const items = new Set(b.outBuf.keys());
       for (const v of this.vehicles.values()) {
-        if (v.unloadId !== b.id) continue;
+        if (!v.stops.some((s) => s.act === 'unload' && s.id === b.id)) continue;
         for (const i of v.cargo.keys()) items.add(i);
-        for (const i of this.buildings.get(v.loadId)?.inBuf.keys() ?? []) items.add(i);
+        for (const s of v.stops) if (s.act === 'load') for (const i of this.buildings.get(s.id)?.inBuf.keys() ?? []) items.add(i);
       }
       return [...items];
     }
@@ -1161,7 +1160,7 @@ export class World {
         return true;
       }
       if (!this.canAfford(TRUCK.cost)) return false;
-      const v = this.spawnTruck(op.tile, op.loadId, op.unloadId);
+      const v = this.spawnTruck(op.tile, op.stops);
       // 다른 단계가 이 트럭의 마지막 id로 찾아도 새 트럭에 닿게
       this.truckAlias.set(last, v.id);
       op.id = v.id;
@@ -1204,10 +1203,7 @@ export class World {
     // 방금 새로 뗀 번호는 돌려놓는다
     if (b.stationNo === this.nextStationNo - 1) this.nextStationNo--;
     if (no) b.stationNo = no;
-    for (const v of this.vehicles.values()) {
-      if (v.loadId === oldId) v.loadId = b.id;
-      if (v.unloadId === oldId) v.unloadId = b.id;
-    }
+    for (const v of this.vehicles.values()) for (const s of v.stops) if (s.id === oldId) s.id = b.id;
   }
 
   /** 되돌리기로 여러 번 다시 만들어진 트럭의 지금 id */
@@ -1896,24 +1892,38 @@ export class World {
   }
 
   /**
-   * 두 정류장 사이 도로 길이 (칸, 한쪽). 길이 없거나 정류장이 아니면 null.
+   * 노선의 구간마다 도로 길이 (칸). i번째 = stops[i]에서 다음 정류장까지 (마지막은 처음으로). 길이 없거나 정류장이 아니면 null.
    * 정보창에서 매번 길을 찾지 않도록, 도로·정류장이 바뀌기 전까지 마지막 결과를 기억한다 (시뮬레이션과 무관).
    */
-  routeLength(loadId: number, unloadId: number): number | null {
-    const key = `${loadId}|${unloadId}|${this.roadVersion}`;
-    if (this.routeCache?.key === key) return this.routeCache.len;
-    const a = this.buildings.get(loadId);
-    const b = this.buildings.get(unloadId);
-    let len: number | null = null;
-    if (a?.type === 'station' && b?.type === 'station' && a !== b) {
-      const start = this.stationStops(a)[0];
-      const p = start === undefined ? null : this.findPath(start, new Set(this.stationStops(b)));
-      len = p ? p.length : null;
+  routeLegs(stops: RouteStop[]): number[] | null {
+    const key = `${stops.map((s) => s.id).join(',')}|${this.roadVersion}`;
+    if (this.routeCache?.key === key) return this.routeCache.legs;
+    let legs: number[] | null = [];
+    for (let i = 0; i < stops.length && legs; i++) {
+      const a = this.buildings.get(stops[i].id);
+      const b = this.buildings.get(stops[(i + 1) % stops.length].id);
+      if (a?.type !== 'station' || b?.type !== 'station' || a === b) legs = null;
+      else {
+        const start = this.stationStops(a)[0];
+        const p = start === undefined ? null : this.findPath(start, new Set(this.stationStops(b)));
+        if (p) legs.push(p.length);
+        else legs = null;
+      }
     }
-    this.routeCache = { key, len };
-    return len;
+    this.routeCache = { key, legs };
+    return legs;
   }
-  private routeCache: { key: string; len: number | null } | null = null;
+  private routeCache: { key: string; legs: number[] | null } | null = null;
+
+  /** 두 정류장 사이 도로 길이 (칸, 한쪽). 길이 없거나 정류장이 아니면 null */
+  routeLength(loadId: number, unloadId: number): number | null {
+    return (
+      this.routeLegs([
+        { id: loadId, act: 'load' },
+        { id: unloadId, act: 'unload' },
+      ])?.[0] ?? null
+    );
+  }
 
   /**
    * 도로를 따라 from에서 targets 중 가장 가까운 칸까지 지나갈 칸들 (from은 빼고, 도착 칸은 넣고).
@@ -1960,50 +1970,90 @@ export class World {
     const other = this.nearestStation(st, st.stationMode === 'load' ? 'unload' : 'load');
     const load = st.stationMode === 'load' ? st.id : (other?.id ?? 0);
     const unload = st.stationMode === 'load' ? (other?.id ?? 0) : st.id;
-    return this.spawnTruck(this.stationStops(st)[0], load, unload);
+    return this.spawnTruck(this.stationStops(st)[0], [
+      { id: load, act: 'load' },
+      { id: unload, act: 'unload' },
+    ]);
   }
 
-  /** 같은 두 정류장을 오가는 트럭을 하나 더 만든다 (싣는 정류장 옆 도로에서 출발) */
+  /** 같은 노선을 도는 트럭을 하나 더 만든다 (노선에서 처음 들르는, 트럭을 만들 수 있는 정류장 옆에서 출발) */
   cloneTruck(v: Vehicle): Vehicle | null {
-    const st = this.buildings.get(v.loadId) ?? this.buildings.get(v.unloadId);
-    if (!st || st.type !== 'station' || !this.canBuildTruck(st).ok) return null;
-    const n = this.spawnTruck(this.stationStops(st)[0], v.loadId, v.unloadId);
+    const i = v.stops.findIndex((s) => {
+      const st = this.buildings.get(s.id);
+      return st?.type === 'station' && this.canBuildTruck(st).ok;
+    });
+    if (i < 0) return null;
+    const st = this.buildings.get(v.stops[i].id)!;
+    const n = this.spawnTruck(this.stationStops(st)[0], v.stops, i);
     // 싣는 아이템도 같게
     n.filter = v.filter;
     return n;
   }
 
-  /** 재료를 내고 tile 칸에 트럭을 놓는다 (확인은 부르는 쪽에서) */
-  private spawnTruck(tile: number, loadId: number, unloadId: number): Vehicle {
+  /** 재료를 내고 tile 칸에 트럭을 놓는다 (확인은 부르는 쪽에서). 노선의 stop번째 정류장부터 */
+  private spawnTruck(tile: number, stops: RouteStop[], stop = 0): Vehicle {
     for (const c of TRUCK.cost) addTo(this.stock, c.item, -c.count);
     const v = new Vehicle(this.nextVehicleId++, tile, this.width);
     v.battery = this.truckBattery();
-    v.loadId = loadId;
-    v.unloadId = unloadId;
+    v.stops = stops.map((s) => ({ ...s }));
+    this.goTo(v, stop);
     this.vehicles.set(v.id, v);
-    this.record({ kind: 'truck-add', id: v.id, tile, loadId, unloadId });
+    this.record({ kind: 'truck-add', id: v.id, tile, stops: v.stops.map((s) => ({ ...s })) });
     return v;
   }
 
   /** 트럭 철거: 만든 재료와 실은 짐을 허브로 돌려준다 */
   removeVehicle(v: Vehicle): void {
-    this.record({ kind: 'truck-remove', id: v.id, tile: v.tile, loadId: v.loadId, unloadId: v.unloadId });
+    this.record({ kind: 'truck-remove', id: v.id, tile: v.tile, stops: v.stops.map((s) => ({ ...s })) });
     for (const c of TRUCK.cost) addTo(this.stock, c.item, c.count);
     for (const [item, n] of v.cargo) addTo(this.stock, item, n);
     this.vehicles.delete(v.id);
   }
 
-  /** 트럭이 오갈 두 정류장. 지금 하던 일과 관계없는 쪽만 바뀌었으면 하던 일을 계속한다 */
+  /** 두 곳만 오가는 노선 (싣는 곳 → 내리는 곳) */
   setRoute(v: Vehicle, loadId: number, unloadId: number): void {
-    const atLoad = v.state === 'to-load' || v.state === 'loading';
-    const same = atLoad ? v.loadId === loadId : v.unloadId === unloadId;
-    v.loadId = loadId;
-    v.unloadId = unloadId;
-    if (same) return;
-    v.state = v.load > 0 ? 'to-unload' : 'to-load';
+    this.setStops(v, [
+      { id: loadId, act: 'load' },
+      { id: unloadId, act: 'unload' },
+    ]);
+  }
+
+  /**
+   * 노선 바꾸기. 지금 가거나 서 있는 정류장(같은 일)이 새 노선에도 있으면 하던 일을 계속하고,
+   * 없으면 짐이 있을 때는 첫 내리는 곳, 없을 때는 첫 싣는 곳으로 간다
+   */
+  setStops(v: Vehicle, stops: RouteStop[]): void {
+    const cur = v.stops[v.stop];
+    v.stops = stops.map((s) => ({ ...s }));
+    const keep = cur ? v.stops.findIndex((s) => s.id === cur.id && s.act === cur.act) : -1;
+    if (keep >= 0) {
+      v.stop = keep;
+      return;
+    }
+    const want = v.load > 0 ? 'unload' : 'load';
+    this.goTo(v, Math.max(0, v.stops.findIndex((s) => s.act === want)));
     v.pathTo = 0;
+  }
+
+  /** 노선의 i번째 정류장으로 출발 */
+  private goTo(v: Vehicle, i: number): void {
+    v.stop = i;
+    v.state = v.stops[i]?.act === 'unload' ? 'to-unload' : 'to-load';
     v.timer = 0;
     v.idle = 0;
+  }
+
+  /** 노선의 다른 싣는 곳 중에 이 트럭이 지금 실을 짐이 있는 곳이 있는지 */
+  private otherLoadReady(v: Vehicle): boolean {
+    return v.stops.some((s, i) => {
+      const st = this.buildings.get(s.id);
+      return i !== v.stop && s.act === 'load' && st?.type === 'station' && this.loadableItem(v, st) !== null;
+    });
+  }
+
+  /** 노선에 지금 정류장 말고도 act(싣기·내리기)를 하는 정류장이 있는지 */
+  private hasOtherStop(v: Vehicle, act: RouteStop['act']): boolean {
+    return v.stops.some((s, i) => i !== v.stop && s.act === act);
   }
 
   /** 트럭이 실을 아이템 (null = 아무거나). 이미 실은 짐은 그대로 둔다 */
@@ -2012,9 +2062,9 @@ export class World {
     v.idle = 0;
   }
 
-  /** 이 정류장을 오가는 트럭들 */
+  /** 이 정류장을 노선에 넣은 트럭들 */
   trucksOf(st: Building): Vehicle[] {
-    return [...this.vehicles.values()].filter((v) => v.loadId === st.id || v.unloadId === st.id);
+    return [...this.vehicles.values()].filter((v) => v.stops.some((s) => s.id === st.id));
   }
 
   /** (x, y) 칸 좌표에서 가장 가까운 트럭 (반 칸 안). 없으면 null */
@@ -2044,11 +2094,11 @@ export class World {
     return best;
   }
 
-  /** 싣는 곳·내리는 곳이 서로 다른 정류장으로 정해져 있는지 */
-  private routeOk(v: Vehicle): boolean {
-    const load = this.buildings.get(v.loadId);
-    const unload = this.buildings.get(v.unloadId);
-    return load?.type === 'station' && unload?.type === 'station' && load !== unload;
+  /** 노선의 정류장이 모두 정해져 있고, 바로 다음 정류장이 같은 곳이 아닌지 (마지막 다음은 처음) */
+  routeOk(v: Vehicle): boolean {
+    const n = v.stops.length;
+    if (n < ROUTE_MIN) return false;
+    return v.stops.every((s, i) => this.buildings.get(s.id)?.type === 'station' && s.id !== v.stops[(i + 1) % n].id);
   }
 
   /**
@@ -2077,12 +2127,11 @@ export class World {
   }
 
   private updateVehicle(v: Vehicle): void {
-    const load = this.buildings.get(v.loadId)!;
-    const unload = this.buildings.get(v.unloadId)!;
     if (!this.routeOk(v)) {
       v.status = 'no-station';
       return;
     }
+    const st = this.buildings.get(v.stopId)!;
     // 정류장에 서 있으면 충전 (전력이 모자라면 그 비율만큼만)
     const want = this.chargeWant(v);
     if (want > 0) {
@@ -2090,15 +2139,14 @@ export class World {
       if (this.batteryFull(v)) v.battery = this.truckBattery();
     }
     if (v.state === 'to-load' || v.state === 'to-unload') {
-      if (!this.drive(v, v.state === 'to-load' ? load : unload)) return;
+      if (!this.drive(v, st)) return;
       v.state = v.state === 'to-load' ? 'loading' : 'unloading';
       v.timer = 0;
       v.idle = 0;
       v.arrivedAt = this.time;
-      if (v.state === 'unloading') v.lastLoad = v.load;
     }
-    if (v.state === 'loading') this.loadTruck(v, load);
-    else this.unloadTruck(v, unload);
+    if (v.state === 'loading') this.loadTruck(v, st);
+    else this.unloadTruck(v, st);
   }
 
   /** 정류장 st까지 한 틱만큼 달린다. 달린 거리만큼 배터리를 쓰고, 배터리가 없으면 천천히. 도착해 있으면 true */
@@ -2160,12 +2208,15 @@ export class World {
     return v.load < TRUCK.capacity && this.loadableItem(v, st) !== null;
   }
 
-  /** 가득 차면 출발. 덜 찼어도 잠깐(TRUCK.wait) 새 짐이 없으면 있는 만큼 싣고 출발 */
+  /**
+   * 가득 차면 출발. 덜 찼어도 잠깐(TRUCK.wait) 새 짐이 없으면 있는 만큼 싣고 출발.
+   * 빈 채로는 기다리지만, 노선의 다른 싣는 곳에 이 트럭이 실을 짐이 있으면 빈 채로 그리로 간다 (빈 바퀴는 돌지 않는다)
+   */
   private loadTruck(v: Vehicle, st: Building): void {
-    if (v.load >= TRUCK.capacity) return this.leave(v, 'to-unload');
+    if (v.load >= TRUCK.capacity) return this.leave(v);
     // 먼저 온 트럭부터 하나씩 채운다 (여럿이 나눠 실으면 모두 덜 찬 채로 떠나게 된다)
     for (const o of this.vehicles.values()) {
-      if (o === v || o.state !== 'loading' || o.loadId !== v.loadId) continue;
+      if (o === v || o.state !== 'loading' || o.stopId !== v.stopId) continue;
       // 서로 다른 아이템만 싣는 트럭끼리는 기다리지 않는다
       if (o.filter && v.filter && o.filter !== v.filter) continue;
       // 앞 트럭이 지금 실을 게 없으면(고른 짐이 없음) 뒤 트럭이 먼저 싣는다 (정류장이 막히지 않게)
@@ -2191,48 +2242,51 @@ export class World {
     }
     v.idle += DT;
     v.status = v.load > 0 ? 'loading' : 'waiting';
-    if (v.load > 0 && v.idle >= TRUCK.wait) this.leave(v, 'to-unload');
+    if ((v.load > 0 || this.otherLoadReady(v)) && v.idle >= TRUCK.wait) this.leave(v);
   }
 
-  /** 다 내리면 싣는 곳으로. 내리기 정류장은 앞으로 내보낼 칸에, 싣기 정류장은 다른 트럭이 실어 갈 칸에 내린다 */
+  /**
+   * 다 내리면 다음 정류장으로. 내리기 정류장은 앞으로 내보낼 칸에, 싣기 정류장은 다른 트럭이 실어 갈 칸에 내린다.
+   * 내릴 칸이 꽉 차면 기다리지만, 노선에 다른 내리는 곳이 있으면 남은 짐을 싣고 그리로 간다
+   */
   private unloadTruck(v: Vehicle, st: Building): void {
     const item = firstItem(v.cargo);
-    if (!item) {
-      if (!this.batteryFull(v)) {
-        v.status = 'charging';
-        return;
-      }
-      if (v.tripStart >= 0) v.lastTrip = this.time - v.tripStart;
-      v.tripStart = this.time;
-      return this.depart(v, 'to-load');
-    }
+    if (!item) return this.leave(v);
     const gap = 1 / TRUCK.transfer;
     v.timer = Math.min(gap, v.timer + DT);
     if (v.timer < gap - 1e-9) return;
     const buf = st.stationMode === 'unload' ? st.outBuf : st.inBuf;
     if (sumOf(buf) >= STATION_CAPACITY) {
+      if (this.hasOtherStop(v, 'unload')) return this.leave(v);
       v.status = 'unload-full';
       return;
     }
     v.timer -= gap;
     addTo(v.cargo, item, -1);
     addTo(buf, item, 1);
+    v.lapUnloaded++;
     v.status = 'unloading';
   }
 
-  private depart(v: Vehicle, state: VehicleState): void {
-    v.state = state;
-    v.timer = 0;
-    v.idle = 0;
-  }
-
-  /** 떠날 준비가 됐어도 배터리가 다 찰 때까지는 충전한다 (그동안 짐은 계속 싣는다) */
-  private leave(v: Vehicle, state: VehicleState): void {
+  /**
+   * 다음 정류장으로 떠난다. 떠날 준비가 됐어도 배터리가 다 찰 때까지는 충전한다 (그동안 짐은 계속 싣는다).
+   * 노선 마지막 정류장을 떠나면 한 바퀴: 걸린 시간과 그동안 내린 개수를 기록한다
+   */
+  private leave(v: Vehicle): void {
     if (!this.batteryFull(v)) {
       v.status = 'charging';
       return;
     }
-    this.depart(v, state);
+    const next = (v.stop + 1) % v.stops.length;
+    if (next === 0) {
+      if (v.tripStart >= 0) {
+        v.lastTrip = this.time - v.tripStart;
+        v.lastLoad = v.lapUnloaded;
+      }
+      v.tripStart = this.time;
+      v.lapUnloaded = 0;
+    }
+    this.goTo(v, next);
   }
 
   // ───────────────────────── 배치 캐시 ─────────────────────────
@@ -2377,8 +2431,11 @@ export class World {
         y: v.y,
         tile: v.tile,
         angle: v.angle,
+        // load·unload는 노선이 생기기 전 버전도 읽을 수 있게 (처음 싣는 곳·내리는 곳)
         load: v.loadId,
         unload: v.unloadId,
+        stops: v.stops.map((st) => ({ ...st })),
+        stop: v.stop,
         cargo: [...v.cargo],
         state: v.state,
         timer: v.timer,
@@ -2443,8 +2500,17 @@ export class World {
       v.x = s.x;
       v.y = s.y;
       v.angle = s.angle;
-      v.loadId = s.load;
-      v.unloadId = s.unload;
+      if (s.stops?.length) {
+        v.stops = s.stops.map((st) => ({ id: st.id, act: st.act === 'unload' ? 'unload' : 'load' }));
+        v.stop = Math.min(Math.max(0, s.stop ?? 0), v.stops.length - 1);
+      } else {
+        // 노선이 생기기 전 저장: 두 곳을 오가는 노선으로
+        v.stops = [
+          { id: s.load, act: 'load' },
+          { id: s.unload, act: 'unload' },
+        ];
+        v.stop = s.state === 'to-load' || s.state === 'loading' ? 0 : 1;
+      }
       v.cargo = new Map(s.cargo);
       v.state = s.state;
       v.timer = s.timer;
@@ -2487,6 +2553,7 @@ export class World {
         tripStart: v.tripStart,
         lastTrip: v.lastTrip,
         lastLoad: v.lastLoad,
+        lapUnloaded: v.lapUnloaded,
       })),
       truckAlias: [...this.truckAlias],
       histories: structuredClone([...this.histories]),
@@ -2514,6 +2581,7 @@ export class World {
       v.tripStart = e.tripStart;
       v.lastTrip = e.lastTrip;
       v.lastLoad = e.lastLoad;
+      v.lapUnloaded = e.lapUnloaded;
     }
     w.truckAlias = new Map(s.truckAlias);
     w.histories = new Map(structuredClone(s.histories));
@@ -2541,7 +2609,8 @@ export class World {
     }
     for (const v of this.vehicles.values()) {
       h.num(v.id).num(v.x).num(v.y).num(v.tile).str(v.state).num(v.timer).num(v.idle).num(v.battery);
-      h.num(v.loadId).num(v.unloadId).str(v.filter ?? '');
+      h.num(v.stop).str(v.filter ?? '');
+      for (const s of v.stops) h.num(s.id).str(s.act);
       for (const [item, n] of v.cargo) h.str(item).num(n);
     }
     return h.value;
@@ -2612,8 +2681,12 @@ export interface SavedVehicle {
   y: number;
   tile: number;
   angle: number;
+  /** 처음 싣는 곳·내리는 곳 (노선이 생기기 전 저장은 이 둘만 있다) */
   load: number;
   unload: number;
+  /** 노선과 지금 정류장 번호 */
+  stops?: RouteStop[];
+  stop?: number;
   cargo: [ItemId, number][];
   state: VehicleState;
   timer: number;
@@ -2668,6 +2741,7 @@ export interface NetSnapshot {
     tripStart: number;
     lastTrip: number;
     lastLoad: number;
+    lapUnloaded: number;
   }[];
   truckAlias: [number, number][];
   histories: [number, EditHistory][];

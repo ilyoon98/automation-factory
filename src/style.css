@@ -775,6 +775,40 @@ h3 small {
   margin: 8px 0;
 }
 /* 정류장: 트럭 목록과 만들기 버튼 */
+/* 트럭 노선: 정류장 한 줄 = 차례 · 정류장 · 싣기/내리기 · ▲ · × (지금 가는 곳은 놋쇠색 테두리) */
+#info .route {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin: 8px 0;
+}
+#info .route-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+}
+#info .stop {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  padding: 1px 2px;
+  border: 2px solid transparent;
+}
+#info .stop.now {
+  border-color: #d9a441;
+  background: rgba(217, 164, 65, 0.15);
+}
+#info .stop .no {
+  width: 12px;
+  text-align: center;
+}
+#info .stop select[data-act='stop-station'] {
+  flex: 1;
+  min-width: 0;
+}
+#info .stop button {
+  padding: 0 5px;
+}
 #info .trucks {
   display: flex;
   flex-direction: column;

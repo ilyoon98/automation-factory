@@ -1,8 +1,21 @@
 import { TRUCK } from '../data/buildings';
 import type { ItemId } from '../data/items';
 
-/** 싣는 곳으로 가는 중 → 싣는 중 → 내리는 곳으로 가는 중 → 내리는 중 → 다시 처음 */
+/**
+ * 지금 정류장(노선의 stop번째)으로 가는 중이거나 거기서 일하는 중. 그 정류장에서 싣는지 내리는지에 따라
+ * 싣는 곳으로 가는 중 → 싣는 중, 내리는 곳으로 가는 중 → 내리는 중
+ */
 export type VehicleState = 'to-load' | 'loading' | 'to-unload' | 'unloading';
+
+/** 노선의 정류장 하나: 어느 정류장(건물 id, 0 = 안 정함)에서 싣는지 내리는지 */
+export interface RouteStop {
+  id: number;
+  act: 'load' | 'unload';
+}
+
+/** 노선에 넣을 수 있는 정류장 수 */
+export const ROUTE_MIN = 2;
+export const ROUTE_MAX = 8;
 
 export type VehicleStatus =
   | 'moving'
@@ -31,7 +44,7 @@ export const VEHICLE_STATUS_LABEL: Record<VehicleStatus, string> = {
 
 /**
  * 트럭. 건물이 아니라 도로 위를 달리는 차라서 칸을 차지하지 않는다 (트럭끼리 겹쳐 지나간다).
- * 싣는 정류장과 내리는 정류장 두 곳을 오간다.
+ * 노선(정류장 2~8곳)을 차례대로 돌고, 마지막 정류장 다음에는 처음으로 돌아간다.
  * 전기 트럭: 달리면 배터리가 줄고, 정류장에 서 있는 동안 공장 전력으로 충전한다.
  */
 export class Vehicle {
@@ -42,9 +55,13 @@ export class Vehicle {
   tile: number;
   /** 바라보는 방향 (라디안, 그리기용) */
   angle = 0;
-  /** 싣는 정류장, 내리는 정류장 (건물 id, 0 = 안 정함) */
-  loadId = 0;
-  unloadId = 0;
+  /** 노선: 차례대로 들르는 정류장들 */
+  stops: RouteStop[] = [
+    { id: 0, act: 'load' },
+    { id: 0, act: 'unload' },
+  ];
+  /** 지금 가거나 서 있는 정류장 (stops 번호) */
+  stop = 0;
   cargo = new Map<ItemId, number>();
   state: VehicleState = 'to-load';
   status: VehicleStatus = 'waiting';
@@ -59,10 +76,11 @@ export class Vehicle {
   idle = 0;
   /** 지금 정류장에 도착한 시각. 같은 싣기 정류장에서는 먼저 온 트럭부터 채운다 (저장하지 않음) */
   arrivedAt = 0;
-  /** 한 바퀴 기록: 지난번 다 내린 시각, 지난 바퀴에 걸린 시간(초)과 실어 나른 개수 */
+  /** 한 바퀴 기록: 지난번 노선 끝 정류장을 떠난 시각, 지난 바퀴에 걸린 시간(초)과 내린 개수, 이번 바퀴에 내린 개수 */
   tripStart = -1;
   lastTrip = 0;
   lastLoad = 0;
+  lapUnloaded = 0;
   /** 배터리 (kJ, 0 ~ World.truckBattery()) */
   battery = TRUCK.battery;
   /** 싣는 아이템 (null = 정류장에 있는 아무거나) */
@@ -76,6 +94,20 @@ export class Vehicle {
     this.tile = tile;
     this.x = (tile % width) + 0.5;
     this.y = Math.floor(tile / width) + 0.5;
+  }
+
+  /** 노선에서 처음 싣는 정류장 / 처음 내리는 정류장 (없으면 0). 두 곳만 오가던 예전 트럭과 같은 뜻 */
+  get loadId(): number {
+    return this.stops.find((s) => s.act === 'load')?.id ?? 0;
+  }
+
+  get unloadId(): number {
+    return this.stops.find((s) => s.act === 'unload')?.id ?? 0;
+  }
+
+  /** 지금 가거나 서 있는 정류장 (건물 id) */
+  get stopId(): number {
+    return this.stops[this.stop]?.id ?? 0;
   }
 
   get load(): number {

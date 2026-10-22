@@ -845,22 +845,25 @@ export class Renderer {
     }
   }
 
-  /** 고른 트럭이 오가는 두 정류장(점선 테두리 + 이름)과 지금 가는 길 */
+  /** 고른 트럭의 노선: 정류장마다 점선 테두리 + "1 싣기 · 3 내리기"처럼 차례와 할 일 (지금 가는 곳은 ▶), 지금 가는 길 */
   private drawRoute(world: World, v: Vehicle): void {
     const ctx = this.ctx;
     const cam = this.cam;
     const z = cam.zoom;
-    const ends = [
-      [v.loadId, '싣는 곳', STATION_COLOR.load],
-      [v.unloadId, '내리는 곳', STATION_COLOR.unload],
-    ] as const;
-    for (const [id, label, color] of ends) {
+    // 한 정류장을 노선에 여러 번 넣을 수 있으므로 정류장마다 묶는다
+    const marks = new Map<number, { labels: string[]; act: 'load' | 'unload' }>();
+    v.stops.forEach((s, i) => {
+      const m = marks.get(s.id) ?? { labels: [], act: s.act };
+      m.labels.push(`${i === v.stop ? '▶' : ''}${i + 1} ${s.act === 'load' ? '싣기' : '내리기'}`);
+      marks.set(s.id, m);
+    });
+    for (const [id, m] of marks) {
       const st = world.buildings.get(id);
-      if (!st) continue;
+      if (st?.type !== 'station') continue;
       const [sx, sy] = cam.worldToScreen(st.x, st.y);
       const w = st.size * z;
-      this.outline(sx - 3, sy - 3, w + 6, w + 6, color, true);
-      this.text(label, sx + w / 2, sy - 7, '#fbf3df', 12, PAL.ink, 'center', 'bottom');
+      this.outline(sx - 3, sy - 3, w + 6, w + 6, STATION_COLOR[m.act], true);
+      this.text(m.labels.join(' · '), sx + w / 2, sy - 7, '#fbf3df', 12, PAL.ink, 'center', 'bottom');
     }
     if (!v.path || (v.state !== 'to-load' && v.state !== 'to-unload')) return;
     ctx.strokeStyle = 'rgba(217,140,30,0.9)';

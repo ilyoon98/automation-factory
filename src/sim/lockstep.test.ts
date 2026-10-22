@@ -81,6 +81,34 @@ describe('같이 하기: 스냅샷', () => {
     expect(JSON.stringify(guest.serialize())).toBe(JSON.stringify(host.serialize()));
   });
 
+  it('여러 정류장을 도는 트럭도 넘겨받은 월드에서 똑같이 돈다', () => {
+    const host = busyFactory();
+    // 가운데에 싣기 정류장을 하나 더 두고, 트럭 한 대는 C(톱니) → A(돌) → B 노선으로
+    applyCommand(host, 0, { t: 'place', tool: 'station', x: 12, y: 24, dir: 0, initial: true, setting: null });
+    const [a, b, c] = host.stations();
+    c.inBuf.set('gear', 120);
+    const v = [...host.vehicles.values()][0];
+    applyCommand(host, 0, {
+      t: 'route',
+      id: v.id,
+      stops: [
+        { id: c.id, act: 'load' },
+        { id: a.id, act: 'load' },
+        { id: b.id, act: 'unload' },
+      ],
+    });
+    ticks(host, Math.round(23.7 * TICK_RATE));
+    const guest = viaNet(host);
+    for (let s = 0; s < 60; s++) {
+      ticks(host, TICK_RATE);
+      ticks(guest, TICK_RATE);
+      expect(guest.checksum(), `${s + 1}초 뒤`).toBe(host.checksum());
+    }
+    // 트럭이 C에서 톱니를 실어 갔다
+    expect(guest.stations()[2].inBuf.get('gear') ?? 0).toBeLessThan(120);
+    expect(JSON.stringify(guest.serialize())).toBe(JSON.stringify(host.serialize()));
+  });
+
   it('체크섬은 아이템 하나 위치만 달라도 바뀐다', () => {
     const w = busyFactory();
     ticks(w, 300);

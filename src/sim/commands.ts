@@ -3,7 +3,7 @@ import type { ItemId } from '../data/items';
 import { pasteBlueprint, type Blueprint } from './blueprint';
 import type { Building, StationMode } from './building';
 import type { Dir } from './dir';
-import type { Vehicle } from './vehicle';
+import { ROUTE_MAX, ROUTE_MIN, type RouteStop, type Vehicle } from './vehicle';
 import { World, type EditOp } from './world';
 
 /**
@@ -29,7 +29,8 @@ export type Command =
   | { t: 'build-truck'; station: number }
   | { t: 'clone-truck'; id: number }
   | { t: 'remove-truck'; id: number }
-  | { t: 'route'; id: number; loadId: number; unloadId: number }
+  /** 트럭 노선 (정류장 ROUTE_MIN ~ ROUTE_MAX곳, 차례대로) */
+  | { t: 'route'; id: number; stops: RouteStop[] }
   | { t: 'truck-filter'; id: number; item: ItemId | null }
   | { t: 'undo' }
   | { t: 'redo' };
@@ -151,7 +152,8 @@ function run(w: World, c: Command): CommandResults[Command['t']] {
     }
     case 'route': {
       const v = w.vehicles.get(c.id);
-      if (v) w.setRoute(v, c.loadId, c.unloadId);
+      const stops = routeStops(c.stops);
+      if (v && stops) w.setStops(v, stops);
       return;
     }
     case 'truck-filter': {
@@ -164,6 +166,17 @@ function run(w: World, c: Command): CommandResults[Command['t']] {
     case 'redo':
       return w.redo();
   }
+}
+
+/** 받은 노선을 믿을 수 있는 모양으로 (같이 하기에서 온 명령이라). 모양이 틀리면 null */
+function routeStops(raw: unknown): RouteStop[] | null {
+  if (!Array.isArray(raw) || raw.length < ROUTE_MIN || raw.length > ROUTE_MAX) return null;
+  const stops: RouteStop[] = [];
+  for (const s of raw as Partial<RouteStop>[]) {
+    if (!Number.isInteger(s?.id) || (s.act !== 'load' && s.act !== 'unload')) return null;
+    stops.push({ id: s.id!, act: s.act });
+  }
+  return stops;
 }
 
 /** 들고 있는 도구로 (x, y)에 짓기. 컨베이어 위 덮어쓰기·방향 자동 맞춤·설정 넣기까지 */

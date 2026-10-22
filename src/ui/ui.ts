@@ -36,6 +36,7 @@ import { GUIDE } from './guide';
 import { Codex, depositName, type DepositId } from './codex';
 import { buildingIconUrl, depositIconUrl, itemIcon, itemLink, truckIconUrl } from './icons';
 import { sound } from './sound';
+import { crispTarget, crispText, onUiZoom, setCrispText, uiZoom } from './crisp';
 import { letScrollbarDrag } from './left-scroll';
 import { Toolbar } from './toolbar';
 
@@ -224,6 +225,10 @@ export class UI {
       this.updateSound();
     });
     this.updateSound();
+    // 글자 또렷하게: 화면 배율이 정수가 아닐 때 UI 배율을 정수에 맞춘다 (crisp.ts)
+    $<HTMLInputElement>('crisp-text').addEventListener('change', (e) => setCrispText((e.target as HTMLInputElement).checked));
+    onUiZoom(() => this.updateCrisp());
+    this.updateCrisp();
     $('btn-new').addEventListener('click', () => {
       if (confirm('지금 공장을 버리고 새 게임을 시작할까요?')) game.newGame();
     });
@@ -359,7 +364,7 @@ export class UI {
   private showPlayers(show: boolean): void {
     const panel = $('players');
     panel.hidden = !show;
-    panel.style.left = `${$('net').getBoundingClientRect().left}px`;
+    panel.style.left = `${$('net').getBoundingClientRect().left / uiZoom()}px`;
     this.playersKey = '';
     this.update();
   }
@@ -503,6 +508,18 @@ export class UI {
         ${net.reachable ? '' : invite}`;
     }
     panel.innerHTML = `${html}<div class="hint">F 또는 Alt + 클릭: 핑 찍기 · 게임 버전 ${VERSION}</div>`;
+  }
+
+  private updateCrisp(): void {
+    const { dpr, target } = crispTarget();
+    $<HTMLInputElement>('crisp-text').checked = crispText();
+    const pct = (v: number) => `${Math.round(v * 100)}%`;
+    $('crisp-text-hint').textContent =
+      dpr === target
+        ? `지금 화면 배율(${pct(dpr)})에서는 이미 또렷해요`
+        : crispText()
+          ? `화면 배율 ${pct(dpr)} → 창·글자를 ${pct(target)} 크기로 맞춰 또렷하게 그리는 중`
+          : `화면 배율 ${pct(dpr)}라 글자가 살짝 흐려요. 켜면 창·글자가 ${pct(target)} 크기로 ${target < dpr ? '작아지는' : '커지는'} 대신 또렷해져요`;
   }
 
   private updateSound(): void {
@@ -1439,8 +1456,9 @@ export class UI {
     }
     tip.hidden = false;
     tip.innerHTML = lines.join('<br>');
-    tip.style.left = `${this.mouse.x + 16}px`;
-    tip.style.top = `${this.mouse.y + 16}px`;
+    // 마우스 좌표는 화면 픽셀이고 툴팁은 UI 배율(글자 또렷하게)을 받으므로 나눠서 놓는다
+    tip.style.left = `${this.mouse.x / uiZoom() + 16}px`;
+    tip.style.top = `${this.mouse.y / uiZoom() + 16}px`;
   }
 }
 

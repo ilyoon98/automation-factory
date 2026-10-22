@@ -50,6 +50,8 @@
   --bevel: inset 2px 2px 0 var(--hi), inset -2px -2px 0 var(--lo);
   --bevel-in: inset 2px 2px 0 var(--lo), inset -2px -2px 0 var(--hi);
   --drop: 4px 4px 0 rgba(59, 39, 22, 0.35);
+  /* "글자 또렷하게"를 켜면 UI 확대 배율 (crisp.ts). 꺼져 있으면 1 */
+  --uiz: 1;
   font-family: var(--font);
   color: var(--text);
   font-size: 12px;
@@ -57,6 +59,10 @@
 
 * {
   box-sizing: border-box;
+}
+/* 맵을 뺀 UI 전체 (위쪽 바·왼쪽 판·정보창·툴바·지도·창·알림…). "글자 또렷하게"에서 배율을 정수에 맞춘다 */
+body > :not(#game) {
+  zoom: var(--uiz);
 }
 
 html,
@@ -392,7 +398,7 @@ h3 small {
   display: flex;
   flex-direction: column;
   gap: 8px;
-  max-height: calc(100vh - var(--bottom-h, 180px) - 70px);
+  max-height: calc((100vh / var(--uiz)) - var(--bottom-h, 180px) - 70px);
   overflow-y: auto;
   /* 스크롤바가 없어도 그 자리를 비워 둔다: 넘칠 때 판 너비가 줄었다 늘었다 하지 않게 */
   scrollbar-gutter: stable;
@@ -476,7 +482,7 @@ h3 small {
   bottom: 10px;
   left: 50%;
   transform: translateX(-50%);
-  width: min(980px, calc(100vw - 20px));
+  width: min(980px, calc((100vw / var(--uiz)) - 20px));
   display: flex;
   flex-direction: column;
   gap: 6px;
@@ -840,7 +846,7 @@ h3 small {
   position: absolute;
   left: 0;
   /* 움직이기 전 한 프레임 동안 왼쪽 끝에 보이지 않게 */
-  transform: translateX(100vw);
+  transform: translateX(calc(100vw / var(--uiz)));
   white-space: nowrap;
   font: 15px var(--font-l);
   line-height: 18px;
@@ -863,7 +869,7 @@ h3 small {
   left: 50%;
   bottom: calc(var(--bottom-h, 180px) + 12px);
   transform: translateX(-50%);
-  width: min(460px, calc(100vw - 20px));
+  width: min(460px, calc((100vw / var(--uiz)) - 20px));
   display: flex;
   align-items: center;
   gap: 8px;
@@ -952,7 +958,7 @@ h3 small {
 
 /* 공장 통계 */
 .stats-panel {
-  width: min(900px, calc(100vw - 32px));
+  width: min(900px, calc((100vw / var(--uiz)) - 32px));
 }
 .stats-table {
   width: 100%;
@@ -1012,8 +1018,8 @@ h3 small {
   display: none;
 }
 .panel {
-  width: min(760px, calc(100vw - 32px));
-  max-height: calc(100vh - 80px);
+  width: min(760px, calc((100vw / var(--uiz)) - 32px));
+  max-height: calc((100vh / var(--uiz)) - 80px);
   overflow-y: auto;
   /* 스크롤바가 없어도 그 자리를 비워 둔다: 탭·내용에 따라 카드 줄이 좌우로 밀리지 않게 */
   scrollbar-gutter: stable;
@@ -1057,6 +1063,15 @@ h3 small {
   flex: 0 1 180px;
   accent-color: #9e7526;
 }
+.crisp-text {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 6px 0;
+}
+.crisp-text input {
+  accent-color: #9e7526;
+}
 #btn-sound {
   padding: 3px 8px;
 }
@@ -1071,7 +1086,7 @@ h3 small {
 }
 /* 연구 창은 높이를 고정: 탭마다 카드 수가 달라도 창이 커졌다 작아지며 탭이 위아래로 움직이지 않게 (넘치면 안에서 스크롤) */
 #research .panel {
-  height: min(720px, calc(100vh - 80px));
+  height: min(720px, calc((100vh / var(--uiz)) - 80px));
 }
 /* 연구 창 탭: 생산 · 물류 · 전력 · 자원 */
 .rtabs {
@@ -1177,9 +1192,9 @@ h3 small {
 
 /* 도감 */
 .codex {
-  width: min(820px, calc(100vw - 32px));
+  width: min(820px, calc((100vw / var(--uiz)) - 32px));
   /* 내용 길이와 상관없이 높이를 고정해서 뒤로·전체 목록 버튼이 페이지마다 같은 자리에 있게 */
-  height: min(760px, calc(100vh - 80px));
+  height: min(760px, calc((100vh / var(--uiz)) - 80px));
 }
 .codex header {
   position: sticky;

@@ -71,7 +71,8 @@ export class Toolbar {
       thumb.classList.add('drag');
       const startX = e.clientX;
       const startLeft = palette.scrollLeft;
-      const ratio = overflow() / Math.max(1, bar.clientWidth - thumb.offsetWidth);
+      // 마우스는 화면 픽셀, 스크롤은 UI 픽셀이라 (글자 또렷하게로 UI 배율이 1이 아닐 수 있음) 화면에 보이는 너비로 나눈다
+      const ratio = overflow() / Math.max(1, bar.getBoundingClientRect().width - thumb.getBoundingClientRect().width);
       const move = (ev: PointerEvent) => (palette.scrollLeft = startLeft + (ev.clientX - startX) * ratio);
       const up = () => {
         thumb.classList.remove('drag');
@@ -86,7 +87,8 @@ export class Toolbar {
     bar.addEventListener('pointerdown', (e) => {
       if (e.target === thumb) return;
       const r = bar.getBoundingClientRect();
-      const t = (e.clientX - r.left - thumb.offsetWidth / 2) / Math.max(1, r.width - thumb.offsetWidth);
+      const tw = thumb.getBoundingClientRect().width;
+      const t = (e.clientX - r.left - tw / 2) / Math.max(1, r.width - tw);
       palette.scrollLeft = Math.min(1, Math.max(0, t)) * overflow();
     });
   }

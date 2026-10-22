@@ -129,6 +129,38 @@ const game: GameApi = {
     session.worldReplaced();
     ui.update();
   },
+  exportSave() {
+    const blob = new Blob([JSON.stringify(world.serialize())], { type: 'application/json' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    const d = new Date();
+    const two = (n: number) => String(n).padStart(2, '0');
+    a.download = `자동화공장-${d.getFullYear()}${two(d.getMonth() + 1)}${two(d.getDate())}-${two(d.getHours())}${two(d.getMinutes())}.json`;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+  },
+  importSave(text: string) {
+    // 손님은 방장의 공장을 빌려 쓰는 중이라 바꿀 수 없다 (새 게임과 같은 규칙)
+    if (!session.canSave) return '같이 하는 동안 손님은 불러올 수 없어요';
+    let w: World;
+    try {
+      w = World.deserialize(JSON.parse(text));
+    } catch {
+      return '공장 파일이 아니에요';
+    }
+    if (!w.resItem.includes('water')) addLakes(w, w.seed);
+    world = w;
+    game.input.selectedId = null;
+    game.input.selectedVehicle = null;
+    game.input.tool = null;
+    game.input.paste = null;
+    centerOnHub();
+    game.save();
+    // 방장이면 손님들에게도 새 공장을 보낸다
+    session.worldReplaced();
+    ui.update();
+    return null;
+  },
 };
 
 game.input = new Input(canvas, camera, {

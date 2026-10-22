@@ -1010,6 +1010,13 @@ h3 small {
   color: var(--accent);
   width: 170px;
 }
+/* 도움말 아래: 공장 파일 내보내기·불러오기 */
+.save-file {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 6px;
+}
 /* 연구 창은 높이를 고정: 탭마다 카드 수가 달라도 창이 커졌다 작아지며 탭이 위아래로 움직이지 않게 (넘치면 안에서 스크롤) */
 #research .panel {
   height: min(720px, calc(100vh - 80px));

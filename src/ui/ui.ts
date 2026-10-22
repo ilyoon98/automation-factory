@@ -51,6 +51,10 @@ export interface GameApi {
   setSpeed(s: number): void;
   save(): boolean;
   newGame(): void;
+  /** 지금 공장을 파일로 내려받는다 (다른 PC로 옮기거나 백업) */
+  exportSave(): void;
+  /** 파일 내용으로 공장을 바꾼다. 안 되면 이유, 되면 null */
+  importSave(text: string): string | null;
   /** 화면 가운데를 그 칸 좌표로 옮긴다 */
   focus(x: number, y: number): void;
   /** 지도 켜고 끄기 */
@@ -171,6 +175,19 @@ export class UI {
     $('btn-redo').addEventListener('click', () => game.input.undoRedo(true));
     $('btn-codex').addEventListener('click', () => this.codex.toggle());
     $('btn-save').addEventListener('click', () => this.toast(game.save() ? '저장했어요' : '저장 실패'));
+    // 공장 파일: 도움말 창 아래 버튼
+    $('btn-export').addEventListener('click', () => game.exportSave());
+    $('btn-import').addEventListener('click', () => $<HTMLInputElement>('import-file').click());
+    $('import-file').addEventListener('change', async (e) => {
+      const input = e.target as HTMLInputElement;
+      const file = input.files?.[0];
+      input.value = '';
+      if (!file) return;
+      if (!confirm('지금 공장 대신 이 파일의 공장을 불러올까요? 지금 공장은 사라져요 (먼저 내보내 두세요).')) return;
+      const err = game.importSave(await file.text());
+      this.toast(err ?? '공장을 불러왔어요');
+      if (!err) $('help').hidden = true;
+    });
     $('btn-new').addEventListener('click', () => {
       if (confirm('지금 공장을 버리고 새 게임을 시작할까요?')) game.newGame();
     });
@@ -334,6 +351,7 @@ export class UI {
     const save = net.canSave;
     $<HTMLButtonElement>('btn-save').disabled = !save;
     $<HTMLButtonElement>('btn-new').disabled = !save;
+    $<HTMLButtonElement>('btn-import').disabled = !save;
     this.updatePlayers();
   }
 
@@ -1343,7 +1361,8 @@ function makerHint(w: World, item: ItemId, deficit: number): string {
   const candidates = Object.values(RECIPES).filter((r) => w.unlockedRecipes.has(r.id) && r.outputs.some((o) => o.item === item));
   const r = candidates.sort((a, b) => (used.get(b.id) ?? 0) - (used.get(a.id) ?? 0))[0];
   if (!r) return '';
-  const perMachine = (r.outputs.find((o) => o.item === item)!.count * 60) / r.time;
+  // 끝없는 연구(기계 속도)로 빨라진 만큼
+  const perMachine = ((r.outputs.find((o) => o.item === item)!.count * 60) / r.time) * w.boost('endless-crafting');
   return `${BUILDINGS[r.machine].name} 약 ${Math.ceil(deficit / perMachine)}대 더`;
 }
 

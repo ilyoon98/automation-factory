@@ -70,3 +70,8 @@ export function buildingIconUrl(type: BuildingType): string {
   const k = !s ? 1 : s.w <= 16 ? 2 : s.w <= 32 ? 1 : 32 / s.w;
   return spriteUrl(`building:${type}`, name, 32, k, s && s.frames > 1 && type !== 'hub' ? 1 : 0);
 }
+
+/** 트럭 아이콘 (32×32, 오른쪽을 보고 짐을 가득 실은 모습) */
+export function truckIconUrl(): string {
+  return spriteUrl('truck', 'truck:1', 32, 2, 2);
+}

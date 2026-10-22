@@ -4,9 +4,11 @@ import { PING_SEC, Session } from './net/session';
 import { Camera } from './render/camera';
 import { Renderer, type OtherPlayer, type PingMark } from './render/renderer';
 import { addLakes, generateWorld } from './sim/mapgen';
+import type { Command, PlaceResult, ResultOf } from './sim/commands';
 import { DT, World } from './sim/world';
 import { Chat } from './ui/chat';
 import { Minimap } from './ui/minimap';
+import { sound } from './ui/sound';
 import { UI, type GameApi } from './ui/ui';
 import { setupUpdateBanner } from './ui/update';
 
@@ -74,14 +76,59 @@ const session = new Session({
   getSpeed: () => game.speed,
   setSpeed: applySpeed,
   toast: (msg) => ui.toast(msg, 2600),
-  chat: (from, text) => chat.show(from, text),
+  chat(from, text) {
+    chat.show(from, text);
+    if (from !== session.me) sound.play('chat');
+  },
   changed: () => ui.update(),
 });
 const chat = new Chat(session);
 
+/** 내가 낸 명령이 적용되면 그에 맞는 효과음 */
+function commandSound(cmd: Command, r: unknown): void {
+  switch (cmd.t) {
+    case 'place': {
+      const p = r as PlaceResult;
+      if (p.ok) sound.play('place');
+      // 드래그 중 막힌 칸마다 소리를 내면 시끄러우니 처음 클릭에서만
+      else if (cmd.initial && (p.swap || (p.reason && p.reason !== '이미 건물이 있음'))) sound.play('error');
+      break;
+    }
+    case 'paste':
+      if ((r as ResultOf<typeof cmd>).placed > 0) sound.play('place');
+      break;
+    case 'remove-at':
+    case 'remove':
+    case 'remove-truck':
+      if (r) sound.play('remove');
+      break;
+    case 'remove-area':
+      if ((r as number) > 0) sound.play('remove');
+      break;
+    case 'rotate':
+      sound.play('rotate');
+      break;
+    case 'research':
+      sound.play(r ? 'research' : 'error');
+      break;
+    case 'build-truck':
+    case 'clone-truck':
+      sound.play(r ? 'truck' : 'error');
+      break;
+    case 'undo':
+    case 'redo':
+      if (r) sound.play('undo');
+      break;
+  }
+}
+
 const game: GameApi = {
   getWorld: () => world,
-  exec: (cmd, done) => session.exec(cmd, done),
+  exec: (cmd, done) =>
+    session.exec(cmd, (r) => {
+      commandSound(cmd, r);
+      done?.(r);
+    }),
   get me() {
     return session.me;
   },

@@ -34,7 +34,8 @@ import {
 } from '../sim/world';
 import { GUIDE } from './guide';
 import { Codex, depositName, type DepositId } from './codex';
-import { depositIconUrl, itemIcon, itemLink } from './icons';
+import { buildingIconUrl, depositIconUrl, itemIcon, itemLink, truckIconUrl } from './icons';
+import { sound } from './sound';
 import { letScrollbarDrag } from './left-scroll';
 import { Toolbar } from './toolbar';
 
@@ -134,6 +135,8 @@ export class UI {
   /** 연구 창에서 보고 있는 탭 (처음 열 때 정한다) */
   private researchTab: TechCategory | null = null;
   private toastTimer = 0;
+  /** 목표 달성 소리를 낼지 가리려고 지난번에 본 공장 */
+  private guideWorld: World | null = null;
   private mouse = { x: 0, y: 0 };
   private oreKey = '';
   /** 광맥마다 이미 알린 단계 (같은 일로 두 번 알리지 않게) */
@@ -205,6 +208,18 @@ export class UI {
       this.toast(err ?? '바로 전 공장으로 돌아왔어요');
       if (!err) $('help').hidden = true;
     });
+    // 효과음: 위쪽 버튼은 켜기·끄기, 도움말 창 아래에서 음량
+    $('btn-sound').addEventListener('click', () => {
+      sound.toggleMute();
+      this.updateSound();
+      if (!sound.muted) sound.play('place');
+    });
+    $('sound-volume').addEventListener('input', (e) => {
+      sound.setVolume(Number((e.target as HTMLInputElement).value) / 100);
+      this.updateSound();
+      sound.play('place');
+    });
+    this.updateSound();
     $('btn-new').addEventListener('click', () => {
       if (confirm('지금 공장을 버리고 새 게임을 시작할까요?')) game.newGame();
     });
@@ -486,6 +501,16 @@ export class UI {
     panel.innerHTML = `${html}<div class="hint">F 또는 Alt + 클릭: 핑 찍기 · 게임 버전 ${VERSION}</div>`;
   }
 
+  private updateSound(): void {
+    const off = sound.muted || sound.volume <= 0;
+    const btn = $('btn-sound');
+    btn.textContent = off ? '🔇' : '🔊';
+    btn.classList.toggle('off', off);
+    const pct = Math.round(sound.volume * 100);
+    $<HTMLInputElement>('sound-volume').value = String(pct);
+    $('sound-volume-text').textContent = sound.muted ? '꺼짐' : `${pct}%`;
+  }
+
   toast(msg: string, ms = 1800): void {
     const el = $('toast');
     el.textContent = msg;
@@ -670,7 +695,15 @@ export class UI {
 
   private updateGuide(w: World): void {
     // 이룬 목표는 저장에 남긴다 (생산이 잠깐 멈춰도, 불러온 뒤에도 앞 목표로 돌아가지 않게)
-    for (const s of GUIDE) if (!w.guideDone.has(s.title) && s.done(w)) w.guideDone.add(s.title);
+    let reached = false;
+    for (const s of GUIDE) {
+      if (w.guideDone.has(s.title) || !s.done(w)) continue;
+      w.guideDone.add(s.title);
+      reached = true;
+    }
+    // 같은 공장에서 새로 이룬 목표만 알린다 (불러오거나 방에 들어가 한꺼번에 채워질 때는 조용히)
+    if (reached && w === this.guideWorld) sound.play('goal');
+    this.guideWorld = w;
     const todo = GUIDE.filter((s) => !w.guideDone.has(s.title));
     const head = `<h3>목표 <small>${GUIDE.length - todo.length}/${GUIDE.length}</small></h3>`;
     if (todo.length === 0) {
@@ -737,7 +770,7 @@ export class UI {
   private infoStatic(w: World, b: Building): string {
     const def = b.def;
     const title = b.type === 'station' ? `${def.name} ${b.stationNo}` : def.name;
-    let html = `<header><span class="swatch" style="background:${def.color}"></span><h3>${title}</h3>
+    let html = `<header><img class="swatch" src="${buildingIconUrl(b.type)}" alt=""><h3>${title}</h3>
       <button class="x" data-act="close">×</button></header>
       <p class="muted">${def.description}</p>`;
     if (b.type === 'station') {
@@ -1022,7 +1055,7 @@ export class UI {
         stations
           .map((s) => `<option value="${s.id}" ${s.id === sel ? 'selected' : ''}>정류장 ${s.stationNo} (${STATION_MODE_NAME[s.stationMode]})</option>`)
           .join('');
-      el.innerHTML = `<header><span class="swatch" style="background:#d9a441"></span><h3>트럭 ${v.id}</h3>
+      el.innerHTML = `<header><img class="swatch" src="${truckIconUrl()}" alt=""><h3>트럭 ${v.id}</h3>
           <button class="x" data-act="close">×</button></header>
         <p class="muted">두 정류장을 오가요. 싣는 곳에서 가득 차거나 ${TRUCK.wait}초 동안 새 짐이 없으면 출발하고,
           내리는 곳에서 다 내리면 돌아와요. 한 번에 ${TRUCK.capacity}개, 초당 ${fmtNum(w.truckSpeed())}칸.</p>

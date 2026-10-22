@@ -655,9 +655,10 @@ h3 small {
   margin: 0;
 }
 #info .swatch {
-  width: 14px;
-  height: 14px;
-  border: 2px solid var(--ink);
+  width: 32px;
+  height: 32px;
+  margin: -6px 0;
+  image-rendering: pixelated;
 }
 .x {
   padding: 0 8px;
@@ -1046,6 +1047,22 @@ h3 small {
   width: 170px;
 }
 /* 도움말 아래: 공장 파일 내보내기·불러오기 */
+.sound-volume {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 6px 0;
+}
+.sound-volume input {
+  flex: 0 1 180px;
+  accent-color: #9e7526;
+}
+#btn-sound {
+  padding: 3px 8px;
+}
+#btn-sound.off {
+  color: var(--muted);
+}
 .save-file {
   display: flex;
   flex-wrap: wrap;

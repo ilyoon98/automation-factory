@@ -90,6 +90,26 @@ const LOD_SCALE = 1;
 /** 캔버스 글꼴: 픽셀 글꼴 갈무리 (Galmuri11은 12px, Galmuri9는 10px의 배수에서 또렷하다) */
 const font = (px: number, bold = false) => `${bold ? 'bold ' : ''}${px}px ${px === 10 ? 'Galmuri9' : 'Galmuri11'}, system-ui, sans-serif`;
 
+/** 짓거나 철거한 자리에서 잠깐 퍼지는 먼지 (화면에만, 시뮬레이션과 무관) */
+interface Puff {
+  /** 건물 왼쪽 위 칸과 크기 */
+  x: number;
+  y: number;
+  size: number;
+  /** 생긴 시각 (초, performance.now 기준) */
+  t0: number;
+  build: boolean;
+  /** 먼지 알갱이: 건물 아래 가장자리에서 출발 위치(그림 픽셀)와 날아가는 속도(그림 픽셀/초) */
+  dots: { x: number; vx: number; vy: number; big: boolean }[];
+}
+
+/** 먼지가 남아 있는 시간 (초) */
+const PUFF_SEC = 0.45;
+/** 한꺼번에 보여 줄 먼지 수 (큰 붙여넣기·영역 철거에서 너무 많아지지 않게) */
+const PUFF_MAX = 160;
+/** 지을 때 이는 먼지 색 (바닥보다 조금 진한 모래색) */
+const PUFF_DUST = '#b89a63';
+
 export class Renderer {
   private ctx: CanvasRenderingContext2D;
   private dpr = 1;
@@ -107,6 +127,12 @@ export class Renderer {
   private chunks = new Map<number, { canvas: HTMLCanvasElement; key: number }>();
   /** 멀리서 볼 때 쓰는 바닥 묶음 (칸 하나 = 1픽셀) */
   private lodChunks = new Map<number, { canvas: HTMLCanvasElement; key: number }>();
+  /** 짓기·철거 먼지. 지난 프레임에 있던 건물과 비교해서 찾는다 (누가 지었든, 되돌리기든) */
+  private puffs: Puff[] = [];
+  private seenWorld: World | null = null;
+  private seen = new Map<number, { x: number; y: number; size: number }>();
+  private seenNextId = 0;
+  private seenCount = 0;
 
   constructor(private canvas: HTMLCanvasElement) {
     this.ctx = canvas.getContext('2d')!;
@@ -155,6 +181,7 @@ export class Renderer {
 
     this.drawGround(world, x0, y0, x1, y1);
     if (view.tool || view.paste) this.drawGrid(x0, y0, x1, y1);
+    this.trackBuildings(world);
 
     const visible: Building[] = [];
     for (const b of world.buildings.values()) {
@@ -187,6 +214,7 @@ export class Renderer {
       if (v.x < x0 - 1 || v.y < y0 - 1 || v.x > x1 + 2 || v.y > y1 + 2) continue;
       this.drawTruck(v, v.id === view.selectedVehicle);
     }
+    this.drawPuffs();
     if (this.n >= 1) {
       const low = new Set<number>();
       for (const r of world.patchReports()) if (patchAlert(r) === 'low') for (const m of r.miners) low.add(m.id);
@@ -277,6 +305,79 @@ export class Renderer {
         ctx.strokeRect(sx + 0.5, sy + 0.5, z - 1, z - 1);
       }
     }
+  }
+
+  // ───────────────────────── 짓기·철거 먼지 ─────────────────────────
+
+  /** 지난 프레임과 비교해 새로 생기거나 사라진 건물 자리에 먼지를 만든다 */
+  private trackBuildings(world: World): void {
+    const remember = (b: Building) => this.seen.set(b.id, { x: b.x, y: b.y, size: b.size });
+    // 공장이 통째로 바뀌면(새 게임·불러오기·방 참가) 먼지 없이 기억만 새로
+    if (world !== this.seenWorld) {
+      this.seenWorld = world;
+      this.seen.clear();
+      for (const b of world.buildings.values()) remember(b);
+      this.puffs = [];
+    } else if (world.nextId !== this.seenNextId || world.buildings.size !== this.seenCount) {
+      const now = performance.now() / 1000;
+      for (const b of world.buildings.values()) {
+        if (this.seen.has(b.id)) continue;
+        remember(b);
+        this.addPuff(b.x, b.y, b.size, true, now);
+      }
+      for (const [id, s] of this.seen) {
+        if (world.buildings.has(id)) continue;
+        this.seen.delete(id);
+        this.addPuff(s.x, s.y, s.size, false, now);
+      }
+    }
+    this.seenNextId = world.nextId;
+    this.seenCount = world.buildings.size;
+  }
+
+  private addPuff(x: number, y: number, size: number, build: boolean, now: number): void {
+    if (this.puffs.length >= PUFF_MAX) return;
+    const w = size * TILE;
+    const n = size === 1 ? 4 : 8;
+    const dots: Puff['dots'] = [];
+    for (let i = 0; i < n; i++) {
+      // 아래 가장자리를 따라 고르게 놓고 바깥쪽 위로 튄다 (지으면 내려앉으며 이는 먼지, 철거하면 흩어지는 나무 조각)
+      const side = (i + 0.5) / n;
+      dots.push({
+        x: side * w,
+        vx: (side - 0.5) * (build ? 46 : 60) + (Math.random() - 0.5) * 10,
+        vy: -(build ? 10 : 22) - Math.random() * 14,
+        big: i % 3 === 0,
+      });
+    }
+    this.puffs.push({ x, y, size, t0: now, build, dots });
+  }
+
+  private drawPuffs(): void {
+    if (!this.puffs.length) return;
+    const now = performance.now() / 1000;
+    this.puffs = this.puffs.filter((p) => now - p.t0 < PUFF_SEC);
+    if (this.lod) return;
+    const ctx = this.ctx;
+    const u = this.u;
+    for (const p of this.puffs) {
+      const t = now - p.t0;
+      const k = t / PUFF_SEC;
+      const [sx, sy] = this.cam.worldToScreen(p.x, p.y);
+      const bottom = p.size * TILE;
+      ctx.globalAlpha = 1 - k * k;
+      // 지을 때는 처음 0.12초 동안 테두리가 반짝 (어디에 생겼는지 눈에 띄게)
+      if (p.build && t < 0.12) this.outline(sx - u, sy - u, (bottom + 2) * u, (bottom + 2) * u, PAL.brass.hi);
+      ctx.fillStyle = p.build ? PUFF_DUST : PAL.wood.lo;
+      for (const d of p.dots) {
+        // 위로 튀었다가 조금 떨어진다 (그림 픽셀 단위로 맞춰 또렷하게)
+        const px = Math.round(d.x + d.vx * t);
+        const py = Math.round(bottom - 2 + d.vy * t + 60 * t * t);
+        const sz = d.big ? 2 : 1;
+        ctx.fillRect(sx + px * u, sy + py * u, sz * u, sz * u);
+      }
+    }
+    ctx.globalAlpha = 1;
   }
 
   // ───────────────────────── 그림 찍기 도우미 ─────────────────────────

@@ -35,6 +35,10 @@ function loadSettings(): Settings {
 
 /** 같은 소리를 이 간격(초)보다 빨리 다시 내지 않는다 (컨베이어를 끌면 칸마다 명령이 나오므로) */
 const GAP: Partial<Record<SoundName, number>> = { place: 0.05, remove: 0.05, rotate: 0.04, error: 0.4, chat: 0.2 };
+/** 연달아 지을 때 한 번에 한 칸씩 올라가는 음 (반음 수, 5음계). 끝까지 가면 맨 위 음을 유지 */
+const PLACE_STEPS = [0, 2, 4, 7, 9, 12, 14, 16, 19];
+/** 짓는 소리 사이가 이보다(초) 벌어지면 처음 음으로 돌아간다 */
+const PLACE_STREAK_GAP = 0.5;
 
 // ───────────────────────── 배경음 악보 ─────────────────────────
 
@@ -60,8 +64,11 @@ class Sound {
   private out: GainNode | null = null;
   private musicOut: GainNode | null = null;
   private last = new Map<SoundName, number>();
-  /** 연달아 지을 때 소리 높이를 조금씩 바꿔 기계음처럼 들리지 않게 */
+  /** 연달아 철거할 때 소리 높이를 조금씩 바꿔 기계음처럼 들리지 않게 */
   private step = 0;
+  /** 연달아 지은 횟수와 마지막으로 짓는 소리를 낸 시각 (음이 한 칸씩 올라가게) */
+  private placeStreak = 0;
+  private lastPlaceAt = -1;
   /** 배경음: 다음 8분음표를 낼 시각(AudioContext 시간)과 지금까지 몇 번째 8분음표인지 */
   private nextNote = 0;
   private noteNo = 0;
@@ -167,11 +174,15 @@ class Sound {
     const wobble = [1, 1.06, 0.97, 1.03][this.step++ % 4];
     const out = this.out;
     switch (name) {
-      case 'place':
-        // 나무 블록을 내려놓는 "톡"
-        this.tone(out, 'triangle', 520 * wobble, 260 * wobble, t, 0.09, 0.5);
+      case 'place': {
+        // 나무 블록을 내려놓는 "톡". 연달아 지으면 5음계를 따라 한 칸씩 올라가고, 잠깐 멈추면 처음 음으로
+        this.placeStreak = t - this.lastPlaceAt < PLACE_STREAK_GAP ? this.placeStreak + 1 : 0;
+        this.lastPlaceAt = t;
+        const k = 2 ** (PLACE_STEPS[Math.min(this.placeStreak, PLACE_STEPS.length - 1)] / 12);
+        this.tone(out, 'triangle', 520 * k, 260 * k, t, 0.09, 0.5);
         this.noise(ctx, t, 0.03, 0.12, 2400);
         break;
+      }
       case 'remove':
         // 들어 올리는 "퉁" (낮게)
         this.tone(out, 'triangle', 220 * wobble, 340 * wobble, t, 0.1, 0.4);

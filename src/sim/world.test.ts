@@ -5,7 +5,7 @@ import { copyArea, pasteBlueprint } from './blueprint';
 import { applyCommand } from './commands';
 import type { Dir } from './dir';
 import { STARTING_STOCK, generateWorld } from './mapgen';
-import { BELT_SPACING, TICK_RATE, World, patchAlert } from './world';
+import { BELT_SPACING, TICK_RATE, World, describeEdit, patchAlert } from './world';
 
 /** 모든 건물·레시피 해금 */
 function unlockAll(w: World) {
@@ -2123,6 +2123,70 @@ describe('되돌리기', () => {
     w.redo();
     w.redo();
     expect(w.vehicles.size).toBe(0);
+  });
+
+  describe('노선 바꾸기', () => {
+    /** 정류장 a(10,4)·b(10,10)·c(11,6)이 세로 도로(10,6~9)에 붙어 있고, a ↔ b 트럭 한 대 */
+    function routeWorld() {
+      const w = makeWorld();
+      w.stock.set('steel', 100);
+      w.stock.set('circuit', 100);
+      const a = w.place('station', 10, 4, 0)!;
+      const b = w.place('station', 10, 10, 0)!;
+      for (let y = 6; y <= 9; y++) w.place('road', 10, y, 0);
+      const c = w.place('station', 11, 6, 0)!;
+      const v = w.buildTruck(a)!;
+      v.stops = [
+        { id: a.id, act: 'load' },
+        { id: b.id, act: 'unload' },
+      ];
+      return { w, a, b, c, v };
+    }
+
+    it('노선 바꾸기 한 번이 되돌리기 한 단계 (정류장·순서·싣기/내리기·실을 짐 모두)', () => {
+      const { w, a, b, c, v } = routeWorld();
+      const before = v.stops.map((s) => ({ ...s }));
+      const after = [
+        { id: a.id, act: 'load' as const, item: 'iron-ore' as const },
+        { id: c.id, act: 'load' as const },
+        { id: b.id, act: 'unload' as const },
+      ];
+      applyCommand(w, 0, { t: 'route', id: v.id, stops: after });
+      expect(v.stops).toEqual(after);
+      expect(describeEdit(w.nextEdit(false)!)).toBe('노선 1번');
+      applyCommand(w, 0, { t: 'undo' });
+      expect(v.stops).toEqual(before);
+      applyCommand(w, 0, { t: 'redo' });
+      expect(v.stops).toEqual(after);
+      // 똑같은 노선을 다시 보내면 기록하지 않는다
+      applyCommand(w, 0, { t: 'route', id: v.id, stops: after });
+      expect(w.nextEdit(false)![0].kind).toBe('route');
+      expect(w.canRedo).toBe(false);
+    });
+
+    it('노선에 넣은 정류장을 철거했다 되돌려도, 노선 다시 하기가 다시 지은 정류장을 가리킨다', () => {
+      const { w, a, c, v } = routeWorld();
+      applyCommand(w, 0, { t: 'route', id: v.id, stops: [{ id: a.id, act: 'load' }, { id: c.id, act: 'unload' }] });
+      w.edit(() => w.remove(c));
+      w.undo(); // 철거 되돌리기 → 새 id로 다시 지어짐
+      const c2 = w.buildingAt(11, 6)!;
+      expect(c2.id).not.toBe(c.id);
+      expect(v.stops[1].id).toBe(c2.id);
+      w.undo(); // 노선 되돌리기
+      w.redo(); // 노선 다시 하기
+      expect(v.stops[1].id).toBe(c2.id);
+    });
+
+    it('트럭 철거를 되돌려 다시 생긴 트럭에도 노선 되돌리기가 닿는다', () => {
+      const { w, a, b, c, v } = routeWorld();
+      applyCommand(w, 0, { t: 'route', id: v.id, stops: [{ id: a.id, act: 'load' }, { id: c.id, act: 'unload' }] });
+      w.edit(() => w.removeVehicle(v));
+      w.undo(); // 트럭 다시 생김 (새 id, 바뀐 노선 그대로)
+      const back = [...w.vehicles.values()][0];
+      expect(back.stops[1].id).toBe(c.id);
+      w.undo(); // 노선 되돌리기
+      expect(back.stops[1].id).toBe(b.id);
+    });
   });
 
   it('재료가 모자라거나 자리가 막히면 그 부분만 건너뛴다', () => {

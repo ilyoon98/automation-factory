@@ -153,7 +153,8 @@ function run(w: World, c: Command): CommandResults[Command['t']] {
     case 'route': {
       const v = w.vehicles.get(c.id);
       const stops = routeStops(c.stops);
-      if (v && stops) w.setStops(v, stops);
+      // 노선 바꾸기 한 번이 되돌리기 한 단계
+      if (v && stops) w.edit(() => w.setStops(v, stops));
       return;
     }
     case 'truck-filter': {

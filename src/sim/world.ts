@@ -99,7 +99,9 @@ export type EditOp =
   | { kind: 'filter'; x: number; y: number; from: ItemId | null; to: ItemId | null }
   | { kind: 'mode'; x: number; y: number; from: StationMode; to: StationMode }
   | ({ kind: 'truck-add' } & TruckEdit)
-  | ({ kind: 'truck-remove' } & TruckEdit);
+  | ({ kind: 'truck-remove' } & TruckEdit)
+  /** 트럭 노선 바꾸기 (정류장 더하기·빼기·순서·싣기/내리기·실을 짐) */
+  | { kind: 'route'; id: number; from: RouteStop[]; to: RouteStop[] };
 
 /** 트럭 만들기·철거. 되돌려 다시 만들면 id가 바뀌므로 id는 그때그때 고친다. 실었던 짐은 돌아오지 않는다 */
 interface TruckEdit {
@@ -123,11 +125,13 @@ export function describeEdit(ops: EditOp[]): string {
   const placed = count('place');
   const removed = count('remove');
   const trucks = count('truck-add', 'truck-remove');
-  const other = ops.length - placed - removed - trucks;
+  const routes = count('route');
+  const other = ops.length - placed - removed - trucks - routes;
   return [
     placed && `짓기 ${placed}개`,
     removed && `철거 ${removed}개`,
     trucks && `트럭 ${trucks}대`,
+    routes && `노선 ${routes}번`,
     other && `회전·설정 ${other}개`,
   ]
     .filter(Boolean)
@@ -1110,12 +1114,13 @@ export class World {
     const h = this.history();
     const batch = h.undo.pop();
     if (!batch) return null;
+    // 먼저 옮겨 둔다: 되돌리는 도중 정류장이 다시 지어지면 이 단계 기록 속 정류장 번호도 고쳐지게 (revive)
+    h.redo.push(batch);
     const skipped = this.replay(() => {
       let n = 0;
       for (let i = batch.length - 1; i >= 0; i--) if (!this.applyOp(batch[i], true)) n++;
       return n;
     });
-    h.redo.push(batch);
     return { ops: batch, skipped };
   }
 
@@ -1123,12 +1128,12 @@ export class World {
     const h = this.history();
     const batch = h.redo.pop();
     if (!batch) return null;
+    h.undo.push(batch);
     const skipped = this.replay(() => {
       let n = 0;
       for (const op of batch) if (!this.applyOp(op, false)) n++;
       return n;
     });
-    h.undo.push(batch);
     return { ops: batch, skipped };
   }
 
@@ -1150,6 +1155,13 @@ export class World {
 
   /** back = true면 되돌리기(반대로), false면 다시 하기 */
   private applyOp(op: EditOp, back: boolean): boolean {
+    if (op.kind === 'route') {
+      // 트럭이 되돌리기로 다시 만들어졌으면 지금 id로 찾는다
+      const v = this.vehicles.get(this.truckId(op.id));
+      if (!v) return false;
+      this.setStops(v, back ? op.from : op.to);
+      return true;
+    }
     if (op.kind === 'truck-add' || op.kind === 'truck-remove') {
       // 만들기를 되돌리기 = 철거, 철거를 되돌리기 = 다시 만들기
       const last = this.truckId(op.id);
@@ -1204,6 +1216,15 @@ export class World {
     if (b.stationNo === this.nextStationNo - 1) this.nextStationNo--;
     if (no) b.stationNo = no;
     for (const v of this.vehicles.values()) for (const s of v.stops) if (s.id === oldId) s.id = b.id;
+    // 되돌리기 기록 속 노선도 (트럭 만들기·철거, 노선 바꾸기). 안 그러면 다시 하기로 되살린 노선이 없는 정류장을 가리킨다
+    for (const h of this.histories.values()) {
+      for (const batch of [...h.undo, ...h.redo, ...(h.batch ? [h.batch] : [])]) {
+        for (const op of batch) {
+          const lists = op.kind === 'route' ? [op.from, op.to] : op.kind === 'truck-add' || op.kind === 'truck-remove' ? [op.stops] : [];
+          for (const list of lists) for (const s of list) if (s.id === oldId) s.id = b.id;
+        }
+      }
+    }
   }
 
   /** 되돌리기로 여러 번 다시 만들어진 트럭의 지금 id */
@@ -2022,7 +2043,11 @@ export class World {
    */
   setStops(v: Vehicle, stops: RouteStop[]): void {
     const cur = v.stops[v.stop];
+    const from = v.stops.map((s) => ({ ...s }));
     v.stops = stops.map((s) => ({ ...s }));
+    if (JSON.stringify(from) !== JSON.stringify(v.stops)) {
+      this.record({ kind: 'route', id: v.id, from, to: v.stops.map((s) => ({ ...s })) });
+    }
     const keep = cur ? v.stops.findIndex((s) => s.id === cur.id && s.act === cur.act) : -1;
     if (keep >= 0) {
       v.stop = keep;

@@ -1640,11 +1640,28 @@ h3 small {
 #palette .pal-import button {
   align-self: flex-start;
   padding: 2px 10px;
-}/* ✕를 한 번 누르면 "지우기?"로 (3초 안에 한 번 더 누르면 지움) */
+}
+/* ✕를 누르면 "취소 | 지우기"로 묻는다 (지우기를 누르면 지움) */
 .pal.confirm-del .del {
-  width: auto;
-  padding: 0 4px;
+  width: 40px;
   background: var(--bad);
+}
+.pal .keep {
+  display: none;
+}
+.pal.confirm-del .keep {
+  position: absolute;
+  top: 2px;
+  right: 44px;
+  width: 32px;
+  height: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font: 11px var(--font-s);
+  color: var(--ink);
+  background: var(--lo);
+  cursor: pointer;
 }
 .pal.confirm-del .share {
   display: none;

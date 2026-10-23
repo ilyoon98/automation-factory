@@ -788,20 +788,28 @@ export class UI {
     // 같은 공장에서 새로 이룬 목표만 알린다 (불러오거나 방에 들어가 한꺼번에 채워질 때는 조용히)
     if (reached && w === this.guideWorld) sound.play('goal');
     this.guideWorld = w;
-    const todo = GUIDE.filter((s) => !w.guideDone.has(s.title));
-    const head = `<h3>목표 <small>${GUIDE.length - todo.length}/${GUIDE.length}</small></h3>`;
-    if (todo.length === 0) {
+    const done = GUIDE.filter((s) => w.guideDone.has(s.title)).length;
+    const pct = Math.round((done / GUIDE.length) * 100);
+    const head = `<h3>목표 <small>${done}/${GUIDE.length}</small></h3><div class="gbar"><i style="width:${pct}%"></i></div>`;
+    const cur = GUIDE.findIndex((s) => !w.guideDone.has(s.title));
+    if (cur < 0) {
       $('guide').innerHTML = `${head}<p class="muted">모든 목표 달성! 끝없는 연구(T)로 자유롭게 공장을 키워 보세요.</p>`;
       return;
     }
-    const [now, ...next] = todo;
-    const later = next
-      .slice(0, 2)
-      .map((s) => `<li>${s.title}</li>`)
+    const now = GUIDE[cur];
+    // 마침표마다 줄을 바꾼다 ("1.5배"처럼 숫자 사이 점은 그대로)
+    const hint = withBuildingIcons(now.hint).split(/(?<=[.!?])\s+/).join('<br>');
+    // 진행도: 바로 앞 목표 2개(끝남, 빗금) · 지금 · 다음 2개
+    const steps = GUIDE.slice(Math.max(0, cur - 2), cur + 3)
+      .map((s) => {
+        const ok = w.guideDone.has(s.title);
+        const cls = s === now ? 'cur' : ok ? 'done' : '';
+        return `<li class="${cls}"><span class="mark">${s === now ? '▶' : ok ? '✓' : '·'}</span>${s.title}</li>`;
+      })
       .join('');
     $('guide').innerHTML = `${head}
-      <div class="now"><b>${now.title}</b><p>${withBuildingIcons(now.hint)}</p></div>
-      ${later ? `<div class="later">다음</div><ul>${later}</ul>` : ''}`;
+      <div class="now"><b>${now.title}</b><p>${hint}</p></div>
+      <ul class="steps">${steps}</ul>`;
   }
 
   // ───────────────────────── 정보창 ─────────────────────────

@@ -25,7 +25,8 @@ function paintIcon(key: string, name: string, size: number, k: number, frame: nu
   const ctx = c.getContext('2d')!;
   const s = sprite(name);
   if (s) {
-    ctx.imageSmoothingEnabled = k >= 1;
+    // 키울 때는 픽셀 그대로 (부드럽게 번지면 흐릿해진다), 줄일 때만(허브) 부드럽게
+    ctx.imageSmoothingEnabled = k < 1;
     const w = s.w * k;
     const h = s.h * k;
     ctx.drawImage(s.img, (frame % s.frames) * s.w, 0, s.w, s.h, Math.floor((size - w) / 2), Math.floor((size - h) / 2), w, h);

@@ -462,18 +462,50 @@ h3 small {
   margin: 4px 0 0;
   line-height: 1.55;
 }
-#guide .later {
-  margin-top: 8px;
-  font: 10px var(--font-s);
+/* 목표 진행 막대 */
+#guide .gbar {
+  height: 6px;
+  margin: 2px 0 6px;
+  background: rgba(59, 39, 22, 0.12);
+  border: 1px solid var(--ink);
+}
+#guide .gbar i {
+  display: block;
+  height: 100%;
+  background: var(--good);
+}
+/* 진행도: 앞 목표(끝남, 빗금) · 지금 · 다음 */
+#guide ul.steps {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 6px 0 0;
+  border-top: 1px dashed rgba(59, 39, 22, 0.3);
   color: var(--muted);
 }
-#guide ul {
-  margin: 2px 0 0;
-  padding-left: 16px;
-  color: var(--muted);
-}
-#guide li {
+#guide .steps li {
   margin: 2px 0;
+}
+#guide .steps .mark {
+  display: inline-block;
+  width: 14px;
+}
+#guide .steps li.done {
+  text-decoration: line-through;
+  opacity: 0.6;
+}
+#guide .steps li.done .mark {
+  color: var(--good);
+}
+#guide .steps li.cur {
+  color: var(--accent);
+  font-weight: 700;
+}
+/* 목표 글 속 건물 아이콘 (그림 크기 그대로 32px) */
+#guide .now .bicon {
+  width: 32px;
+  height: 32px;
+  vertical-align: middle;
+  margin-right: 2px;
 }
 
 /* 하단 툴바: 카테고리 탭 + 건물 목록 */
@@ -501,11 +533,15 @@ h3 small {
   font-weight: 700;
   font-size: 12px;
 }
+#tabs .tab {
+  white-space: nowrap;
+  flex-shrink: 0;
+}
 #tabs .tab .ticon {
-  width: 16px;
-  height: 16px;
-  vertical-align: -4px;
-  margin-right: 4px;
+  width: 32px;
+  height: 32px;
+  vertical-align: middle;
+  margin: -6px 4px -6px -4px;
 }
 /* 목표 글 속 건물 이름: 아이콘과 이름이 줄바꿈으로 갈리지 않게 */
 #guide .bname {

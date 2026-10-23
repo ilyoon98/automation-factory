@@ -233,7 +233,7 @@ export const GUIDE: GuideStep[] = [
   },
   {
     title: '석탄 없이 전기 만들기',
-    hint: '재생 에너지를 연구하세요. 태양광 패널(늘 100kW)을 깔거나, 수력 발전기에 양수기 물을 넣어요.',
+    hint: '재생 에너지를 연구하세요. 태양광 패널(늘 100kW)을 깔거나, 수력 발전기에 양수기 물을 넣어요. 수력 발전기(나무 물레방아)에는 목재가 들어요.',
     done: (w) => [...w.buildings.values()].some((b) => b.type === 'solar' || (b.type === 'hydro' && b.load > 0)),
     focus: (w) => after(w, ['renewables'], { build: 'solar' }),
   },

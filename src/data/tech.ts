@@ -228,7 +228,8 @@ export const TECHS: Tech[] = [
       { item: 'brick', count: 100 },
       { item: 'circuit', count: 120 },
     ],
-    requires: ['soil-refining'],
+    // 수력 발전기에 목재가 들어서 산림 뒤
+    requires: ['soil-refining', 'forestry'],
     unlockBuildings: ['solar', 'hydro'],
   },
   {
@@ -329,6 +330,8 @@ export const ENDLESS_TECHS: EndlessTech[] = [
       { item: 'brick', count: 100 },
       { item: 'circuit', count: 150 },
       { item: 'concrete', count: 20 },
+      // 종이를 만들수록 쌓이는 목재를 끝없이 쓰는 곳
+      { item: 'wood', count: 100 },
     ],
     step: 0.1,
   },
@@ -341,6 +344,7 @@ export const ENDLESS_TECHS: EndlessTech[] = [
       { item: 'steel', count: 100 },
       { item: 'gear', count: 200 },
       { item: 'circuit', count: 100 },
+      { item: 'wood', count: 100 },
     ],
     step: 0.1,
   },

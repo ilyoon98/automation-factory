@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { CHARCOAL_ENERGY, COAL_ENERGY, FOREST, STATION_CAPACITY, TRUCK } from '../data/buildings';
+import { BUILDINGS, CHARCOAL_ENERGY, COAL_ENERGY, FOREST, STATION_CAPACITY, TRUCK } from '../data/buildings';
 import { ENDLESS_BY_ID, TECHS, endlessCost } from '../data/tech';
 import { copyArea, pasteBlueprint } from './blueprint';
 import { countOf } from './building';
@@ -21,6 +21,7 @@ function makeWorld(): World {
   w.stock.set('iron-plate', 1000);
   w.stock.set('gear', 1000);
   w.stock.set('stone', 1000);
+  w.stock.set('wood', 1000);
   return w;
 }
 
@@ -465,6 +466,23 @@ describe('석탄 독립: 태양광·수력·전기로', () => {
   it('광맥 독립(최종 목표)은 재생 에너지와 전기 제강까지 해야 열린다', () => {
     const t = TECHS.find((x) => x.id === 'ore-independence')!;
     expect(t.requires).toEqual(expect.arrayContaining(['separation', 'renewables', 'electric-steel']));
+  });
+
+  it('목재 쓰는 곳: 식목기·수력 발전기를 지을 때, 끝없는 기계·컨베이어 속도. 수력이 있는 재생 에너지는 산림 뒤', () => {
+    const wood = (cost: { item: string; count: number }[]) => cost.find((c) => c.item === 'wood')?.count ?? 0;
+    expect(wood(BUILDINGS.planter.cost)).toBeGreaterThan(0);
+    expect(wood(BUILDINGS.hydro.cost)).toBeGreaterThan(0);
+    expect(TECHS.find((x) => x.id === 'renewables')!.requires).toContain('forestry');
+    expect(wood(ENDLESS_BY_ID['endless-crafting'].base)).toBeGreaterThan(0);
+    expect(wood(ENDLESS_BY_ID['endless-belt'].base)).toBeGreaterThan(0);
+    // 목재가 없으면 수력 발전기를 못 짓는다
+    const w = makeWorld();
+    w.stock.set('brick', 100);
+    w.stock.set('wood', 0);
+    expect(w.place('hydro', 10, 10, 0)).toBeNull();
+    w.stock.set('wood', 20);
+    expect(w.place('hydro', 10, 10, 0)).not.toBeNull();
+    expect(w.stockOf('wood')).toBe(0);
   });
 });
 
@@ -1145,7 +1163,7 @@ describe('연구', () => {
   describe('끝없는 연구', () => {
     const rich = () => {
       const w = generateWorld(1);
-      for (const it of ['steel', 'circuit', 'concrete', 'brick'] as const) w.stock.set(it, 100000);
+      for (const it of ['steel', 'circuit', 'concrete', 'brick', 'wood'] as const) w.stock.set(it, 100000);
       return w;
     };
 
@@ -1165,7 +1183,7 @@ describe('연구', () => {
 
     it('채굴기와 기계가 단계마다 10%씩 빨라진다 (생산 현황 최대치도)', () => {
       const w = makeWorld(); // 모든 연구 완료
-      for (const it of ['steel', 'circuit', 'concrete', 'brick'] as const) w.stock.set(it, 100000);
+      for (const it of ['steel', 'circuit', 'concrete', 'brick', 'wood'] as const) w.stock.set(it, 100000);
       ore(w, 10, 10, 2, 500);
       const miner = w.place('miner', 10, 10, 0)!;
       const smelter = w.place('smelter', 20, 20, 0)!;

@@ -392,9 +392,11 @@ export const BUILDINGS: Record<BuildingType, BuildingDef> = {
     type: 'planter',
     name: '식목기',
     size: 2,
+    // 목재: 숲을 넓힐수록 목재가 들게 (제재소는 같은 연구, 처음 숲에서 통나무가 나온다)
     cost: [
-      { item: 'iron-plate', count: 15 },
+      { item: 'iron-plate', count: 10 },
       { item: 'gear', count: 10 },
+      { item: 'wood', count: 10 },
     ],
     power: 30,
     color: '#5fae5a',
@@ -434,10 +436,12 @@ export const BUILDINGS: Record<BuildingType, BuildingDef> = {
     type: 'hydro',
     name: '수력 발전기',
     size: 2,
+    // 나무 물레방아라 목재 (연구 재생 에너지는 산림 뒤)
     cost: [
-      { item: 'iron-plate', count: 15 },
+      { item: 'iron-plate', count: 10 },
       { item: 'gear', count: 10 },
       { item: 'brick', count: 10 },
+      { item: 'wood', count: 20 },
     ],
     power: 0,
     color: '#2f8fae',

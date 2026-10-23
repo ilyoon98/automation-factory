@@ -528,6 +528,10 @@ export const FOREST = {
   logs: 2,
   /** 식목기에 쌓아 두는 묘목 수 */
   planterCap: 5,
+  /** 연구 "숲 가꾸기": 나무가 이만큼 빨리 자란다 */
+  care: 1.5,
+  /** 목표 "숲 되살리기": 다 캔 광맥 자리에 다 자란 나무 이만큼 */
+  revive: 50,
 };
 
 export const HUB_BASE_POWER = 300;

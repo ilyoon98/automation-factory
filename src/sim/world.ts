@@ -1081,10 +1081,15 @@ export class World {
     return g >= 1;
   }
 
+  /** 나무가 자라는 빠르기 (1 = 기본 2분): 연구 "숲 가꾸기" × 끝없는 연구 "나무 자라기" */
+  treeGrowth(): number {
+    return (this.researched.has('forest-care') ? FOREST.care : 1) * this.boost('endless-forest');
+  }
+
   /** 자라는 나무를 한 틱만큼 키운다 */
   private growTrees(): void {
     if (!this.growing.length) return;
-    const step = DT / FOREST.grow;
+    const step = (DT * this.treeGrowth()) / FOREST.grow;
     let keep = 0;
     for (const i of this.growing) {
       const g = Math.min(1, this.tree[i] + step);
@@ -1121,6 +1126,24 @@ export class World {
     let grown = 0;
     for (const g of this.tree) if (g >= 1) grown++;
     return { grown, growing: this.growing.length };
+  }
+
+  /** 광맥을 다 캐서 빈 땅이 된 칸 (광맥 번호는 남고 광맥 표시는 사라진 칸) */
+  isSpentOre(i: number): boolean {
+    return this.patchOf[i] > 0 && !this.resItem[i];
+  }
+
+  /** 숲 되살리기: 다 캔 광맥 칸 수와, 그중 다 자란 나무가 선 칸 수 */
+  revivedLand(): { spent: number; revived: number } {
+    this.ensurePatches();
+    let spent = 0;
+    let revived = 0;
+    for (let i = 0; i < this.tree.length; i++) {
+      if (!this.isSpentOre(i)) continue;
+      spent++;
+      if (this.tree[i] >= 1) revived++;
+    }
+    return { spent, revived };
   }
 
   /** 뽑아낼 칸들: 양수기는 물 칸, 채굴기는 광맥 칸 (물 제외) */

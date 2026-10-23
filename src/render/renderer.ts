@@ -550,11 +550,21 @@ export class Renderer {
   // ───────────────────────── 그림 찍기 도우미 ─────────────────────────
 
   /** 그림 한 장. (sx, sy) = 왼쪽 위 화면 좌표, frame = 가로 몇 번째 프레임 (LOD면 절반 그림, 첫 프레임) */
-  private blit(name: string, frame: number, sx: number, sy: number): void {
+  /** mirror = 좌우 뒤집기 (같은 그림이 줄 맞춰 늘어서 보이지 않게) */
+  private blit(name: string, frame: number, sx: number, sy: number, mirror = false): void {
     const s = this.lod ? spriteHalf(name) : sprite(name);
     if (!s) return;
     const u = this.lod ? this.u * 2 : this.u;
-    this.ctx.drawImage(s.img, (frame % s.frames) * s.w, 0, s.w, s.h, sx, sy, s.w * u, s.h * u);
+    if (!mirror) {
+      this.ctx.drawImage(s.img, (frame % s.frames) * s.w, 0, s.w, s.h, sx, sy, s.w * u, s.h * u);
+      return;
+    }
+    const ctx = this.ctx;
+    ctx.save();
+    ctx.translate(sx + s.w * u, sy);
+    ctx.scale(-1, 1);
+    ctx.drawImage(s.img, (frame % s.frames) * s.w, 0, s.w, s.h, 0, 0, s.w * u, s.h * u);
+    ctx.restore();
   }
 
   /** 가운데 (cx, cy)를 축으로 90도 단위로 돌려서 (rot = 시계 방향 횟수, flip = 위아래 뒤집기) */
@@ -694,7 +704,8 @@ export class Renderer {
         this.blit(`water:${h & 3}`, Math.floor(t + ((h >>> 4) & 3)), sx, sy);
       }
     }
-    // 나무: 자람 정도에 따라 새싹·어린 나무·나무. 다 자란 나무는 바람에 살짝 흔들린다
+    // 나무: 자람 정도에 따라 새싹·어린 나무·나무. 다 자란 나무는 바람에 살짝 흔들린다.
+    // 칸마다 좌우를 섞어 뒤집어서 과수원처럼 줄 맞춰 보이지 않게
     const sway = world.time * 0.7;
     for (let y = y0; y <= y1; y++) {
       for (let x = x0; x <= x1; x++) {
@@ -702,8 +713,9 @@ export class Renderer {
         const g = world.tree[i];
         if (g <= 0) continue;
         const stage = treeStage(g);
+        const h = hash(i);
         const [sx, sy] = cam.worldToScreen(x, y);
-        this.blit(`tree:${stage}`, stage === 2 ? Math.floor(sway + (hash(i) & 7)) % 2 : 0, sx, sy);
+        this.blit(`tree:${stage}`, stage === 2 ? Math.floor(sway + (h & 7)) % 2 : 0, sx, sy, (h & 8) !== 0);
       }
     }
   }

@@ -1,3 +1,4 @@
+import { FOREST } from '../data/buildings';
 import { ITEM_IDS } from '../data/items';
 import type { World } from '../sim/world';
 
@@ -141,6 +142,11 @@ export const GUIDE: GuideStep[] = [
     done: (w) => w.incomePerMinute('concrete') > 0 || w.stockOf('concrete') > 0,
   },
   {
+    title: '종이 만들기',
+    hint: '제재소에서 목재와 같이 나오는 톱밥도 쓸 수 있어요. 연구 창(T)에서 제지를 연구하고(목재 200, 회로 100), 세척기에 톱밥 2 + 물 1을 넣으면 종이가 나와요. 종이는 숲 가꾸기 연구에 써요.',
+    done: (w) => w.incomePerMinute('paper') > 0 || w.stockOf('paper') > 0,
+  },
+  {
     title: '석탄 없이 전기 만들기',
     hint: '석탄 광맥도 언젠가 바닥나요. 재생 에너지를 연구해서 태양광 패널(전력 탭 C, 늘 100kW)을 깔거나, 수력 발전기에 양수기 물을 넣으세요 (양수기 1대 = 600kW).',
     done: (w) => [...w.buildings.values()].some((b) => b.type === 'solar' || (b.type === 'hydro' && b.load > 0)),
@@ -159,5 +165,10 @@ export const GUIDE: GuideStep[] = [
     title: '끝없는 연구 1단계',
     hint: '최종 목표를 이뤘어요! 연구 창(T)의 "끝없는" 탭에서 채굴·기계·컨베이어·트럭을 단계마다 10%씩 끝없이 올릴 수 있어요. 단계마다 비용이 1.5배라 공장을 키울수록 더 높이 올라가요.',
     done: (w) => [...w.levels.values()].some((n) => n > 0),
+  },
+  {
+    title: '숲 되살리기',
+    hint: `광맥을 다 캔 빈 땅에 식목기로 나무를 심어, 그 자리에 다 자란 나무 ${FOREST.revive}그루를 만드세요. 몇 그루인지는 공장 통계(위쪽 "통계")에서 볼 수 있어요. 숲 가꾸기를 연구하면 나무가 1.5배 빨리 자라요.`,
+    done: (w) => w.revivedLand().revived >= FOREST.revive,
   },
 ];

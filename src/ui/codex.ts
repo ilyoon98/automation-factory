@@ -1,7 +1,7 @@
 import { BUILDINGS, CATEGORIES, FOREST, TRUCK, isMinerType, isRecipeMachine, type BuildingType } from '../data/buildings';
 import { ITEMS, type ItemId } from '../data/items';
 import { RECIPES, recipesFor, type MachineKind, type Recipe } from '../data/recipes';
-import { TECHS } from '../data/tech';
+import { ENDLESS_GROWTH, ENDLESS_TECHS, TECHS } from '../data/tech';
 import type { World } from '../sim/world';
 import { buildingIconUrl, depositIconUrl, itemIconUrl, itemLink } from './icons';
 
@@ -141,7 +141,7 @@ const ITEM_GROUPS: { name: string; items: ItemId[] }[] = [
   { name: '금속 · 부품', items: ['iron-plate', 'copper-plate', 'gear', 'copper-wire', 'steel', 'circuit'] },
   { name: '흙 정제', items: ['gravel', 'sand', 'mineral-dust', 'iron-concentrate', 'copper-concentrate'] },
   { name: '부산물 · 건설 재료', items: ['mud', 'slag', 'brick', 'concrete'] },
-  { name: '숲', items: ['sapling', 'log', 'wood', 'sawdust', 'charcoal'] },
+  { name: '숲', items: ['sapling', 'log', 'wood', 'sawdust', 'charcoal', 'paper'] },
 ];
 
 const fmt = (n: number) => {
@@ -350,6 +350,7 @@ export class Codex {
       .map((b) => ({ b, c: BUILDINGS[b].cost.find((c) => c.item === item) }))
       .filter((x) => x.c);
     const techs = TECHS.map((t) => ({ t, c: t.cost.find((c) => c.item === item) })).filter((x) => x.c);
+    const endless = ENDLESS_TECHS.map((t) => ({ t, c: t.base.find((c) => c.item === item) })).filter((x) => x.c);
 
     const head = `<div class="codex-head">
         <img src="${itemIconUrl(item)}" alt="">
@@ -404,7 +405,16 @@ export class Codex {
             tag: done ? '<span class="ok">완료</span>' : t.description,
             cls: done ? 'done' : '',
           });
-        }),
+        }).concat(
+          endless.map(({ t, c }) =>
+            flowRow({
+              left: chip(item, `×${c!.count}`, item),
+              mid: label('📈 끝없는 연구'),
+              right: plain(t.name),
+              tag: `1단계 비용, 단계마다 ${ENDLESS_GROWTH}배 · 지금 ${w.endlessLevel(t.id)}단계`,
+            }),
+          ),
+        ),
       )
     );
   }

@@ -1009,16 +1009,26 @@ export class UI {
         let grown = 0;
         let growing = 0;
         let room = 0;
+        // 다 캔 광맥 땅과 그중 다 자란 나무 (숲 되살리기)
+        let spent = 0;
+        let revived = 0;
         for (const i of b.mineTiles) {
           if (w.tree[i] >= 1) grown++;
           else if (w.tree[i] > 0) growing++;
           else if (w.canPlant(i)) room++;
+          if (w.isSpentOre(i)) {
+            spent++;
+            if (w.tree[i] >= 1) revived++;
+          }
         }
         lines.push(`<div class="row"><span>범위 안 나무</span><b>다 자람 ${grown} · 자라는 중 ${growing}</b></div>`);
         if (b.type === 'planter') {
           lines.push(`<div class="row"><span>심을 빈 땅</span><b>${room}칸</b></div>`);
+          if (spent) lines.push(`<div class="row"><span>다 캔 광맥 땅</span><b>${spent}칸 · 다 자란 나무 ${revived}</b></div>`);
           lines.push(`<div class="row"><span>묘목</span><b>${itemIcon('sapling')} ${countOf(b.inBuf, 'sapling')} / ${FOREST.planterCap}</b></div>`);
-          lines.push(`<p class="muted">점선 안 빈 땅에 ${FOREST.plant}초에 하나씩 심어요. 나무는 ${FOREST.grow / 60}분이면 다 자라요. 다 캔 광맥 자리에도 심어요.</p>`);
+          const sec = Math.round(FOREST.grow / w.treeGrowth());
+          const growText = sec % 60 ? `${sec}초면` : `${sec / 60}분이면`;
+          lines.push(`<p class="muted">점선 안 빈 땅에 ${FOREST.plant}초에 하나씩 심어요. 나무는 ${growText} 다 자라요. 다 캔 광맥 자리에도 심어요.</p>`);
         } else {
           lines.push(`<div class="row"><span>출력 대기</span><b>${buf(b.outBuf)}</b></div>`);
           lines.push(`<p class="muted">점선 안의 다 자란 나무를 ${FOREST.cut}초에 한 그루 베어 통나무 ${FOREST.logs} + 묘목 1을 앞으로 내보내요. 묘목은 식목기로 보내 다시 심어 주세요.</p>`);
@@ -1511,9 +1521,18 @@ export class UI {
         </tr>`;
       })
       .join('');
+    // 숲: 맵의 나무와 숲 되살리기 (다 캔 광맥 땅에 다 자란 나무)
+    const trees = w.treeCount();
+    const land = w.revivedLand();
+    const forest =
+      trees.grown || trees.growing || land.spent
+        ? `<p>🌲 숲: 다 자란 나무 <b>${trees.grown}</b>그루 · 자라는 중 ${trees.growing}
+            ${land.spent ? ` · 다 캔 광맥 땅 ${land.spent}칸 중 <b>${land.revived}</b>칸에 다 자란 나무 <small>(숲 되살리기 ${Math.min(land.revived, FOREST.revive)}/${FOREST.revive})</small>` : ''}</p>`
+        : '';
     $('stats').innerHTML = `<div class="panel stats-panel"><header><h2>공장 통계</h2><button class="x" data-act="close-modal">×</button></header>
       <p class="muted">분당 개수. "지금"은 기계마다 최근 15초 평균을 더한 것, "/" 뒤는 모든 기계가 100%로 돌 때.
         <b>100%일 때 남음</b>이 빨간 줄은 기계를 다 돌리면 모자라는 아이템이에요 (재료 기계를 늘리거나 쓰는 기계를 줄이기).</p>
+      ${forest}
       <table class="stats-table">
         <thead><tr><th>아이템</th><th>만들기</th><th>쓰기</th><th>지금 남음</th><th>100%일 때 남음</th><th>허브 입고</th><th>허브 재고</th><th title="게임 시간 10초마다 잰 허브 재고. 오른쪽이 지금">재고 흐름 (10분)</th></tr></thead>
         <tbody>${rows || '<tr><td colspan="8" class="muted">아직 아무것도 만들지 않아요</td></tr>'}</tbody>

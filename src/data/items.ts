@@ -26,10 +26,11 @@ export type ItemId =
   | 'log'
   | 'wood'
   | 'sawdust'
-  | 'charcoal';
+  | 'charcoal'
+  | 'paper';
 
 /** 아이템을 그릴 때 쓰는 모양 */
-export type ItemShape = 'ore' | 'plate' | 'gear' | 'wire' | 'ingot' | 'chip' | 'powder' | 'drop' | 'sapling' | 'log' | 'plank';
+export type ItemShape = 'ore' | 'plate' | 'gear' | 'wire' | 'ingot' | 'chip' | 'powder' | 'drop' | 'sapling' | 'log' | 'plank' | 'sheet';
 
 export interface ItemDef {
   id: ItemId;
@@ -71,6 +72,7 @@ export const ITEMS: Record<ItemId, ItemDef> = {
   wood: { id: 'wood', name: '목재', color: '#e3b06c', shape: 'plank' },
   sawdust: { id: 'sawdust', name: '톱밥', color: '#d9b98a', shape: 'powder' },
   charcoal: { id: 'charcoal', name: '숯', color: '#3a3230', shape: 'ore' },
+  paper: { id: 'paper', name: '종이', color: '#e9dfc6', shape: 'sheet' },
 };
 
 export const ITEM_IDS = Object.keys(ITEMS) as ItemId[];

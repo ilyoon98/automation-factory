@@ -245,6 +245,32 @@ export const TECHS: Tech[] = [
     unlockBuildings: ['electric-furnace'],
     unlockRecipes: ['steel-e'],
   },
+  // 숲 2차: 톱밥 → 종이 → 나무가 빨리 자라기
+  {
+    id: 'paper-making',
+    icon: '📜',
+    category: 'resources',
+    name: '제지',
+    description: '세척기에 톱밥 2 + 물 1을 넣으면 종이. 제재소에서 남던 톱밥을 쓴다',
+    cost: [
+      { item: 'wood', count: 200 },
+      { item: 'circuit', count: 100 },
+    ],
+    requires: ['forestry', 'soil-refining'],
+    unlockRecipes: ['paper'],
+  },
+  {
+    id: 'forest-care',
+    icon: '🌱',
+    category: 'resources',
+    name: '숲 가꾸기',
+    description: '나무가 1.5배 빨리 자란다 (2분 → 80초). 숲 하나에서 통나무가 더 많이 나온다',
+    cost: [
+      { item: 'paper', count: 100 },
+      { item: 'wood', count: 300 },
+    ],
+    requires: ['paper-making'],
+  },
   {
     id: 'ore-independence',
     icon: '🏆',
@@ -326,6 +352,18 @@ export const ENDLESS_TECHS: EndlessTech[] = [
     base: [
       { item: 'steel', count: 150 },
       { item: 'gear', count: 100 },
+      { item: 'circuit', count: 100 },
+    ],
+    step: 0.1,
+  },
+  {
+    id: 'endless-forest',
+    icon: '🌲',
+    name: '나무 자라기',
+    description: '모든 나무가 단계마다 10% 빨리 자라요. 숲 가꾸기와 겹쳐서 더 빨라져요.',
+    base: [
+      { item: 'paper', count: 100 },
+      { item: 'wood', count: 200 },
       { item: 'circuit', count: 100 },
     ],
     step: 0.1,

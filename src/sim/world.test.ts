@@ -2214,6 +2214,52 @@ describe('숲·나무', () => {
     delete data.trees;
     expect(World.deserialize(data).forestsLoaded).toBe(false);
   });
+
+  it('제지: 세척기에 물이 먼저 와서 모래 세척으로 정해져도 톱밥이 오면 종이로 바꾼다 (톱밥 2 + 물 1 → 종이 1)', () => {
+    const w = makeWorld();
+    const s = w.place('washer', 20, 20, 0, true)!;
+    expect(priv(w).machineAccept(s, 'water')).toBe(true);
+    expect(s.recipe).toBe('wash');
+    expect(priv(w).machineAccept(s, 'sawdust')).toBe(true);
+    expect(s.recipe).toBe('paper');
+    expect(priv(w).machineAccept(s, 'sawdust')).toBe(true);
+    expect(priv(w).machineAccept(s, 'sand')).toBe(false);
+    run(w, 2.1);
+    expect(s.outBuf.get('paper')).toBe(1);
+  });
+
+  it('숲 가꾸기는 나무를 1.5배, 끝없는 연구 "나무 자라기"는 단계마다 10% 더 빨리 키운다', () => {
+    const w = makeWorld();
+    w.researched.delete('forest-care');
+    expect(w.treeGrowth()).toBe(1);
+    w.researched.add('forest-care');
+    w.levels.set('endless-forest', 2);
+    expect(w.treeGrowth()).toBeCloseTo(FOREST.care * 1.2, 9);
+    w.setTree(5, 5, 0.001);
+    run(w, FOREST.grow / (FOREST.care * 1.2) + 0.1);
+    expect(w.tree[w.idx(5, 5)]).toBe(1);
+  });
+
+  it('숲 되살리기: 다 캔 광맥 칸과 그 위에 다 자란 나무를 센다 (저장·불러오기 뒤에도)', () => {
+    const w = makeWorld();
+    ore(w, 20, 20, 2, 5);
+    expect(w.revivedLand()).toEqual({ spent: 0, revived: 0 });
+    // 채굴기가 다 캔 것처럼 광맥 표시만 지운다 (광맥 번호는 남는다)
+    for (const [x, y] of [[20, 20], [21, 20], [20, 21]]) {
+      const i = w.idx(x, y);
+      w.resAmount[i] = 0;
+      w.resItem[i] = null;
+    }
+    expect(w.revivedLand()).toEqual({ spent: 3, revived: 0 });
+    expect(w.canPlant(w.idx(20, 20))).toBe(true);
+    expect(w.canPlant(w.idx(21, 21))).toBe(false);
+    w.setTree(20, 20, 1);
+    w.setTree(21, 20, 0.5);
+    w.setTree(5, 5, 1); // 광맥이 아니었던 땅은 세지 않는다
+    expect(w.revivedLand()).toEqual({ spent: 3, revived: 1 });
+    const copy = World.deserialize(JSON.parse(JSON.stringify(w.serialize())));
+    expect(copy.revivedLand()).toEqual({ spent: 3, revived: 1 });
+  });
 });
 
 describe('되돌리기', () => {

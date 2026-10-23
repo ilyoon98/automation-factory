@@ -373,6 +373,19 @@ const ITEM_PAINT: Record<ItemShape, (p: Pen, c: { hi: string; mid: string; lo: s
       '.KKKKKKK',
     ], { K: PAL.ink, h: c.hi, m: c.mid, l: c.lo, E: tone(c.mid, 0.45) });
   },
+  sheet: (p, c) => {
+    // 귀퉁이가 접힌 종이 한 장, 글줄 두 줄
+    stamp(p, 0, 0, [
+      '.KKKK...',
+      '.KhhKK..',
+      '.KhhKmK.',
+      '.KhLLLK.',
+      '.KhmmmK.',
+      '.KhLLmK.',
+      '.KmmmlK.',
+      '.KKKKKK.',
+    ], { K: PAL.ink, h: c.hi, m: c.mid, l: c.lo, L: tone(c.lo, -0.25) });
+  },
 };
 
 for (const item of ITEM_IDS) {

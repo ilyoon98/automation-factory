@@ -216,6 +216,17 @@ export const RECIPES: Record<string, Recipe> = {
     ],
     outputs: [{ item: 'steel', count: 1 }],
   },
+  paper: {
+    id: 'paper',
+    name: '종이',
+    machine: 'washer',
+    time: 2,
+    inputs: [
+      { item: 'sawdust', count: 2 },
+      { item: 'water', count: 1 },
+    ],
+    outputs: [{ item: 'paper', count: 1 }],
+  },
 };
 
 export function recipesFor(machine: MachineKind): Recipe[] {

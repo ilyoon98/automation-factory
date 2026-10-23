@@ -209,8 +209,8 @@ export class Toolbar {
     tabs.appendChild(bp);
     const hint = document.createElement('span');
     hint.className = 'hint';
-    const keys = [...CATEGORIES.map((c) => c.key), BP_KEY].map((k) => `<kbd>${k.toUpperCase()}</kbd>`).join('');
-    hint.innerHTML = `${keys} 또는 <kbd>Tab</kbd>: 탭 바꾸기 · <kbd>1</kbd>~<kbd>9</kbd>: 건물 고르기 · 우클릭: 도감`;
+    // 탭 글자 옆에 단축키가 이미 있으니 Tab과 우클릭만
+    hint.innerHTML = `<kbd>Tab</kbd>: 탭 바꾸기 · 우클릭: 도감`;
     tabs.appendChild(hint);
   }
 

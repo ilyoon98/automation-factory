@@ -122,6 +122,8 @@ function portText(b: BuildingType): string {
       return '싣기 정류장은 아무 면으로나 받고, 내리기 정류장은 노란 화살표(앞)로 내보내요. 트럭은 테두리에 닿은 도로에 서요.';
     case 'road':
       return '아이템은 지나가지 않아요. 트럭만 다녀요.';
+    case 'charger':
+      return '아이템은 받지도 내보내지도 않아요. 바로 옆 도로에 선 트럭을 공장 전력으로 충전해요.';
     default:
       return '';
   }

@@ -22,6 +22,7 @@ export type BuildingType =
   | 'pump'
   | 'road'
   | 'station'
+  | 'charger'
   | 'solar'
   | 'hydro'
   | 'electric-furnace';
@@ -47,7 +48,7 @@ export const CATEGORIES: { id: Category; name: string; key: string; items: Build
   },
   { id: 'power', name: '전력', key: 'c', items: ['generator', 'solar', 'hydro'] },
   { id: 'storage', name: '보관', key: 'v', items: ['storage', 'unloader'] },
-  { id: 'transport', name: '운송', key: 'b', items: ['road', 'station'] },
+  { id: 'transport', name: '운송', key: 'b', items: ['road', 'station', 'charger'] },
 ];
 
 export interface BuildingDef {
@@ -353,6 +354,21 @@ export const BUILDINGS: Record<BuildingType, BuildingDef> = {
       '도로 옆에 지으면 트럭이 선다. 싣기 정류장은 컨베이어로 받은 아이템을 트럭에 싣고, 내리기 정류장은 트럭이 내린 아이템을 노란 화살표(앞)로 내보낸다. 트럭은 정류장 정보창에서 만든다.',
     placeable: true,
   },
+  charger: {
+    type: 'charger',
+    name: '충전기',
+    size: 1,
+    cost: [
+      { item: 'copper-plate', count: 20 },
+      { item: 'circuit', count: 10 },
+      { item: 'steel', count: 5 },
+    ],
+    power: 0,
+    color: '#d9b44a',
+    description:
+      '도로 옆에 놓는다. 옆 도로를 지나는 트럭이 남은 길을 갈 배터리가 모자라면 서서 공장 전력으로 빠르게(400kW) 가득 충전하고 간다. 배터리가 넉넉한 트럭은 그냥 지나간다.',
+    placeable: true,
+  },
 
   // ───── 석탄 독립: 석탄 없이 전력과 강철 ─────
   solar: {
@@ -427,6 +443,10 @@ export const TRUCK = {
   charge: 200,
   /** 배터리가 떨어지면 이 비율로 천천히 간다 (멈추지는 않는다) */
   emptySpeed: 0.25,
+  /** 충전기 앞에 서서 충전하는 속도 (kW). 정류장보다 빠르다 */
+  fastCharge: 400,
+  /** 연구 "고용량 배터리"를 마치면 배터리 크기와 정류장 충전 속도가 이만큼 */
+  batteryTech: 1.5,
 };
 
 /** 지하 컨베이어 입구와 출구 사이에 둘 수 있는 최대 칸 수 */

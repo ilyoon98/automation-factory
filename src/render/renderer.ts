@@ -905,6 +905,9 @@ export class Renderer {
       case 'station':
         this.drawStation(b, sx, sy);
         break;
+      case 'charger':
+        this.blit('charger', 0, sx, sy);
+        break;
     }
 
     if (HAS_PORTS.includes(b.type)) this.drawPorts(b.type, b.dir, sx, sy, b.stationMode);

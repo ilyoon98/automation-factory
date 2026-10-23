@@ -801,7 +801,7 @@ export class World {
       b.minePatches = this.patchesUnder(b);
     }
     if (b.type === 'hub') this.hub = b;
-    if (b.type === 'road' || b.type === 'station') this.roadVersion++;
+    if (b.type === 'road' || b.type === 'station' || b.type === 'charger') this.roadVersion++;
     if (b.type === 'storage') this.storagesDirty = true;
     this.buildings.set(b.id, b);
     this.nextId = Math.max(this.nextId, b.id + 1);
@@ -835,7 +835,7 @@ export class World {
     for (let dy = 0; dy < b.size; dy++) {
       for (let dx = 0; dx < b.size; dx++) this.occ[this.idx(b.x + dx, b.y + dy)] = 0;
     }
-    if (b.type === 'road' || b.type === 'station') this.roadVersion++;
+    if (b.type === 'road' || b.type === 'station' || b.type === 'charger') this.roadVersion++;
     if (b.type === 'storage') this.storagesDirty = true;
     this.buildings.delete(b.id);
     this.layoutDirty = true;
@@ -2129,15 +2129,49 @@ export class World {
    * updatePower(수요 계산)와 updateVehicle(실제 충전)이 같은 값을 쓰도록 한곳에서 정한다.
    */
   private chargeWant(v: Vehicle): number {
-    if (v.state !== 'loading' && v.state !== 'unloading') return 0;
     if (!this.routeOk(v) || this.batteryFull(v)) return 0;
-    return Math.min(TRUCK.charge, (this.truckBattery() - v.battery) / DT);
+    const need = (this.truckBattery() - v.battery) / DT;
+    // 길 중간 충전기 앞에 선 트럭은 더 빨리
+    if (v.charger) return Math.min(TRUCK.fastCharge, need);
+    if (v.state !== 'loading' && v.state !== 'unloading') return 0;
+    return Math.min(this.stationCharge(), need);
   }
 
-  /** 트럭 배터리 크기 (kJ). 끝없는 연구 "트럭 성능"으로 커진다 */
+  /** 트럭 배터리 크기 (kJ). 연구 "고용량 배터리"와 끝없는 연구 "트럭 성능"으로 커진다 */
   truckBattery(): number {
-    return TRUCK.battery * this.boost('endless-truck');
+    return TRUCK.battery * this.batteryTech() * this.boost('endless-truck');
   }
+
+  /** 정류장에 서 있을 때 충전 속도 (kW) */
+  stationCharge(): number {
+    return TRUCK.charge * this.batteryTech();
+  }
+
+  private batteryTech(): number {
+    return this.researched.has('battery') ? TRUCK.batteryTech : 1;
+  }
+
+  /** 충전기 옆 도로 칸들. 도로·정류장·충전기가 바뀔 때만 다시 센다 */
+  chargerTiles(): Set<number> {
+    if (this.chargerCache?.ver === this.roadVersion) return this.chargerCache.tiles;
+    const tiles = new Set<number>();
+    for (const b of this.buildings.values()) {
+      if (b.type !== 'charger') continue;
+      for (const [dx, dy] of [
+        [0, -1],
+        [1, 0],
+        [0, 1],
+        [-1, 0],
+      ]) {
+        const x = b.x + dx;
+        const y = b.y + dy;
+        if (this.inBounds(x, y) && this.isRoad(y * this.width + x)) tiles.add(y * this.width + x);
+      }
+    }
+    this.chargerCache = { ver: this.roadVersion, tiles };
+    return tiles;
+  }
+  private chargerCache: { ver: number; tiles: Set<number> } | null = null;
 
   /** 트럭 속도 (칸/초). 끝없는 연구 "트럭 성능"으로 빨라진다 */
   truckSpeed(): number {
@@ -2174,6 +2208,14 @@ export class World {
 
   /** 정류장 st까지 한 틱만큼 달린다. 달린 거리만큼 배터리를 쓰고, 배터리가 없으면 천천히. 도착해 있으면 true */
   private drive(v: Vehicle, st: Building): boolean {
+    if (v.charger) {
+      // 다 찼거나 충전기가 없어졌으면 다시 간다
+      if (this.batteryFull(v) || !this.chargerTiles().has(v.tile)) v.charger = false;
+      else {
+        v.status = 'charging';
+        return false;
+      }
+    }
     const empty = v.battery <= 0;
     const full = this.truckSpeed() * DT * (empty ? TRUCK.emptySpeed : 1);
     const [arrived, left] = this.move(v, st, full);
@@ -2213,6 +2255,12 @@ export class World {
         return [false, step];
       }
       if (v.path.length === 0) return [true, step];
+      // 충전기 옆 칸: 남은 길을 갈 배터리가 모자라면 서서 가득 채운다 (넉넉하면 그냥 지나간다)
+      if (v.battery < v.path.length * (TRUCK.drive / TRUCK.speed) && !this.batteryFull(v) && this.chargerTiles().has(v.tile)) {
+        v.charger = true;
+        v.status = 'charging';
+        return [false, step];
+      }
       if (step <= 0) {
         v.status = 'moving';
         return [false, 0];
@@ -2464,6 +2512,7 @@ export class World {
         timer: v.timer,
         idle: v.idle,
         battery: v.battery,
+        ...(v.charger ? { charger: true } : {}),
         ...(v.filter ? { filter: v.filter } : {}),
       })),
     };
@@ -2546,6 +2595,7 @@ export class World {
       v.idle = s.idle;
       // 배터리가 생기기 전 저장이면 가득 찬 채로
       v.battery = s.battery ?? w.truckBattery();
+      v.charger = s.charger ?? false;
       w.vehicles.set(v.id, v);
       w.nextVehicleId = Math.max(w.nextVehicleId, v.id + 1);
     }
@@ -2636,7 +2686,7 @@ export class World {
       for (const it of b.items) h.str(it.item).num(it.pos).num(it.n);
     }
     for (const v of this.vehicles.values()) {
-      h.num(v.id).num(v.x).num(v.y).num(v.tile).str(v.state).num(v.timer).num(v.idle).num(v.battery);
+      h.num(v.id).num(v.x).num(v.y).num(v.tile).str(v.state).num(v.timer).num(v.idle).num(v.battery).num(v.charger ? 1 : 0);
       h.num(v.stop);
       for (const s of v.stops) h.num(s.id).str(s.act).str(s.item ?? '');
       for (const [item, n] of v.cargo) h.str(item).num(n);
@@ -2721,6 +2771,8 @@ export interface SavedVehicle {
   idle: number;
   /** 배터리 (kJ). 없으면 가득 */
   battery?: number;
+  /** 길 중간 충전기 앞에서 충전하는 중 */
+  charger?: boolean;
   /** 싣는 아이템 (없으면 아무거나). 노선이 생기기 전 버전이 읽는 값 = 첫 싣는 곳의 것 */
   filter?: ItemId;
 }

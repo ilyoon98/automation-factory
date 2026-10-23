@@ -84,6 +84,8 @@ export class Vehicle {
   lapUnloaded = 0;
   /** 배터리 (kJ, 0 ~ World.truckBattery()) */
   battery = TRUCK.battery;
+  /** 길 중간 충전기 앞에 서서 충전하는 중 (가득 차면 다시 간다) */
+  charger = false;
 
   constructor(
     readonly id: number,

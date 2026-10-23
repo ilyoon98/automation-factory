@@ -98,7 +98,7 @@ const VEHICLE_STATUS_COLOR: Record<VehicleStatus, string> = {
 /** 트럭이 멈춰 있을 때 할 일 */
 const VEHICLE_HINT: Partial<Record<VehicleStatus, string>> = {
   waiting: '싣는 정류장에 짐이 없어요. 컨베이어로 정류장에 넣어 주세요.',
-  'no-battery': `배터리가 떨어져 천천히 가요. 정류장에 닿으면 충전해요. 한 번 충전으로 기본 ${(TRUCK.battery / TRUCK.drive) * TRUCK.speed}칸까지 가니(끝없는 연구 "트럭 성능"으로 늘어요), 길이 더 길면 중간에 싣기 정류장을 두고 트럭 두 대로 나눠 나르세요 (갈아싣기).`,
+  'no-battery': `배터리가 떨어져 천천히 가요. 정류장에 닿으면 충전해요. 한 번 충전으로 기본 ${(TRUCK.battery / TRUCK.drive) * TRUCK.speed}칸까지 가니, 길이 더 길면 연구 "고용량 배터리"의 충전기를 길 중간 도로 옆에 놓아 주세요.`,
   'unload-full': '내리는 정류장이 꽉 찼어요. 정류장 앞(노란 화살표)으로 짐이 빠져나가는지 확인하세요.',
   'no-route': '다음 정류장으로 가는 도로가 끊겼어요. 도로를 이어 주세요.',
   'no-station': '노선의 정류장을 모두 골라 주세요. 바로 다음 정류장은 서로 달라야 해요.',
@@ -895,7 +895,7 @@ export class UI {
       }
     }
     html += `<div class="dyn"></div><div class="actions">`;
-    if (!['hub', 'generator', 'underground', 'storage', 'road', 'solar', 'hydro'].includes(b.type)) {
+    if (!['hub', 'generator', 'underground', 'storage', 'road', 'solar', 'hydro', 'charger'].includes(b.type)) {
       html += `<button data-act="rotate">회전 (R)</button>`;
     }
     if (b.type !== 'hub') html += `<button data-act="remove" class="danger">철거 (Del)</button>`;
@@ -977,6 +977,26 @@ export class UI {
         lines.push(`<div class="row"><span>출력</span><b>${SOLAR_POWER} kW (늘)</b></div>`);
         lines.push(`<p class="muted">아무것도 넣지 않아도 돼요. 전력이 모자라면 더 깔아 주세요.</p>`);
         break;
+      case 'charger': {
+        // 이 충전기 옆 도로 칸과, 거기 서서 충전하는 트럭
+        const near = [
+          [0, -1],
+          [1, 0],
+          [0, 1],
+          [-1, 0],
+        ]
+          .map(([dx, dy]) => (b.y + dy) * w.width + b.x + dx)
+          .filter((i) => w.chargerTiles().has(i));
+        const here = [...w.vehicles.values()].filter((v) => v.charger && near.includes(v.tile)).length;
+        lines.push(`<div class="row"><span>옆 도로</span><b>${near.length ? `${near.length}칸` : '<span class="bad">없음</span>'}</b></div>`);
+        lines.push(
+          `<div class="row"><span>충전 중</span><b>${here ? `트럭 ${here}대 <span class="muted">${Math.round(here * TRUCK.fastCharge * w.power.satisfaction)} kW</span>` : '<span class="muted">없음</span>'}</b></div>`,
+        );
+        lines.push(
+          `<p class="muted">옆 도로를 지나는 트럭이 남은 길을 갈 배터리가 모자라면 여기 서서 ${TRUCK.fastCharge}kW로 가득 충전해요. 넉넉한 트럭은 그냥 지나가요.${near.length ? '' : ' 도로 바로 옆에 놓아 주세요.'}</p>`,
+        );
+        break;
+      }
       case 'belt':
       case 'fast-belt':
         lines.push(`<div class="row"><span>운반 중</span><b>${countItems(b)}개</b></div>`);
@@ -1059,7 +1079,7 @@ export class UI {
         ).length;
         if (charging) {
           lines.push(
-            `<div class="row"><span>충전 중</span><b>트럭 ${charging}대 <span class="muted">${Math.round(charging * TRUCK.charge * w.power.satisfaction)} kW</span></b></div>`,
+            `<div class="row"><span>충전 중</span><b>트럭 ${charging}대 <span class="muted">${Math.round(charging * w.stationCharge() * w.power.satisfaction)} kW</span></b></div>`,
           );
         }
         const rows = [...box]
@@ -1161,7 +1181,7 @@ export class UI {
     const charge = v.battery / w.truckBattery();
     const range = Math.floor((v.battery / TRUCK.drive) * TRUCK.speed);
     const charging = v.status === 'charging' || ((v.state === 'loading' || v.state === 'unloading') && charge < 1);
-    const rate = charging ? ` · 충전 ${Math.round(TRUCK.charge * w.power.satisfaction)}kW` : '';
+    const rate = charging ? ` · 충전 ${Math.round((v.charger ? TRUCK.fastCharge : w.stationCharge()) * w.power.satisfaction)}kW` : '';
     const batColor = charge > 0.5 ? '#3f8a3a' : charge > 0.2 ? '#b7791f' : '#c0392b';
     lines.push(`<div class="row"><span>배터리</span><b>${Math.round(charge * 100)}% <span class="muted">${range}칸${rate}</span></b></div>`);
     lines.push(`<div class="bar"><div style="width:${charge * 100}%;background:${batColor}"></div></div>`);
@@ -1494,7 +1514,7 @@ export class UI {
         lines.push(`<span class="muted">100%에 필요: ${st.maxIn.map((i) => `${itemIcon(i.item)}분당 ${fmtNum(i.count)}`).join(' ')}</span>`);
       }
       if (tool && !isBeltType(b.type)) {
-        const rotatable = !['hub', 'generator', 'solar', 'hydro'].includes(b.type);
+        const rotatable = !['hub', 'generator', 'solar', 'hydro', 'charger'].includes(b.type);
         lines.push(`<span class="muted">클릭: 설정 열기${rotatable ? ' · R: 이 건물 회전' : ''}</span>`);
       }
     }

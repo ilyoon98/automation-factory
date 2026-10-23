@@ -594,6 +594,8 @@ const BOX_GLYPH: Record<string, string[]> = {
   overflow: ['..11..', '..11..', '..1111', '..11.1', '..11..', '..11..'],
   sorter: ['111111', '.1111.', '..11..', '..11..', '..11..', '......'],
   unloader: ['11.11.', '11.11.', '......', '11.11.', '11.11.', '......'],
+  // 번개
+  charger: ['...11.', '..11..', '.1111.', '..11..', '.11...', '.1....'],
 };
 const BOX_COLOR: Record<string, string> = {
   splitter: '#7a5aa8',
@@ -601,6 +603,7 @@ const BOX_COLOR: Record<string, string> = {
   sorter: '#3aa58a',
   merger: '#5a8fa8',
   unloader: '#c9803a',
+  charger: '#d9b44a',
 };
 for (const [name, color] of Object.entries(BOX_COLOR)) {
   define(name, 16, 16, 1, (p) => {

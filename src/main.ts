@@ -341,6 +341,7 @@ function frame(now: number): void {
   // 맵 글씨도 "글자 또렷하게" 배율을 따른다
   renderer.textZoom = uiZoom();
   renderer.draw(world, camera, game.input);
+  if (ui.guideMark) renderer.drawGuideMark(camera, ui.guideMark, now / 1000);
   drawPresence(now);
   minimap.draw();
 

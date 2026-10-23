@@ -33,7 +33,7 @@ import {
   type PatchReport,
   type World,
 } from '../sim/world';
-import { GUIDE } from './guide';
+import { GUIDE, findTarget, type GuideFocus } from './guide';
 import { Codex, depositName, type DepositId } from './codex';
 import { buildingIconUrl, depositIconUrl, itemIcon, itemLink, truckIconUrl, withBuildingIcons } from './icons';
 import { sound } from './sound';
@@ -151,6 +151,10 @@ export class UI {
   private toastTimer = 0;
   /** 목표 달성 소리를 낼지 가리려고 지난번에 본 공장 */
   private guideWorld: World | null = null;
+  /** 지금 목표가 가리키는 것 */
+  private guideFocus: GuideFocus | null = null;
+  /** 지금 목표가 맵에서 가리키는 곳 (건물을 들었을 때) */
+  guideMark: { x: number; y: number; label: string } | null = null;
   private mouse = { x: 0, y: 0 };
   private oreKey = '';
   /** 광맥마다 이미 알린 단계 (같은 일로 두 번 알리지 않게) */
@@ -792,6 +796,7 @@ export class UI {
     const pct = Math.round((done / GUIDE.length) * 100);
     const head = `<h3>목표 <small>${done}/${GUIDE.length}</small></h3><div class="gbar"><i style="width:${pct}%"></i></div>`;
     const cur = GUIDE.findIndex((s) => !w.guideDone.has(s.title));
+    this.applyGuideFocus(w, cur < 0 ? null : (GUIDE[cur].focus?.(w) ?? null));
     if (cur < 0) {
       $('guide').innerHTML = `${head}<p class="muted">모든 목표 달성! 끝없는 연구(T)로 자유롭게 공장을 키워 보세요.</p>`;
       return;
@@ -810,6 +815,18 @@ export class UI {
     $('guide').innerHTML = `${head}
       <div class="now"><b>${now.title}</b><p>${hint}</p></div>
       <ul class="steps">${steps}</ul>`;
+  }
+
+  /**
+   * 지금 목표가 가리키는 것을 반짝인다: 툴바 탭·건물 버튼, 연구 버튼(창이 열리면 탭·카드는 updateResearch에서),
+   * 건물을 들면 놓을 곳을 맵에 (guideMark → main.ts가 핑처럼 그린다)
+   */
+  private applyGuideFocus(w: World, f: GuideFocus | null): void {
+    this.guideFocus = f;
+    this.toolbar.setGuide(f?.build && w.unlockedBuildings.has(f.build) ? f.build : null);
+    $('btn-research').classList.toggle('guide-pulse', !!f?.research && $('research').hidden === true);
+    const holding = !f?.build || this.game.input.tool === f.build;
+    this.guideMark = f?.target && holding ? findTarget(w, f.target) : null;
   }
 
   // ───────────────────────── 정보창 ─────────────────────────
@@ -1457,6 +1474,17 @@ export class UI {
         <p class="muted">허브 재고에서 재료를 내고 즉시 해금해요. 초록 점 = 지금 연구할 수 있는 게 있는 탭</p>
         <div class="rtabs">${tabs}</div><div class="techs">${cards}</div></div>`;
     }
+    // 목표가 가리키는 연구: 그 탭(다른 탭이면)과 카드를 반짝인다
+    const want = this.guideFocus?.research ?? null;
+    const wantTab = want === 'endless' ? 'endless' : want ? TECH_BY_ID[want]?.category : null;
+    el.querySelectorAll<HTMLElement>('[data-rtab]').forEach((b) => {
+      b.classList.toggle('guide-pulse', !!wantTab && wantTab !== this.researchTab && b.dataset.rtab === wantTab);
+    });
+    el.querySelectorAll<HTMLElement>('.tech').forEach((c) => {
+      const id = c.querySelector<HTMLElement>('[data-tech]')?.dataset.tech;
+      const hit = want === 'endless' ? this.researchTab === 'endless' && !!id && w.canResearch(id).ok : id === want;
+      c.classList.toggle('guide-pulse', !!want && hit);
+    });
     el.querySelectorAll<HTMLElement>('[data-have]').forEach((s) => {
       s.textContent = String(w.stockOf(s.dataset.have as ItemId));
     });

@@ -21,6 +21,9 @@ import { roundRect } from './draw-item';
 import { NUM_ADVANCE, ORE_GROUND, PAL, TILE, TREE_LEAF, hash, loadSpriteOverrides, sprite, spriteHalf, tone } from './pixel';
 import { MACHINE } from './pixel-buildings';
 
+/** 목표 표시 색 (밝은 주황: 바닥·광맥 어디서나 잘 보이게) */
+const GUIDE_COLOR = '#ffb02e';
+
 /** 렌더러가 입력 상태에서 필요로 하는 것 */
 export interface ViewState {
   tool: BuildingType | null;
@@ -1271,6 +1274,11 @@ export class Renderer {
   }
 
   // ───────────────────────── 같이 하기 ─────────────────────────
+
+  /** 목표가 가리키는 곳: 핑과 같은 모양 (화면 밖이면 가장자리 화살표), 사라지지 않는다 */
+  drawGuideMark(cam: Camera, m: { x: number; y: number; label: string }, t: number): void {
+    this.drawPing(cam, { x: m.x, y: m.y, name: m.label, color: GUIDE_COLOR, age: t, life: Infinity });
+  }
 
   /** 다른 사람의 커서·이름표, 들고 있는 건물, 드래그 중인 영역, 그리고 핑 (월드 위, 마지막에 그린다) */
   drawPresence(cam: Camera, others: OtherPlayer[], pings: PingMark[]): void {

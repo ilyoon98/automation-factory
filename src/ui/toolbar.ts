@@ -140,6 +140,19 @@ export class Toolbar {
     }
   }
 
+  /**
+   * 목표가 가리키는 건물을 반짝인다: 다른 탭이면 그 탭을, 지금 탭이면 그 버튼을.
+   * 이미 들고 있으면 반짝이지 않는다
+   */
+  setGuide(type: BuildingType | null): void {
+    const want = type && this.input.tool !== type ? type : null;
+    const cat = want ? categoryOf(want) : null;
+    document.querySelectorAll<HTMLElement>('#tabs .tab').forEach((t) => {
+      t.classList.toggle('guide-pulse', !!cat && cat !== this.category && t.dataset.cat === cat);
+    });
+    for (const [t, btn] of this.buttons) btn.classList.toggle('guide-pulse', t === want && cat === this.category);
+  }
+
   private setCategory(id: Category): void {
     if (this.category === id) return;
     this.category = id;

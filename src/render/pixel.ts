@@ -239,8 +239,27 @@ function ramp(item: ItemId): { hi: string; mid: string; lo: string } {
 
 // ───────────────────────── 아이템 (8×8) ─────────────────────────
 
+/** 글자 지도로 찍기: 한 글자 = 한 픽셀, '.'은 비움, 나머지는 key의 색 */
+function stamp(p: Pen, x: number, y: number, rows: string[], key: Record<string, string>): void {
+  rows.forEach((row, j) => {
+    for (let i = 0; i < row.length; i++) if (row[i] !== '.') p.px(x + i, y + j, key[row[i]]);
+  });
+}
+
 const ITEM_PAINT: Record<ItemShape, (p: Pen, c: { hi: string; mid: string; lo: string }, item: ItemId) => void> = {
   ore: (p, c, item) => {
+    if (item === 'charcoal') {
+      // 숯: 나뭇결이 갈라진 검은 토막, 윗면에 은빛 윤기
+      stamp(p, 0, 1, [
+        '.KKKKKK.',
+        'KhhshhhK',
+        'KmlmmlmK',
+        'KmlmmlmK',
+        'KllllllK',
+        '.KKKKKK.',
+      ], { K: PAL.ink, h: c.hi, s: '#a39c96', m: c.mid, l: c.lo });
+      return;
+    }
     // 울퉁불퉁한 돌덩이
     p.rect(2, 1, 4, 1, PAL.ink);
     p.rect(1, 2, 6, 4, PAL.ink);
@@ -319,35 +338,40 @@ const ITEM_PAINT: Record<ItemShape, (p: Pen, c: { hi: string; mid: string; lo: s
     p.px(3, 4, c.hi);
   },
   sapling: (p, c) => {
-    // 흙 한 줌에서 돋은 새싹 (잎 두 장)
-    p.rect(1, 6, 6, 2, PAL.ink);
-    p.rect(2, 6, 4, 1, PAL.wood.mid);
-    p.rect(3, 3, 1, 3, PAL.ink);
-    p.rect(1, 1, 3, 2, PAL.ink);
-    p.rect(4, 2, 3, 2, PAL.ink);
-    p.rect(2, 1, 1, 1, c.hi);
-    p.rect(1, 2, 2, 1, c.mid);
-    p.rect(5, 2, 2, 1, c.mid);
-    p.px(4, 3, c.lo);
+    // 삼베로 싼 흙덩이에서 돋은 묘목 (잎 두 장, 오른쪽이 크다)
+    stamp(p, 0, 0, [
+      '....KKK.',
+      '.KK.KhhK',
+      'KhmsmmlK',
+      '.KKsKKK.',
+      '.KBbbbK.',
+      'KBbbbbdK',
+      'KbbbbddK',
+      '.KKKKKK.',
+    ], { K: PAL.ink, h: c.hi, m: c.mid, l: c.lo, s: TREE_LEAF.lo, B: PAL.wood.hi, b: PAL.wood.mid, d: PAL.wood.lo });
   },
   log: (p, c) => {
-    // 옆으로 누운 통나무, 오른쪽 끝에 나이테
-    p.rect(0, 2, 7, 5, PAL.ink);
-    p.rect(1, 3, 5, 3, c.mid);
-    p.rect(1, 3, 5, 1, c.hi);
-    p.rect(1, 5, 5, 1, c.lo);
-    p.rect(5, 1, 3, 7, PAL.ink);
-    p.rect(6, 2, 1, 5, '#e3b06c');
-    p.px(6, 4, c.lo);
+    // 옆으로 누운 통나무: 껍질 결, 오른쪽 끝에 나이테
+    stamp(p, 0, 1, [
+      '.KKKKKK.',
+      'KhhhKRRK',
+      'KmlmKRrK',
+      'KmmlKrRK',
+      'KlLlKRRK',
+      '.KKKKKK.',
+    ], { K: PAL.ink, h: c.hi, m: c.mid, l: c.lo, L: tone(c.lo, -0.3), R: PAL.wood.hi, r: PAL.wood.mid });
   },
   plank: (p, c) => {
-    // 판자 두 장
-    p.rect(0, 1, 8, 3, PAL.ink);
-    p.rect(0, 4, 8, 3, PAL.ink);
-    p.rect(1, 2, 6, 1, c.mid);
-    p.rect(1, 5, 6, 1, c.mid);
-    p.px(2, 2, c.hi);
-    p.px(5, 5, c.lo);
+    // 엇갈려 쌓은 판자 두 장 (나뭇결 한 줄, 마구리는 밝게)
+    stamp(p, 0, 0, [
+      'KKKKKKK.',
+      'KhhhhEK.',
+      'KmmlmEK.',
+      'KKKKKKKK',
+      '.KhhhhEK',
+      '.KmlmmEK',
+      '.KKKKKKK',
+    ], { K: PAL.ink, h: c.hi, m: c.mid, l: c.lo, E: tone(c.mid, 0.45) });
   },
 };
 
@@ -446,37 +470,114 @@ for (let v = 0; v < 4; v++) {
 /** 나뭇잎 색 (지도·멀리서 볼 때도) */
 export const TREE_LEAF = { hi: '#86c06a', mid: '#5f9a4e', lo: '#3f6f3c' };
 
-/** 둥근 나뭇잎 덩어리: 잉크 테두리, 위·왼쪽 밝게, 아래 그늘 */
-function canopy(p: Pen, cx: number, cy: number, r: number): void {
-  p.disc(cx, cy, r + 1, PAL.ink);
-  p.disc(cx, cy, r, TREE_LEAF.mid);
-  p.disc(cx + 0.8, cy + 1.2, r - 1.2, TREE_LEAF.lo);
-  p.disc(cx - 0.4, cy - 0.2, r - 1.6, TREE_LEAF.mid);
-  p.disc(cx - r * 0.35, cy - r * 0.35, Math.max(1, r * 0.35), TREE_LEAF.hi);
+/** 나뭇잎 덩어리 하나: 가운데 x, y와 반지름. 뒤(위)에서 앞(아래) 순서로 늘어놓는다 */
+type Lobe = [number, number, number];
+
+/**
+ * 뭉게뭉게한 나뭇잎: 덩어리 여러 개를 합친 모양 + 잉크 테두리.
+ * 덩어리마다 위·왼쪽은 밝게, 아래·오른쪽은 그늘. 앞 덩어리 바로 위 뒤 덩어리는 그늘 한 줄 (덩어리가 나뉘어 보이게).
+ * 잎 결은 hash로 고른 점 몇 개 (seed가 같으면 늘 같은 자리)
+ */
+function canopy(p: Pen, lobes: Lobe[], seed = 0): void {
+  const owner = (x: number, y: number) => {
+    let k = -1;
+    lobes.forEach(([cx, cy, r], i) => {
+      const dx = x + 0.5 - cx;
+      const dy = y + 0.5 - cy;
+      if (dx * dx + dy * dy <= r * r) k = i;
+    });
+    return k;
+  };
+  const x0 = Math.floor(Math.min(...lobes.map(([x, , r]) => x - r))) - 1;
+  const x1 = Math.ceil(Math.max(...lobes.map(([x, , r]) => x + r))) + 1;
+  const y0 = Math.floor(Math.min(...lobes.map(([, y, r]) => y - r))) - 1;
+  const y1 = Math.ceil(Math.max(...lobes.map(([, y, r]) => y + r))) + 1;
+  for (let y = y0; y <= y1; y++) {
+    for (let x = x0; x <= x1; x++) {
+      const k = owner(x, y);
+      if (k < 0) {
+        if (owner(x - 1, y) >= 0 || owner(x + 1, y) >= 0 || owner(x, y - 1) >= 0 || owner(x, y + 1) >= 0) p.px(x, y, PAL.ink);
+        continue;
+      }
+      const [cx, cy, r] = lobes[k];
+      const l = -((x + 0.5 - cx) * 0.8 + (y + 0.5 - cy)) / r;
+      let c = l > 0.45 ? TREE_LEAF.hi : l < -0.35 ? TREE_LEAF.lo : TREE_LEAF.mid;
+      if (owner(x, y + 1) > k) c = TREE_LEAF.lo;
+      // 잎 결: 밝은 쪽 절반에만 반짝이는 잎 몇 개
+      const h = hash(seed * 977 + y * 31 + x);
+      if (c === TREE_LEAF.mid && l > 0 && h % 5 === 0) c = TREE_LEAF.hi;
+      else if (c === TREE_LEAF.hi && h % 6 === 0) c = TREE_LEAF.mid;
+      p.px(x, y, c);
+    }
+  }
 }
 
-/** tree:0 새싹 · tree:1 어린 나무 · tree:2 다 자란 나무 (2프레임: 바람에 윗부분이 한 픽셀 흔들림) */
+/** 나무 밑동: 잉크 테두리 + 왼쪽 밝은 줄, 맨 아래는 뿌리가 양옆으로 한 픽셀씩 */
+function trunk(p: Pen, x: number, y: number, w: number, h: number): void {
+  p.rect(x - 1, y, w + 2, h, PAL.ink);
+  p.rect(x - 2, y + h - 2, w + 4, 2, PAL.ink);
+  p.rect(x, y, w, h - 1, PAL.wood.lo);
+  p.rect(x, y, 1, h - 1, PAL.wood.mid);
+  if (w > 1) p.rect(x + w - 1, y + 1, 1, h - 2, PAL.wood.dark);
+  p.px(x - 1, y + h - 2, PAL.wood.lo);
+  p.px(x + w, y + h - 2, PAL.wood.dark);
+}
+
+/** 바닥 그림자 (가운데 cx, 줄 y, 반폭 r). 양 끝을 한 픽셀 깎아 둥글게 */
+function treeShadow(p: Pen, cx: number, y: number, r: number): void {
+  p.rect(cx - r + 1, y, r * 2 - 2, 1, PAL.shadow);
+  p.rect(cx - r, y + 1, r * 2, 1, PAL.shadow);
+}
+
+/** tree:0 새싹 · tree:1 어린 나무 · tree:2 다 자란 나무 (2프레임: 바람에 윗덩어리가 한 픽셀 흔들림) */
 define('tree:0', 16, 16, 1, (p) => {
-  p.rect(5, 11, 6, 2, PAL.shadow);
-  p.rect(7, 8, 1, 4, PAL.ink);
-  p.rect(5, 6, 3, 2, PAL.ink);
-  p.rect(8, 5, 3, 2, PAL.ink);
-  p.px(6, 6, TREE_LEAF.hi);
-  p.px(9, 5, TREE_LEAF.mid);
-  p.px(9, 6, TREE_LEAF.lo);
+  treeShadow(p, 8, 12, 4);
+  // 흙 둔덕
+  p.rect(5, 10, 6, 1, PAL.ink);
+  p.rect(4, 11, 8, 2, PAL.ink);
+  p.rect(5, 11, 6, 1, PAL.wood.mid);
+  p.px(5, 11, PAL.wood.hi);
+  p.rect(6, 12, 4, 1, PAL.wood.lo);
+  // 줄기와 잎 두 장 (오른쪽 잎이 크다)
+  p.rect(7, 6, 1, 5, TREE_LEAF.lo);
+  p.rect(3, 5, 4, 3, PAL.ink);
+  p.rect(4, 6, 2, 1, TREE_LEAF.mid);
+  p.px(4, 6, TREE_LEAF.hi);
+  p.rect(8, 3, 4, 4, PAL.ink);
+  p.px(12, 4, PAL.ink);
+  p.rect(8, 4, 3, 2, TREE_LEAF.mid);
+  p.rect(9, 4, 2, 1, TREE_LEAF.hi);
+  p.px(10, 5, TREE_LEAF.lo);
+  p.px(7, 5, PAL.ink);
 });
 define('tree:1', 16, 16, 1, (p) => {
-  p.rect(4, 12, 9, 2, PAL.shadow);
-  p.rect(7, 9, 2, 4, PAL.ink);
-  p.rect(7, 9, 1, 3, PAL.wood.lo);
-  canopy(p, 8, 7, 3.5);
+  treeShadow(p, 8, 13, 4);
+  trunk(p, 8, 8, 1, 6);
+  canopy(
+    p,
+    [
+      [8.5, 4.5, 2.6],
+      [6.5, 6.5, 2.1],
+      [10.5, 6.5, 2.1],
+    ],
+    1,
+  );
 });
 define('tree:2', 16, 16, 2, (p, f) => {
-  p.rect(2, 13, 13, 2, PAL.shadow);
-  p.rect(6, 10, 4, 5, PAL.ink);
-  p.rect(7, 10, 2, 4, PAL.wood.lo);
-  p.px(7, 10, PAL.wood.mid);
-  canopy(p, 8 + (f ? 0.5 : 0), 6.5, 5.6);
+  treeShadow(p, 8, 13, 7);
+  trunk(p, 7, 9, 2, 6);
+  // 위 덩어리만 바람에 흔들린다 (아래쪽은 그대로라 줄기에서 떨어져 보이지 않는다)
+  const s = f ? 1 : 0;
+  canopy(
+    p,
+    [
+      [8 + s, 4.5, 3.6],
+      [4.5, 7, 3.2],
+      [11.5, 6.5, 3.2],
+      [8, 8, 3.2],
+    ],
+    2,
+  );
 });
 
 // ───────────────────────── 컨베이어 (16×16, 오른쪽 기준) ─────────────────────────

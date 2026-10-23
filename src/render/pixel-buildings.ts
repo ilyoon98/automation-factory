@@ -361,62 +361,150 @@ define('crusher', 32, 32, 5, (p, f) => {
 
 // ───── 숲: 벌목기·식목기·제재소 ─────
 
-/** 둥근 톱날 (f로 돈다) */
+/** 둥근 톱날 (f로 돈다): 톱니 8개, 안쪽 홈 한 줄, 가운데 놋쇠 축 */
 function sawBlade(p: Pen, cx: number, cy: number, r: number, f: number): void {
-  const a = (f ? f - 1 : 0) * (TAU / 16);
+  const a = (f ? f - 1 : 0) * (TAU / 32);
   shapeAround(p, cx, cy, r, (x, y) => {
     const dx = x - cx;
     const dy = y - cy;
     const d = Math.hypot(dx, dy);
     if (d > r) return null;
-    // 톱니: 바깥 1픽셀은 각도에 따라 들쭉날쭉
-    if (d > r - 1.2 && Math.floor(((Math.atan2(dy, dx) - a + TAU) % TAU) / (TAU / 12)) % 2) return null;
-    return d < 1.6 ? PAL.metal.dark : lit(dx, dy, { hi: PAL.metal.hi, mid: PAL.metal.mid, lo: PAL.metal.lo });
+    // 톱니: 바깥 1.4픽셀은 각도에 따라 들쭉날쭉
+    if (d > r - 1.4 && Math.floor(((Math.atan2(dy, dx) - a + TAU) % TAU) / (TAU / 16)) % 2) return null;
+    if (d < 1.5) return PAL.brass.mid;
+    if (Math.abs(d - (r - 2.3)) < 0.5) return PAL.metal.lo;
+    return lit(dx, dy, { hi: PAL.metal.hi, mid: PAL.metal.mid, lo: PAL.metal.lo });
   });
 }
 
+/** 통나무 마구리 4×4 (잉크 테두리, 모서리는 둥글게 비움, 가운데 나이테) */
+function logEnd(p: Pen, x: number, y: number): void {
+  p.rect(x + 1, y, 2, 4, PAL.ink);
+  p.rect(x, y + 1, 4, 2, PAL.ink);
+  p.rect(x + 1, y + 1, 2, 2, PAL.wood.hi);
+  p.px(x + 2, y + 2, PAL.wood.mid);
+}
+
+/** 손잡이 끝에 날이 달린 도끼. 손잡이는 (px, py)에서 각도 a로 len만큼 */
+function axe(p: Pen, px: number, py: number, a: number, len: number): void {
+  const hx = px + Math.cos(a) * len;
+  const hy = py + Math.sin(a) * len;
+  const x0 = Math.floor(Math.min(px, hx) - 5);
+  const y0 = Math.floor(Math.min(py, hy) - 5);
+  const w = Math.ceil(Math.max(px, hx) + 5) - x0;
+  const h = Math.ceil(Math.max(py, hy) + 5) - y0;
+  shape(p, x0, y0, w, h, (x, y) => {
+    // 손잡이 방향 u, 날 쪽(내려찍는 쪽) v
+    const u = (x - px) * Math.cos(a) + (y - py) * Math.sin(a);
+    const v = (x - px) * Math.sin(a) - (y - py) * Math.cos(a);
+    // 날: 손잡이 끝에 붙은 쐐기. 날끝은 밝게, 등은 어둡게
+    if (u > len - 2.6 && u < len + 0.6 && v > -1 && v < 3.4 - Math.max(0, len - 1 - u) * 0.6) {
+      return v > 2.2 ? PAL.metal.hi : v < 0.3 ? PAL.metal.lo : PAL.metal.mid;
+    }
+    return u > 0 && u < len && Math.abs(v) < 0.75 ? PAL.wood.mid : null;
+  });
+}
+
+/** 벌목기 도끼 각도: 0 = 그루터기에 박힌 채 쉼, 1 들기, 2 휘두르기, 3 내려찍기, 4 뽑기 */
+const AXE_SWING = [-2.62, -1.7, -2.15, -2.62, -2.35];
+
 define('lumberjack', 32, 32, 5, (p, f) => {
-  machine(p, ramp('#7a9a48'), DARK_WOOD);
-  // 윗면: 통나무 받침대와 톱날
-  p.rect(4, 12, 24, 5, PAL.ink);
-  p.rect(5, 13, 22, 3, PAL.wood.mid);
-  p.rect(5, 13, 22, 1, PAL.wood.hi);
-  for (const x of [9, 16, 23]) p.rect(x, 13, 1, 3, PAL.wood.lo);
-  sawBlade(p, 16, 8, 5.5, f);
-  // 앞면 오른쪽: 나무껍질 무늬
-  for (let x = 16; x < 28; x += 3) p.rect(x, 21, 2, 6, DARK_WOOD.lo);
+  const grass = ramp('#7a9a48');
+  machine(p, grass, DARK_WOOD);
+  // 윗면: 풀밭 (풀포기 몇 개)
+  for (const [x, y] of [[5, 5], [24, 4], [4, 15], [20, 16], [27, 11]]) {
+    p.px(x, y, grass.lo);
+    p.px(x + 1, y - 1, grass.hi);
+    p.px(x + 2, y, grass.lo);
+  }
+  // 그루터기: 껍질 옆면 + 나이테가 보이는 윗면
+  p.rect(7, 10, 11, 7, PAL.ink);
+  p.rect(8, 11, 9, 5, PAL.wood.lo);
+  for (const x of [9, 12, 15]) p.rect(x, 12, 1, 4, PAL.wood.dark);
+  p.rect(8, 11, 1, 5, PAL.wood.mid);
+  shapeAround(p, 12.5, 9.5, 4.6, (x, y) => {
+    const d = Math.hypot((x - 12.5) / 4.6, (y - 9.5) / 2.4);
+    if (d > 1) return null;
+    // 껍질 테두리, 나이테 한 줄, 가운데 심
+    return d > 0.78 ? PAL.wood.lo : (d > 0.42 && d < 0.6) || d < 0.18 ? PAL.wood.mid : PAL.wood.hi;
+  });
+  // 도끼: 오른쪽 아래를 축으로 들었다 내려찍는다. 찍는 순간 나무 조각이 튄다
+  axe(p, 25, 15, AXE_SWING[f], 11);
+  if (f === 3) for (const [x, y] of [[8, 6], [11, 5], [17, 6], [16, 4]]) p.px(x, y, PAL.wood.hi);
+  // 앞면 오른쪽: 쌓아 둔 통나무 마구리
+  for (const x of [15, 19, 23]) logEnd(p, x, 20);
+  p.rect(27, 21, 2, 3, DARK_WOOD.lo);
 });
 
 define('planter', 32, 32, 5, (p, f) => {
   machine(p, ramp('#8a6a44'), DARK_WOOD);
-  // 윗면: 흙 고랑 + 줄지은 새싹
-  p.rect(4, 3, 24, 15, PAL.ink);
-  p.rect(5, 4, 22, 13, '#6a4a2c');
-  for (let y = 6; y < 16; y += 4) {
-    p.rect(5, y, 22, 1, '#82603a');
-    for (let x = 7; x < 26; x += 5) {
-      const up = f && (x + y + f) % 3 === 0 ? 1 : 0;
+  // 윗면: 나무틀 화단 + 고랑마다 새싹
+  p.rect(3, 3, 26, 15, PAL.ink);
+  p.rect(4, 4, 24, 13, PAL.wood.mid);
+  p.rect(4, 4, 24, 1, PAL.wood.hi);
+  p.rect(5, 6, 22, 10, '#6a4a2c');
+  for (let r = 0; r < 3; r++) {
+    const y = 8 + r * 3;
+    // 고랑: 볼록한 흙 위쪽은 밝게
+    p.rect(5, y - 1, 22, 1, '#82603a');
+    p.rect(5, y + 1, 22, 1, '#553a22');
+    for (let k = 0; k < 4; k++) {
+      const x = 7 + k * 6 + (r % 2) * 2;
+      // 식목기가 지나가며 하나씩 고개를 드는 새싹
+      const up = f && (k + r * 2) % 4 === f - 1 ? 1 : 0;
       p.px(x, y - 1 - up, TREE_LEAF_MID);
+      p.px(x - 1, y - 2 - up, TREE_LEAF_MID);
       p.px(x + 1, y - 2 - up, TREE_LEAF_HI);
     }
   }
-  // 앞면 오른쪽: 묘목 통
-  p.rect(16, 20, 11, 7, PAL.ink);
-  p.rect(17, 21, 9, 5, PAL.wood.mid);
-  p.rect(17, 21, 9, 1, PAL.wood.hi);
+  // 위쪽 틀을 따라 오가는 놋쇠 씨앗 통 (일할 때)
+  const cx = 6 + (f ? (f - 1) * 6 : 0);
+  p.rect(cx - 1, 2, 5, 4, PAL.ink);
+  p.rect(cx, 3, 3, 2, PAL.brass.mid);
+  p.px(cx, 3, PAL.brass.hi);
+  p.px(cx + 1, 6, PAL.ink);
+  // 앞면 오른쪽: 묘목 상자 (위로 잎이 삐죽)
+  p.rect(16, 21, 12, 4, PAL.ink);
+  p.rect(17, 22, 10, 2, PAL.wood.mid);
+  p.rect(17, 22, 10, 1, PAL.wood.hi);
+  for (const x of [21, 24]) p.rect(x, 22, 1, 2, PAL.wood.lo);
+  for (const x of [18, 22, 26]) {
+    p.px(x - 1, 20, PAL.ink);
+    p.px(x, 20, TREE_LEAF_HI);
+    p.px(x + 1, 20, TREE_LEAF_MID);
+    p.px(x + 2, 20, PAL.ink);
+  }
 });
 
 define('sawmill', 32, 32, 5, (p, f) => {
   machine(p, PAL.wood, DARK_WOOD);
-  // 윗면: 작업대 위 판자와 큰 톱날
-  p.rect(3, 9, 26, 7, PAL.ink);
-  p.rect(4, 10, 24, 5, '#e3b06c');
-  p.rect(4, 10, 24, 1, '#f2cf96');
-  for (const x of [10, 22]) p.rect(x, 10, 1, 5, PAL.wood.lo);
-  sawBlade(p, 16, 9, 6.5, f);
-  // 톱밥
-  if (f) for (let k = 0; k < 3; k++) p.px(8 + (hash(f * 7 + k) % 16), 16, '#d9b98a');
-  for (const x of [15, 27]) bolt(p, x, 21, IRON);
+  for (const [x, y] of [[3, 3], [27, 3]]) bolt(p, x, y, IRON);
+  // 윗면: 작업대. 왼쪽에서 통나무가 들어와 톱날을 지나 오른쪽으로 판자가 되어 나간다
+  p.rect(2, 9, 28, 8, PAL.ink);
+  p.rect(3, 10, 26, 6, DARK_WOOD.mid);
+  p.rect(3, 15, 26, 1, DARK_WOOD.lo);
+  const shift = f ? f - 1 : 0;
+  // 통나무: 왼쪽 끝은 나이테가 보이는 마구리, 껍질 결이 일할 때 한 픽셀씩 흐른다
+  p.rect(3, 10, 12, 5, PAL.ink);
+  p.rect(4, 11, 10, 3, PAL.wood.mid);
+  p.rect(4, 11, 10, 1, PAL.wood.hi);
+  for (let x = 6 + shift; x < 14; x += 4) p.rect(x, 12, 2, 1, PAL.wood.lo);
+  p.rect(4, 11, 2, 3, PAL.wood.hi);
+  p.px(5, 12, PAL.wood.mid);
+  // 판자
+  p.rect(17, 11, 12, 4, PAL.ink);
+  p.rect(17, 12, 12, 2, '#e3b06c');
+  p.rect(17, 12, 12, 1, '#f2cf96');
+  for (let x = 19 + shift; x < 29; x += 4) p.px(x, 13, PAL.wood.mid);
+  sawBlade(p, 16, 9, 5.5, f);
+  // 톱밥: 톱날 아래로 흩날린다
+  if (f) for (let k = 0; k < 4; k++) p.px(12 + (hash(f * 7 + k) % 9), 16 + (k % 2), '#d9b98a');
+  // 앞면 오른쪽: 쌓아 둔 판자
+  for (const y of [20, 22]) {
+    p.rect(15, y, 14, 3, PAL.ink);
+    p.rect(16, y + 1, 12, 1, y === 20 ? '#f2cf96' : '#e3b06c');
+    p.px(27, y + 1, PAL.wood.mid);
+  }
 });
 
 define('washer', 32, 32, 5, (p, f) => {

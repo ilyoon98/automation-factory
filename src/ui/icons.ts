@@ -1,4 +1,4 @@
-import type { BuildingType } from '../data/buildings';
+import { BUILDINGS, type BuildingType } from '../data/buildings';
 import { ITEMS, type ItemId } from '../data/items';
 import { loadSpriteOverrides, sprite } from '../render/pixel';
 import '../render/pixel-buildings';
@@ -94,6 +94,30 @@ export function buildingIconUrl(type: BuildingType): string {
   const s = sprite(name);
   const k = !s ? 1 : s.w <= 16 ? 2 : s.w <= 32 ? 1 : 32 / s.w;
   return spriteUrl(`building:${type}`, name, 32, k, s && s.frames > 1 && type !== 'hub' ? 1 : 0);
+}
+
+/** 글 사이에 넣는 작은 건물 아이콘 (아이템 아이콘과 같은 크기) */
+export function buildingIcon(type: BuildingType): string {
+  return `<img class="icon bicon" src="${buildingIconUrl(type)}" alt="" title="${BUILDINGS[type].name}">`;
+}
+
+/** 건물 이름 찾기: 긴 이름부터 ("고급 채굴기"가 "채굴기"보다 먼저 맞게) */
+let namePattern: RegExp | null = null;
+const typeByName = new Map<string, BuildingType>();
+
+/** 글에 나오는 건물 이름 앞에 그 건물 아이콘을 붙인다 (건물마다 처음 한 번만) */
+export function withBuildingIcons(text: string): string {
+  if (!namePattern) {
+    for (const t of Object.keys(BUILDINGS) as BuildingType[]) typeByName.set(BUILDINGS[t].name, t);
+    const names = [...typeByName.keys()].sort((a, b) => b.length - a.length);
+    namePattern = new RegExp(names.map((n) => n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|'), 'g');
+  }
+  const seen = new Set<string>();
+  return text.replace(namePattern, (name) => {
+    if (seen.has(name)) return name;
+    seen.add(name);
+    return `<span class="bname">${buildingIcon(typeByName.get(name)!)}${name}</span>`;
+  });
 }
 
 /** 트럭 아이콘 (32×32, 오른쪽을 보고 짐을 가득 실은 모습) */

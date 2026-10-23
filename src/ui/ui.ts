@@ -35,7 +35,7 @@ import {
 } from '../sim/world';
 import { GUIDE } from './guide';
 import { Codex, depositName, type DepositId } from './codex';
-import { buildingIconUrl, depositIconUrl, itemIcon, itemLink, truckIconUrl } from './icons';
+import { buildingIconUrl, depositIconUrl, itemIcon, itemLink, truckIconUrl, withBuildingIcons } from './icons';
 import { sound } from './sound';
 import { crispTarget, crispText, onUiZoom, setCrispText, uiZoom } from './crisp';
 import { letScrollbarDrag } from './left-scroll';
@@ -800,7 +800,7 @@ export class UI {
       .map((s) => `<li>${s.title}</li>`)
       .join('');
     $('guide').innerHTML = `${head}
-      <div class="now"><b>${now.title}</b><p>${now.hint}</p></div>
+      <div class="now"><b>${now.title}</b><p>${withBuildingIcons(now.hint)}</p></div>
       ${later ? `<div class="later">다음</div><ul>${later}</ul>` : ''}`;
   }
 

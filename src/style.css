@@ -497,9 +497,19 @@ h3 small {
   gap: 4px;
 }
 #tabs .tab {
-  padding: 5px 14px;
+  padding: 5px 9px;
   font-weight: 700;
   font-size: 12px;
+}
+#tabs .tab .ticon {
+  width: 16px;
+  height: 16px;
+  vertical-align: -4px;
+  margin-right: 4px;
+}
+/* 목표 글 속 건물 이름: 아이콘과 이름이 줄바꿈으로 갈리지 않게 */
+#guide .bname {
+  white-space: nowrap;
 }
 #tabs .tab.active {
   color: var(--ink);

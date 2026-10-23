@@ -1,7 +1,17 @@
 import { BUILDINGS, CATEGORIES, type BuildingType, type Category } from '../data/buildings';
 import type { Input } from '../input/input';
 import type { World } from '../sim/world';
-import { buildingIconUrl, itemIcon } from './icons';
+import { buildingIconUrl, itemIcon, truckIconUrl } from './icons';
+
+/** 탭마다 대표 그림 (운송은 트럭) */
+const TAB_ICON: Record<Category, () => string> = {
+  logistics: () => buildingIconUrl('belt'),
+  production: () => buildingIconUrl('miner'),
+  power: () => buildingIconUrl('generator'),
+  storage: () => buildingIconUrl('storage'),
+  transport: truckIconUrl,
+  forest: () => buildingIconUrl('lumberjack'),
+};
 
 const categoryOf = (type: BuildingType): Category | null =>
   CATEGORIES.find((c) => c.items.includes(type))?.id ?? null;
@@ -142,7 +152,7 @@ export class Toolbar {
       const btn = document.createElement('button');
       btn.className = 'tab';
       btn.dataset.cat = c.id;
-      btn.innerHTML = `${c.name} <kbd>${c.key.toUpperCase()}</kbd>`;
+      btn.innerHTML = `<img class="ticon" src="${TAB_ICON[c.id]()}" alt="">${c.name} <kbd>${c.key.toUpperCase()}</kbd>`;
       btn.addEventListener('click', () => this.setCategory(c.id));
       tabs.appendChild(btn);
     }

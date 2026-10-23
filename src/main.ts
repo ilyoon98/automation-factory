@@ -7,6 +7,7 @@ import { addLakes, generateWorld } from './sim/mapgen';
 import type { Command, PlaceResult, ResultOf } from './sim/commands';
 import { DT, World } from './sim/world';
 import { Chat } from './ui/chat';
+import { uiZoom } from './ui/crisp';
 import { Minimap } from './ui/minimap';
 import { sound } from './ui/sound';
 import { UI, type GameApi } from './ui/ui';
@@ -324,6 +325,8 @@ function frame(now: number): void {
   session.advance(dt);
 
   game.input.update(dt);
+  // 맵 글씨도 "글자 또렷하게" 배율을 따른다
+  renderer.textZoom = uiZoom();
   renderer.draw(world, camera, game.input);
   drawPresence(now);
   minimap.draw();

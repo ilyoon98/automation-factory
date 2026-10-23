@@ -1524,14 +1524,18 @@ h3 small {
   font-weight: 700;
 }
 
-/* 목표 따라하기: 지금 목표가 가리키는 탭·건물 버튼·연구 버튼·연구 카드를 반짝인다 */
+/*
+ * 목표 따라하기: 지금 목표가 가리키는 탭·건물 버튼·연구 버튼·연구 카드를 반짝인다.
+ * 진분홍 ↔ 진한 갈색으로 번갈아 (모래색 바탕에서도 늘 보이게. 맵 표시 색은 renderer.ts GUIDE_COLOR)
+ */
 .guide-pulse {
-  outline: 3px solid #ffb02e;
-  outline-offset: 1px;
-  animation: guide-pulse 1s ease-in-out infinite;
+  outline: 4px solid #ff3d8b;
+  /* 안쪽으로 (툴바처럼 넘치면 잘리는 칸 안에서도 다 보이게) */
+  outline-offset: -4px;
+  animation: guide-pulse 0.9s steps(1) infinite;
 }
 @keyframes guide-pulse {
   50% {
-    outline-color: rgba(255, 176, 46, 0.15);
+    outline-color: #3b2716;
   }
 }

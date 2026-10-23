@@ -21,8 +21,8 @@ import { roundRect } from './draw-item';
 import { NUM_ADVANCE, ORE_GROUND, PAL, TILE, TREE_LEAF, hash, loadSpriteOverrides, sprite, spriteHalf, tone } from './pixel';
 import { MACHINE } from './pixel-buildings';
 
-/** 목표 표시 색 (밝은 주황: 바닥·광맥 어디서나 잘 보이게) */
-const GUIDE_COLOR = '#ffb02e';
+/** 목표 표시 색 (진분홍: 모래·광맥·숲·호수 어디에도 없는 색이라 눈에 띈다. style.css .guide-pulse와 같게) */
+const GUIDE_COLOR = '#ff3d8b';
 
 /** 렌더러가 입력 상태에서 필요로 하는 것 */
 export interface ViewState {
@@ -1277,7 +1277,7 @@ export class Renderer {
 
   /** 목표가 가리키는 곳: 핑과 같은 모양 (화면 밖이면 가장자리 화살표), 사라지지 않는다 */
   drawGuideMark(cam: Camera, m: { x: number; y: number; label: string }, t: number): void {
-    this.drawPing(cam, { x: m.x, y: m.y, name: m.label, color: GUIDE_COLOR, age: t, life: Infinity });
+    this.drawPing(cam, { x: m.x, y: m.y, name: m.label, color: GUIDE_COLOR, age: t, life: Infinity, halo: 'rgba(40,24,12,0.8)' });
   }
 
   /** 다른 사람의 커서·이름표, 들고 있는 건물, 드래그 중인 영역, 그리고 핑 (월드 위, 마지막에 그린다) */
@@ -1383,11 +1383,16 @@ export class Renderer {
     if (inside) {
       for (let k = 0; k < 2; k++) {
         const f = (p.age * 0.9 + k * 0.5) % 1;
-        ctx.strokeStyle = p.color;
         ctx.globalAlpha = Math.max(0, fade) * (1 - f);
-        ctx.lineWidth = 3;
         ctx.beginPath();
         ctx.arc(px, py, 6 + f * 46, 0, Math.PI * 2);
+        if (p.halo) {
+          ctx.strokeStyle = p.halo;
+          ctx.lineWidth = 6;
+          ctx.stroke();
+        }
+        ctx.strokeStyle = p.color;
+        ctx.lineWidth = 3;
         ctx.stroke();
       }
       ctx.globalAlpha = Math.max(0, fade);
@@ -1395,6 +1400,11 @@ export class Renderer {
       ctx.beginPath();
       ctx.arc(px, py, 5, 0, Math.PI * 2);
       ctx.fill();
+      if (p.halo) {
+        ctx.strokeStyle = p.halo;
+        ctx.lineWidth = 2;
+        ctx.stroke();
+      }
       this.drawTag(px + 8, py - 26, p.name, p.color);
     } else {
       // 화면 가운데에서 핑 쪽으로 그은 선이 가장자리와 만나는 곳
@@ -1449,6 +1459,8 @@ export interface PingMark {
   /** 찍은 지 지난 시간, 남아 있는 전체 시간 (초) */
   age: number;
   life: number;
+  /** 있으면 동그라미 밑에 이 색으로 굵은 테두리 (밝은 바닥에서도 잘 보이게) */
+  halo?: string;
 }
 
 /** 컨베이어 위 아이템의 월드 좌표. 굽은 컨베이어는 2차 베지어 곡선을 따른다. */

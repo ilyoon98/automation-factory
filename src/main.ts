@@ -281,6 +281,9 @@ function resize(): void {
 window.addEventListener('resize', resize);
 resize();
 
+/** 소리를 낸 마지막 핑의 시각 (performance.now) */
+let lastPing = 0;
+
 /** 같이 하기: 내 커서를 보내고, 다른 사람 커서와 핑을 그린다 */
 function drawPresence(now: number): void {
   if (session.role === 'solo') return;
@@ -298,7 +301,14 @@ function drawPresence(now: number): void {
   for (const [p, o] of session.others) {
     others.push({ name: session.nameOf(p), color: session.colorOf(p), s: o.s, idle: now - o.t > 6000 });
   }
-  const pings: PingMark[] = session.livePings(now).map((g) => ({
+  const live = session.livePings(now);
+  // 새로 찍힌 핑 (내 것·남의 것)에 소리
+  for (const g of live) {
+    if (g.t <= lastPing) continue;
+    lastPing = g.t;
+    sound.play('ping');
+  }
+  const pings: PingMark[] = live.map((g) => ({
     x: g.x,
     y: g.y,
     name: session.nameOf(g.p),

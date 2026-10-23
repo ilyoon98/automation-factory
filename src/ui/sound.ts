@@ -1,10 +1,23 @@
 /**
  * 효과음과 배경음. 소리 파일 없이 Web Audio로 그 자리에서 만든다 (나무 공방 느낌의 짧고 부드러운 소리).
- * 효과음은 내가 한 일에만 낸다 (다른 사람이 짓는 소리까지 나면 시끄러우므로).
+ * 효과음은 내가 한 일에만 낸다 (다른 사람이 짓는 소리까지 나면 시끄러우므로). 다른 사람 것은 채팅·핑만.
  * 배경음은 조용한 화음 위에 칼림바 같은 음이 띄엄띄엄 떨어지는 곡을 끝없이 새로 만든다.
  * 음량·끄기는 브라우저에 기억한다.
  */
-export type SoundName = 'place' | 'remove' | 'rotate' | 'error' | 'research' | 'goal' | 'truck' | 'undo' | 'chat';
+export type SoundName =
+  | 'place'
+  | 'remove'
+  | 'rotate'
+  | 'error'
+  | 'research'
+  | 'goal'
+  | 'truck'
+  | 'undo'
+  | 'chat'
+  | 'click'
+  | 'ping'
+  | 'power'
+  | 'ore';
 
 const KEY = 'automation-game/sound';
 
@@ -40,7 +53,35 @@ function loadSettings(): Settings {
 }
 
 /** 같은 소리를 이 간격(초)보다 빨리 다시 내지 않는다 (컨베이어를 끌면 칸마다 명령이 나오므로) */
-const GAP: Partial<Record<SoundName, number>> = { place: 0.05, remove: 0.05, rotate: 0.04, error: 0.4, chat: 0.2 };
+const GAP: Partial<Record<SoundName, number>> = {
+  place: 0.05,
+  remove: 0.05,
+  rotate: 0.04,
+  error: 0.4,
+  chat: 0.2,
+  click: 0.03,
+  ping: 0.3,
+  power: 2,
+  ore: 1,
+};
+/** 소리마다 대략 울리는 길이 (초). 동시에 울리는 수를 셀 때 쓴다 */
+const LENGTH: Record<SoundName, number> = {
+  place: 0.12,
+  remove: 0.1,
+  rotate: 0.03,
+  error: 0.27,
+  research: 0.38,
+  goal: 0.87,
+  truck: 0.26,
+  undo: 0.08,
+  chat: 0.08,
+  click: 0.04,
+  ping: 0.82,
+  power: 0.75,
+  ore: 1.2,
+};
+/** 효과음은 한꺼번에 이만큼까지만 울린다 (넘치면 새 소리는 건너뜀). 글리산도는 세지 않는다 */
+const MAX_VOICES = 6;
 /** 짓는 소리 사이가 이보다(초) 벌어지면 처음 음(도)으로 돌아간다 (글리산도가 도는 중에는 그대로) */
 const PLACE_STREAK_GAP = 0.5;
 /**
@@ -83,6 +124,10 @@ class Sound {
   private out: GainNode | null = null;
   private musicOut: GainNode | null = null;
   private last = new Map<SoundName, number>();
+  /** 지금 울리고 있는 효과음들이 끝나는 시각 */
+  private voices: number[] = [];
+  /** 사용자가 화면을 누르거나 키를 눌렀는지. 그 전에는 소리를 내려 하지 않는다 (브라우저가 막고 콘솔에 경고를 남기므로) */
+  private unlocked = false;
   /** 연달아 철거할 때 소리 높이를 조금씩 바꿔 기계음처럼 들리지 않게 */
   private step = 0;
   /** 마지막으로 짓는 소리를 낸 시각, 이번 드래그(마우스를 누르고 뗄 때까지)에서 지은 수 */
@@ -112,15 +157,17 @@ class Sound {
   private restBar = false;
 
   constructor() {
-    // 브라우저는 사용자가 한 번 누르거나 키를 누르기 전에는 소리를 막는다. 그때 배경음을 시작한다
+    // 브라우저는 사용자가 한 번 누르거나 키를 누르기 전에는 소리를 막는다. 그때 배경음을 시작한다.
+    // 다른 곳(짓기 등)보다 먼저 듣도록 capture로: 첫 클릭에 짓는 소리도 나게
     const start = () => {
-      window.removeEventListener('pointerdown', start);
-      window.removeEventListener('keydown', start);
+      window.removeEventListener('pointerdown', start, true);
+      window.removeEventListener('keydown', start, true);
+      this.unlocked = true;
       this.audio();
       window.setInterval(() => this.scheduleMusic(), 200);
     };
-    window.addEventListener('pointerdown', start);
-    window.addEventListener('keydown', start);
+    window.addEventListener('pointerdown', start, true);
+    window.addEventListener('keydown', start, true);
   }
 
   get volume(): number {
@@ -182,7 +229,8 @@ class Sound {
       // 배경음: 메아리(지연 + 되먹임)를 조금 섞어 공간감을 준다
       this.musicOut = this.ctx.createGain();
       this.musicOut.gain.value = this.musicLevel();
-      const echo = this.ctx.createDelay(1);
+      // 최대 지연을 메아리 간격(8분음표 3개, 약 1.29초)보다 넉넉하게 (1이면 1초로 잘리고 콘솔에 경고)
+      const echo = this.ctx.createDelay(2);
       echo.delayTime.value = EIGHTH * 3;
       const feedback = this.ctx.createGain();
       feedback.gain.value = 0.28;
@@ -198,12 +246,15 @@ class Sound {
   }
 
   play(name: SoundName): void {
-    if (this.settings.muted || this.settings.volume <= 0) return;
+    if (!this.unlocked || this.settings.muted || this.settings.volume <= 0) return;
     const ctx = this.audio();
     if (!ctx || !this.out) return;
     const t = ctx.currentTime;
     const gap = GAP[name] ?? 0.1;
     if (t - (this.last.get(name) ?? -1) < gap) return;
+    this.voices = this.voices.filter((end) => end > t);
+    if (this.voices.length >= MAX_VOICES) return;
+    this.voices.push(t + LENGTH[name]);
     this.last.set(name, t);
     const wobble = [1, 1.06, 0.97, 1.03][this.step++ % 4];
     const out = this.out;
@@ -254,6 +305,28 @@ class Sound {
         break;
       case 'chat':
         this.tone(out, 'sine', 880, 1175, t, 0.08, 0.2);
+        break;
+      case 'click':
+        // 버튼·탭: 아주 작은 나무 "톡"
+        this.tone(out, 'triangle', 1500, 1100, t, 0.035, 0.07);
+        break;
+      case 'ping':
+        // "여기 봐요": 맑은 두 음 (솔 → 도)
+        this.bell(out, 784, t, 0.5, 0.2);
+        this.bell(out, 1047, t + 0.12, 0.7, 0.18);
+        break;
+      case 'power':
+        // 전력 부족: 힘이 빠지듯 내려가는 두 음 + 낮게 웅
+        this.tone(out, 'triangle', 523, 440, t, 0.3, 0.2);
+        this.tone(out, 'triangle', 392, 330, t + 0.25, 0.5, 0.2);
+        this.tone(out, 'sine', 98, 82, t, 0.7, 0.18);
+        break;
+      case 'ore':
+        // 광맥 경고: 나무를 똑똑 두드리고 낮은 종 두 음 (레 → 시)
+        this.noise(ctx, t, 0.04, 0.14, 1400);
+        this.noise(ctx, t + 0.12, 0.04, 0.12, 1400);
+        this.bell(out, 587, t + 0.25, 0.6, 0.16);
+        this.bell(out, 494, t + 0.4, 0.8, 0.14);
         break;
     }
   }

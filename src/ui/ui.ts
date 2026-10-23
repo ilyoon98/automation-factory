@@ -150,6 +150,8 @@ export class UI {
   /** 광맥마다 이미 알린 단계 (같은 일로 두 번 알리지 않게) */
   private oreAlerted = new Map<number, 'low' | 'empty'>();
   private oreWorld: World | null = null;
+  /** 전력 부족 소리: 지금 모자란지, 그 상태가 시작된 시각, 이번 부족에 알렸는지, 마지막으로 울린 시각 (초) */
+  private powerAlarm = { world: null as World | null, short: false, since: 0, warned: false, at: -Infinity };
   /** 경고를 누를 때마다 그 광맥의 다음 채굴기로 */
   private oreCycle = { id: 0, n: 0 };
   /** 접속자 목록을 마지막으로 그린 상태 */
@@ -232,6 +234,10 @@ export class UI {
       this.updateSound();
     });
     this.updateSound();
+    // 버튼·탭을 누르면 아주 작게 "톡"
+    document.addEventListener('click', (e) => {
+      if ((e.target as Element).closest('button, .ore-alert')) sound.play('click');
+    });
     // 글자 또렷하게: 화면 배율이 정수가 아닐 때 UI 배율을 정수에 맞춘다 (crisp.ts)
     $<HTMLInputElement>('crisp-text').addEventListener('change', (e) => setCrispText((e.target as HTMLInputElement).checked));
     onUiZoom(() => this.updateCrisp());
@@ -656,7 +662,33 @@ export class UI {
       클릭: 짓기 · 건물 클릭: 설정 열기 · <kbd>R</kbd> 회전 (건물 위면 그 건물) · <kbd>Esc</kbd> 내려놓기`;
   }
 
+  /**
+   * 전력 부족이 새로 시작되면 한 번만 소리. 기계가 한꺼번에 돌기 시작해 잠깐 모자란 것은 넘기고(2초),
+   * 5초 넘게 넉넉해야 부족이 끝난 것으로 본다. 1분 안에 또 모자라면 조용히
+   */
+  private powerSound(w: World): void {
+    const now = performance.now() / 1000;
+    const short = w.power.satisfaction < 1;
+    const s = this.powerAlarm;
+    if (s.world !== w) {
+      // 새 게임·불러오기·방 참가 직후에 이미 모자라던 것은 조용히
+      Object.assign(s, { world: w, short, since: now, warned: short });
+      return;
+    }
+    if (short !== s.short) Object.assign(s, { short, since: now });
+    const held = now - s.since;
+    if (short && !s.warned && held >= 2) {
+      s.warned = true;
+      if (now - s.at >= 60) {
+        s.at = now;
+        sound.play('power');
+      }
+    }
+    if (!short && held >= 5) s.warned = false;
+  }
+
   private updatePower(w: World): void {
+    this.powerSound(w);
     const p = w.power;
     const pct = Math.round(p.satisfaction * 100);
     const color = p.satisfaction >= 1 ? '#3f8a3a' : p.satisfaction >= 0.6 ? '#b7791f' : '#c0392b';
@@ -715,6 +747,7 @@ export class UI {
           : `⚠ ${name}이 곧 바닥나요 (약 ${fmtMin(r.etaMin)} 남음)`,
         5000,
       );
+      sound.play('ore');
     }
     // 채굴기를 다 치운 광맥은 잊는다
     const live = new Set(reports.map((r) => r.id));

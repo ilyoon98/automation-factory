@@ -326,6 +326,19 @@ export class UI {
         this.update();
         return;
       }
+      // 단체 선택: 고른 기계 모두에 같은 레시피 (되돌리기 한 단계)
+      if (sel.dataset.act === 'multi-recipe') {
+        const group = this.multiSelected(game.getWorld());
+        const value = sel.value || null;
+        if (!group.length) return;
+        game.exec({ t: 'begin' });
+        for (const g of group) game.exec({ t: 'config', id: g.id, key: 'recipe', value });
+        game.exec({ t: 'end' });
+        game.input.rememberSetting(group[0].type, value);
+        this.toast(`${group.length}대를 ${value ? RECIPES[value].name : '선택 안 함'}(으)로 바꿨어요 · 실수했으면 Ctrl+Z`);
+        this.update();
+        return;
+      }
       const b = this.selected();
       if (!b) return;
       const value = sel.value || null;
@@ -838,6 +851,16 @@ export class UI {
       this.updateVehicleInfo(w, v);
       return;
     }
+    const group = this.multiSelected(w);
+    if (group.length > 1) {
+      this.updateMultiInfo(w, group);
+      return;
+    }
+    // 철거 등으로 하나만 남으면 그 건물 하나를 고른 것으로
+    if (this.game.input.multi.length) {
+      this.game.input.multi = [];
+      if (group.length) this.game.input.selectedId = group[0].id;
+    }
     const b = this.selected();
     if (!b) {
       el.hidden = true;
@@ -877,6 +900,46 @@ export class UI {
         o.textContent = `${o.dataset.name} (${sourceCount(w, src, o.value as ItemId)}개)`;
       });
     }
+  }
+
+  /** 단체 선택한 건물들 (철거된 건 빼고) */
+  private multiSelected(w: World): Building[] {
+    return this.game.input.multi.map((id) => w.buildings.get(id)).filter((b): b is Building => !!b);
+  }
+
+  /** 단체 선택 정보창: 몇 대 골랐는지, 레시피 한 번에 바꾸기, 모두 철거 */
+  private updateMultiInfo(w: World, group: Building[]): void {
+    const el = $('info');
+    el.hidden = false;
+    const type = group[0].type;
+    const recipes = group.map((b) => b.recipe ?? '');
+    const key = `multi|${group.map((b) => b.id).join(',')}|${recipes.join(',')}|${w.unlockedRecipes.size}`;
+    if (key === this.infoKey) return;
+    this.infoKey = key;
+    const def = BUILDINGS[type];
+    let html = `<header><img class="swatch" src="${buildingIconUrl(type)}" alt=""><h3>${def.name} ${group.length}대</h3>
+      <button class="x" data-act="close">×</button></header>`;
+    if (isRecipeMachine(type)) {
+      const same = recipes.every((r) => r === recipes[0]) ? recipes[0] : null;
+      const none = type === 'assembler' ? '선택 안 함' : '자동 (들어온 재료로)';
+      const options = recipesFor(type as MachineKind)
+        .filter((r) => w.unlockedRecipes.has(r.id))
+        .map((r) => `<option value="${r.id}" ${same === r.id ? 'selected' : ''}>${r.name}</option>`)
+        .join('');
+      const mixed = same === null ? '<option value="*" selected disabled>여러 가지</option>' : '';
+      html += `<label class="recipe">레시피 <select data-act="multi-recipe">${mixed}<option value="" ${same === '' ? 'selected' : ''}>${none}</option>${options}</select></label>`;
+      html += `<p class="muted">고르면 ${group.length}대가 모두 바뀌어요.</p>`;
+      // 지금 레시피별 대수
+      const count = new Map<string, number>();
+      for (const r of recipes) count.set(r, (count.get(r) ?? 0) + 1);
+      const rows = [...count]
+        .map(([r, n]) => `<div class="row"><span>${r ? RECIPES[r].name : none}</span><b>${n}대</b></div>`)
+        .join('');
+      html += rows;
+    }
+    html += `<div class="actions"><button data-act="multi-remove" class="danger">모두 철거 (${group.length}대)</button></div>
+      <p class="muted">Shift + 드래그로 다시 고르기 · Esc로 풀기</p>`;
+    el.innerHTML = html;
   }
 
   private infoStatic(w: World, b: Building): string {
@@ -1321,6 +1384,12 @@ export class UI {
     if (truck) {
       input.selectedVehicle = Number(truck);
       input.selectedId = null;
+      this.update();
+      return;
+    }
+    if (input.multi.length) {
+      if (act === 'close') input.multi = [];
+      if (act === 'multi-remove') input.removeMulti();
       this.update();
       return;
     }

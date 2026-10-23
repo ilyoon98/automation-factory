@@ -2523,3 +2523,17 @@ describe('맵 생성', () => {
     }
   });
 });
+
+describe('단체 선택', () => {
+  it('사각형 안에서 가장 많은 한 종류 (컨베이어·도로 빼고, 레시피 고르는 기계 먼저)', () => {
+    const w = makeWorld();
+    const a = [w.place('assembler', 10, 10, 1)!, w.place('assembler', 13, 10, 1)!];
+    beltRow(w, 10, 16, 13, 1);
+    w.place('splitter', 18, 10, 1);
+    w.place('splitter', 18, 12, 1);
+    w.place('splitter', 18, 14, 1);
+    expect(w.groupIn(9, 9, 20, 15).map((b) => b.id)).toEqual(a.map((b) => b.id));
+    expect(w.groupIn(17, 9, 20, 15).map((b) => b.type)).toEqual(['splitter', 'splitter', 'splitter']);
+    expect(w.groupIn(10, 13, 16, 13)).toEqual([]);
+  });
+});

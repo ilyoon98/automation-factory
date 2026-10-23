@@ -21,7 +21,7 @@ export interface InputCallbacks {
   ping(x: number, y: number): void;
 }
 
-type Mode = 'none' | 'place' | 'remove' | 'remove-area' | 'pan' | 'press' | 'select';
+type Mode = 'none' | 'place' | 'remove' | 'remove-area' | 'pan' | 'press' | 'select' | 'multi';
 
 const ROTATABLE: BuildingType[] = [
   'belt',
@@ -48,6 +48,7 @@ const ROTATABLE: BuildingType[] = [
  * 마우스 중심 조작.
  * - 좌클릭: 배치 (도구 선택 시) / 건물 선택 (빈손) / 빈손 드래그는 화면 이동
  * - Ctrl + 좌클릭 드래그: 영역 복사 → 좌클릭으로 붙여넣기, 우클릭(또는 Esc)으로 취소
+ * - Shift + 좌클릭 드래그: 단체 선택 (그 안의 가장 많은 한 종류 기계들 → 정보창에서 레시피를 한 번에)
  * - 우클릭(드래그): 철거, Ctrl + 우클릭 드래그: 사각형 영역 철거 (복사와 같은 Ctrl + 드래그라 헷갈리지 않게)
  * - Ctrl+Z / Ctrl+Y: 되돌리기 / 다시 하기 (마우스를 누르고 뗄 때까지가 한 단계)
  * - 가운데 드래그: 화면 이동, 휠: 줌
@@ -65,6 +66,10 @@ export class Input implements ViewState {
   selection: { x0: number; y0: number; x1: number; y1: number } | null = null;
   /** Ctrl + 우클릭 드래그 중인 철거 영역 */
   removeArea: { x0: number; y0: number; x1: number; y1: number } | null = null;
+  /** Shift 드래그 중인 단체 선택 영역 */
+  multiArea: { x0: number; y0: number; x1: number; y1: number } | null = null;
+  /** 단체 선택한 건물들 (2대 이상. 하나면 selectedId로) */
+  multi: number[] = [];
   /** 붙여넣기 대기 중인 청사진 */
   paste: Blueprint | null = null;
   /** 기계마다 분당 생산량 표시 (I 키, 위쪽 "생산량" 버튼) */
@@ -117,6 +122,7 @@ export class Input implements ViewState {
       this.selectedId = null;
       this.selectedVehicle = null;
       this.paste = null;
+      this.multi = [];
     }
     this.cb.changed();
   }
@@ -187,6 +193,11 @@ export class Input implements ViewState {
       this.selection = { x0: t.x, y0: t.y, x1: t.x, y1: t.y };
       return;
     }
+    if (e.shiftKey && !this.paste) {
+      this.mode = 'multi';
+      this.multiArea = { x0: t.x, y0: t.y, x1: t.x, y1: t.y };
+      return;
+    }
     if (this.paste) {
       this.cb.exec({ t: 'paste', bp: this.paste, x: t.x, y: t.y }, ({ placed, skipped }) =>
         this.cb.toast(skipped ? `${placed}개 붙여넣음 · ${skipped}개는 놓을 수 없음` : `${placed}개 붙여넣음`),
@@ -230,6 +241,11 @@ export class Input implements ViewState {
     if (this.mode === 'remove-area' && this.removeArea) {
       this.removeArea.x1 = t.x;
       this.removeArea.y1 = t.y;
+      return;
+    }
+    if (this.mode === 'multi' && this.multiArea) {
+      this.multiArea.x1 = t.x;
+      this.multiArea.y1 = t.y;
       return;
     }
     if (this.mode === 'press' && Math.hypot(e.clientX - this.pressAt.x, e.clientY - this.pressAt.y) > 5) {
@@ -293,7 +309,19 @@ export class Input implements ViewState {
       }
       this.cb.changed();
     }
+    if (this.mode === 'multi' && this.multiArea) {
+      const a = this.multiArea;
+      const group = this.cb.getWorld().groupIn(a.x0, a.y0, a.x1, a.y1);
+      this.multiArea = null;
+      this.tool = null;
+      this.selectedVehicle = null;
+      this.multi = group.length > 1 ? group.map((b) => b.id) : [];
+      this.selectedId = group.length === 1 ? group[0].id : null;
+      if (group.length > 1) this.cb.toast(`${BUILDINGS[group[0].type].name} ${group.length}대 고름 — 오른쪽 창에서 한 번에 바꿔요`);
+      this.cb.changed();
+    }
     if (this.mode === 'press') {
+      this.multi = [];
       // 트럭이 도로·정류장 위에 있으므로 트럭을 먼저 본다
       const w = this.cb.getWorld();
       const [wx, wy] = this.worldAt(e);
@@ -340,6 +368,7 @@ export class Input implements ViewState {
       case 'escape':
         this.tool = null;
         this.paste = null;
+        this.multi = [];
         this.selectedId = null;
         this.selectedVehicle = null;
         this.cb.changed();
@@ -350,6 +379,10 @@ export class Input implements ViewState {
         break;
       case 'delete':
       case 'backspace': {
+        if (this.multi.length) {
+          this.removeMulti();
+          break;
+        }
         const w = this.cb.getWorld();
         if (this.selectedVehicle && w.vehicles.has(this.selectedVehicle)) {
           this.cb.exec({ t: 'remove-truck', id: this.selectedVehicle });
@@ -367,6 +400,19 @@ export class Input implements ViewState {
         break;
       }
     }
+  }
+
+  /** 단체 선택한 건물을 모두 철거 (되돌리기 한 단계) */
+  removeMulti(): void {
+    const w = this.cb.getWorld();
+    const ids = this.multi.filter((id) => w.buildings.has(id));
+    this.multi = [];
+    if (!ids.length) return;
+    this.cb.exec({ t: 'begin' });
+    for (const id of ids) this.cb.exec({ t: 'remove', id });
+    this.cb.exec({ t: 'end' });
+    this.cb.toast(`${ids.length}개 철거 (재료 100% 환급) · 실수했으면 Ctrl+Z`);
+    this.cb.changed();
   }
 
   /** 마우스 아래에 돌릴 수 있는 건물이 있으면 그 건물을, 아니면 들고 있는 도구를 돌린다 */

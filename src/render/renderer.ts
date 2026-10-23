@@ -35,6 +35,9 @@ export interface ViewState {
   selection: { x0: number; y0: number; x1: number; y1: number } | null;
   /** Ctrl + 우클릭 드래그 중인 철거 영역 */
   removeArea: { x0: number; y0: number; x1: number; y1: number } | null;
+  /** Shift 드래그 중인 단체 선택 영역, 단체 선택한 건물들 */
+  multiArea: { x0: number; y0: number; x1: number; y1: number } | null;
+  multi: number[];
   paste: Blueprint | null;
   /** 들고 있는 도구로 지으면 들어갈 설정 (레시피 id 또는 분류기 아이템) */
   toolSetting: string | null;
@@ -301,6 +304,29 @@ export class Renderer {
         this.outline(sx, sy, b.size * z, b.size * z, SELECT);
         if (isForestType(b.type)) this.drawForestRange(b.x, b.y, b.size);
       }
+    }
+    // 단체 선택: 고른 건물마다 선택 테두리. 드래그 중이면 고르게 될 건물과 개수
+    for (const id of view.multi) {
+      const b = world.buildings.get(id);
+      if (!b) continue;
+      const [sx, sy] = cam.worldToScreen(b.x, b.y);
+      this.outline(sx, sy, b.size * z, b.size * z, SELECT);
+    }
+    if (view.multiArea) {
+      const a = view.multiArea;
+      const group = world.groupIn(a.x0, a.y0, a.x1, a.y1);
+      ctx.fillStyle = 'rgba(255,255,255,0.25)';
+      for (const b of group) {
+        const [bx, by] = cam.worldToScreen(b.x, b.y);
+        ctx.fillRect(bx, by, b.size * z, b.size * z);
+        this.outline(bx, by, b.size * z, b.size * z, SELECT);
+      }
+      const [sx, sy] = cam.worldToScreen(Math.min(a.x0, a.x1), Math.min(a.y0, a.y1));
+      const w = (Math.abs(a.x1 - a.x0) + 1) * z;
+      const h = (Math.abs(a.y1 - a.y0) + 1) * z;
+      this.outline(sx, sy, w, h, SELECT, true);
+      const label = group.length ? `${BUILDINGS[group[0].type].name} ${group.length}대` : '고를 기계 없음';
+      this.text(label, sx + 2, sy - 4, '#fbf3df', 12, PAL.ink, 'left', 'bottom');
     }
     // 고른 트럭: 오가는 두 정류장과 가는 길
     if (view.selectedVehicle) {

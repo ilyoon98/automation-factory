@@ -1180,6 +1180,27 @@ export class World {
     );
   }
 
+  /**
+   * 단체 선택 (Shift + 드래그): 사각형 안에서 가장 많은 한 종류의 건물들.
+   * 컨베이어·지하 컨베이어·도로는 빼고, 레시피를 고르는 기계(조립기 등)가 있으면 그쪽을 먼저.
+   */
+  groupIn(x0: number, y0: number, x1: number, y1: number): Building[] {
+    const byType = new Map<BuildingType, Building[]>();
+    for (const b of this.buildingsIn(x0, y0, x1, y1)) {
+      if (isBeltType(b.type) || b.type === 'underground' || b.type === 'road') continue;
+      const list = byType.get(b.type);
+      if (list) list.push(b);
+      else byType.set(b.type, [b]);
+    }
+    let best: Building[] = [];
+    for (const [type, list] of byType) {
+      const pick = isRecipeMachine(type) ? 1 : 0;
+      const cur = best.length ? (isRecipeMachine(best[0].type) ? 1 : 0) : -1;
+      if (pick > cur || (pick === cur && list.length > best.length)) best = list;
+    }
+    return best;
+  }
+
   // ───────────────────────── 되돌리기 ─────────────────────────
 
   /** 여기서부터 endEdit까지 바뀐 것을 되돌리기 한 단계로 묶는다 (겹쳐 불러도 바깥 한 단계) */

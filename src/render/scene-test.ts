@@ -140,6 +140,8 @@ const view: ViewState = {
   selectedVehicle: params.get('select') ? ([...world.vehicles.keys()][0] ?? null) : null,
   selection: null,
   removeArea: null,
+  multiArea: null,
+  multi: [],
   paste: null,
   toolSetting: ghost === 'smelter' ? 'iron-plate' : null,
   showRates: !!params.get('rates'),

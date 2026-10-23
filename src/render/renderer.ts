@@ -16,6 +16,7 @@ import type { Building, StationMode, Status } from '../sim/building';
 import type { Vehicle } from '../sim/vehicle';
 import { DX, DY, type Dir } from '../sim/dir';
 import { BELT_SPEED, World, isLineType, patchAlert, storageBounds } from '../sim/world';
+import { ambientEnabled, darkness, sunset, weatherAt } from './ambient';
 import type { Camera } from './camera';
 import { roundRect } from './draw-item';
 import { NUM_ADVANCE, ORE_GROUND, PAL, TILE, TREE_LEAF, hash, loadSpriteOverrides, sprite, spriteHalf, tone } from './pixel';
@@ -186,6 +187,11 @@ export class Renderer {
   /** 지난 프레임까지 끝난 연구 수, 허브 반짝임이 시작된 시각 (없으면 -1) */
   private seenResearch = 0;
   private sparkleT0 = -1;
+  /** 밤 어둠을 그리는 화면 크기 캔버스 (불빛 자리를 도려낸 뒤 덮는다) */
+  private shade: HTMLCanvasElement | null = null;
+  /** 빗줄기 (화면 좌표, 0~1) */
+  private drops: { x: number; y: number; s: number }[] = [];
+  private lastRainAt = 0;
 
   constructor(private canvas: HTMLCanvasElement) {
     this.ctx = canvas.getContext('2d')!;
@@ -271,6 +277,8 @@ export class Renderer {
     }
     this.drawPuffs();
     this.drawSparkle(world);
+    // 낮·밤과 날씨: 땅·건물·트럭 위, 상태 표시·선택 같은 덧그림 아래
+    if (ambientEnabled()) this.drawAmbient(world, visible, spots);
     if (this.n >= 1) {
       const low = new Set<number>();
       for (const r of world.patchReports()) if (patchAlert(r) === 'low') for (const m of r.miners) low.add(m.id);
@@ -1300,6 +1308,112 @@ export class Renderer {
   }
 
   // ───────────────────────── 같이 하기 ─────────────────────────
+
+  /**
+   * 낮·밤과 날씨 (ambient.ts). 밤에는 푸르스름하게 어두워지고 일하는 기계·허브·정류장·트럭 둘레만 밝게 남긴 뒤
+   * 따뜻한 불빛을 더한다. 흐리면 잿빛, 비가 오면 빗줄기.
+   */
+  private drawAmbient(world: World, visible: Building[], spots: Map<number, { x: number; y: number }>): void {
+    const ctx = this.ctx;
+    const cam = this.cam;
+    const dpr = this.dpr;
+    const dark = darkness(world.time);
+    const glow = sunset(world.time);
+    const sky = weatherAt(world.seed, world.time);
+    const W = this.canvas.width;
+    const H = this.canvas.height;
+    ctx.save();
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+
+    // 노을: 따뜻한 주황을 살짝
+    if (glow > 0) {
+      ctx.fillStyle = `rgba(255,140,70,${(0.13 * glow).toFixed(3)})`;
+      ctx.fillRect(0, 0, W, H);
+    }
+    // 흐림·비: 잿빛
+    if (sky.cloud > 0) {
+      ctx.fillStyle = `rgba(70,80,95,${(0.16 * sky.cloud + 0.08 * sky.rain).toFixed(3)})`;
+      ctx.fillRect(0, 0, W, H);
+    }
+
+    // 밤: 어둠을 따로 칠하고 불빛 자리를 도려내 덮는다
+    const lights: { x: number; y: number; r: number }[] = [];
+    if (dark > 0.01) {
+      const lit = (b: Building) =>
+        b.type === 'hub' || b.type === 'station' || b.type === 'charger' || (b.type === 'generator' ? b.load > 0 : b.status === 'working');
+      for (const b of visible) {
+        if (isLineType(b.type) || b.type === 'road' || !lit(b)) continue;
+        const [sx, sy] = cam.worldToScreen(b.x + b.size / 2, b.y + b.size / 2);
+        lights.push({ x: sx * dpr, y: sy * dpr, r: (b.size * 0.9 + 0.8) * cam.zoom * dpr });
+      }
+      for (const v of world.vehicles.values()) {
+        const p = spots.get(v.id) ?? v;
+        const [sx, sy] = cam.worldToScreen(p.x, p.y);
+        if (sx < -50 || sy < -50 || sx > cam.viewW + 50 || sy > cam.viewH + 50) continue;
+        lights.push({ x: sx * dpr, y: sy * dpr, r: 1.3 * cam.zoom * dpr });
+      }
+      if (!this.shade || this.shade.width !== W || this.shade.height !== H) {
+        this.shade = document.createElement('canvas');
+        this.shade.width = W;
+        this.shade.height = H;
+      }
+      const s = this.shade.getContext('2d')!;
+      s.globalCompositeOperation = 'source-over';
+      s.clearRect(0, 0, W, H);
+      s.fillStyle = `rgba(14,22,58,${(0.55 * dark).toFixed(3)})`;
+      s.fillRect(0, 0, W, H);
+      s.globalCompositeOperation = 'destination-out';
+      for (const l of lights) {
+        const g = s.createRadialGradient(l.x, l.y, 0, l.x, l.y, l.r);
+        g.addColorStop(0, 'rgba(0,0,0,0.85)');
+        g.addColorStop(0.5, 'rgba(0,0,0,0.5)');
+        g.addColorStop(1, 'rgba(0,0,0,0)');
+        s.fillStyle = g;
+        s.fillRect(l.x - l.r, l.y - l.r, l.r * 2, l.r * 2);
+      }
+      ctx.drawImage(this.shade, 0, 0);
+      // 따뜻한 불빛
+      ctx.globalCompositeOperation = 'lighter';
+      for (const l of lights) {
+        const g = ctx.createRadialGradient(l.x, l.y, 0, l.x, l.y, l.r * 0.8);
+        g.addColorStop(0, `rgba(255,170,80,${(0.22 * dark).toFixed(3)})`);
+        g.addColorStop(1, 'rgba(255,170,80,0)');
+        ctx.fillStyle = g;
+        ctx.fillRect(l.x - l.r, l.y - l.r, l.r * 2, l.r * 2);
+      }
+      ctx.globalCompositeOperation = 'source-over';
+    }
+
+    // 비: 화면에 비스듬히 떨어지는 빗줄기 (보이는 것만이라 같이 하는 사람과 똑같지 않아도 된다)
+    const now = performance.now() / 1000;
+    const dt = Math.min(0.1, now - this.lastRainAt);
+    this.lastRainAt = now;
+    const want = Math.round(220 * sky.rain);
+    while (this.drops.length < want) this.drops.push({ x: Math.random(), y: Math.random(), s: 0.7 + Math.random() * 0.6 });
+    if (this.drops.length > want) this.drops.length = want;
+    if (this.drops.length) {
+      // 밝은 모래 위에서도 보이게 진한 푸른 회색 (밤에는 조금 밝게)
+      ctx.strokeStyle = dark > 0.5 ? 'rgba(170,190,225,0.5)' : 'rgba(70,95,140,0.5)';
+      ctx.lineWidth = Math.max(1.5, 1.5 * dpr);
+      ctx.beginPath();
+      for (const d of this.drops) {
+        d.y += dt * 1.6 * d.s;
+        d.x -= dt * 0.25 * d.s;
+        if (d.y > 1) {
+          d.y -= 1.05;
+          d.x = Math.random() * 1.1;
+        }
+        if (d.x < -0.05) d.x += 1.1;
+        const x = d.x * W;
+        const y = d.y * H;
+        const len = 14 * d.s * dpr;
+        ctx.moveTo(x, y);
+        ctx.lineTo(x + len * 0.25, y - len);
+      }
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
 
   /** 목표가 가리키는 곳: 핑과 같은 모양 (화면 밖이면 가장자리 화살표), 사라지지 않는다 */
   drawGuideMark(cam: Camera, m: { x: number; y: number; label: string }, t: number): void {

@@ -18,6 +18,7 @@ import { ITEMS, ITEM_IDS, type ItemId, type ItemStack } from '../data/items';
 import { RECIPES, recipesFor, type MachineKind } from '../data/recipes';
 import { ENDLESS_BY_ID, ENDLESS_REQUIRES, ENDLESS_TECHS, TECHS, TECH_BY_ID, TECH_CATEGORIES, endlessCost, type TechCategory } from '../data/tech';
 import type { Input } from '../input/input';
+import { DAY_SEC, ambientEnabled, setAmbientEnabled, skyLabel } from '../render/ambient';
 import { lanRoomCheck, type Session } from '../net/session';
 import { VERSION } from '../version';
 import { STATUS_LABEL, countOf, type Building, type StationMode, type Status } from '../sim/building';
@@ -255,6 +256,12 @@ export class UI {
     });
     // 글자 또렷하게: 화면 배율이 정수가 아닐 때 UI 배율을 정수에 맞춘다 (crisp.ts)
     $<HTMLInputElement>('crisp-text').addEventListener('change', (e) => setCrispText((e.target as HTMLInputElement).checked));
+    // 낮·밤과 날씨 (render/ambient.ts)
+    $<HTMLInputElement>('ambient-on').checked = ambientEnabled();
+    $<HTMLInputElement>('ambient-on').addEventListener('change', (e) => {
+      setAmbientEnabled((e.target as HTMLInputElement).checked);
+      this.update();
+    });
     onUiZoom(() => this.updateCrisp());
     this.updateCrisp();
     $('btn-new').addEventListener('click', () => {
@@ -642,7 +649,16 @@ export class UI {
 
     // 시계, 속도
     const t = Math.floor(w.time);
-    $('clock').textContent = `${Math.floor(t / 60)}:${String(t % 60).padStart(2, '0')}`;
+    const time = `${Math.floor(t / 60)}:${String(t % 60).padStart(2, '0')}`;
+    if (ambientEnabled()) {
+      // 하늘 아이콘 (낮·해 질 녘·밤·흐림·비)
+      const sky = skyLabel(w.seed, w.time);
+      $('clock').textContent = `${sky.icon} ${time}`;
+      $('clock').title = `${sky.text} · 게임 시간 ${time} (하루 ${DAY_SEC / 60}분)`;
+    } else {
+      $('clock').textContent = time;
+      $('clock').title = '게임 시간';
+    }
     document.querySelectorAll<HTMLButtonElement>('#topbar [data-speed]').forEach((btn) => {
       btn.classList.toggle('active', Number(btn.dataset.speed) === this.game.speed);
     });

@@ -592,6 +592,13 @@ h3 small {
   margin-left: auto;
   font: 10px var(--font-s);
   color: var(--muted);
+  white-space: nowrap;
+}
+/* 좁은 창에서는 탭 오른쪽 안내를 숨긴다 (좁은 칸에 세로로 끼지 않게) */
+@media (max-width: 1000px) {
+  #tabs .hint {
+    display: none;
+  }
 }
 #palette {
   display: flex;

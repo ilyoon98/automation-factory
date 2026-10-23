@@ -22,8 +22,8 @@ const { version } = JSON.parse(readFileSync(new URL('./package.json', import.met
 export default defineConfig({
   plugins: [lanServer()],
   // 같은 공유기의 다른 PC가 들어올 수 있게 늘 네트워크에 연다 (npm run dev로 켜도 방을 만들 수 있게)
-  // .claude/worktrees 안의 다른 세션 작업 폴더는 지켜보지 않는다
-  server: { host: true, watch: { ignored: ['**/.claude/**'] } },
+  // (.claude를 지켜보지 않게 하면 .claude/worktrees 안에서 띄운 세션 서버가 자기 파일 변화도 못 봐서 두지 않는다)
+  server: { host: true },
   preview: { host: true },
   // 게임 버전 (src/version.ts). 같이 하기는 방장·손님 버전과 빌드가 같아야 들어갈 수 있다
   define: {

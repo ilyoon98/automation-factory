@@ -369,22 +369,56 @@ h3 small {
   color: var(--ink);
   font-weight: 700;
 }
-/* 버튼 글자가 두 줄로 깨지지 않게. 좁은 창에서는 단축키 표시와 이름을 줄인다 */
+/*
+ * 버튼 글자가 두 줄로 깨지지 않게. 단축키 표시는 늘 보여 주고,
+ * 좁은 창에서는 여백과 게임 이름을 줄여 자리를 만든다
+ */
 #topbar button,
 #topbar .brand {
   white-space: nowrap;
 }
+/* 단축키는 이름 아래 작게 (폭을 덜 쓰게) */
+#topbar button:has(kbd) {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 1px 6px;
+  line-height: 1.1;
+}
+#topbar kbd {
+  font-size: 9px;
+  padding: 0 2px;
+  margin: 1px 0 0;
+  line-height: 1.1;
+}
 @media (max-width: 1100px) {
-  #topbar kbd {
+  #topbar {
+    gap: 4px;
+    padding: 0 6px;
+  }
+  #topbar button,
+  #topbar .speed button {
+    padding: 3px 5px;
+  }
+  #topbar button:has(kbd) {
+    padding: 1px 5px;
+  }
+  #topbar .brand {
     display: none;
   }
-  #topbar {
-    gap: 5px;
+  #topbar #clock {
+    min-width: 0;
   }
 }
 @media (max-width: 860px) {
-  #topbar .brand {
-    display: none;
+  #topbar {
+    gap: 3px;
+  }
+  #topbar button,
+  #topbar .speed button,
+  #topbar button:has(kbd) {
+    padding-left: 3px;
+    padding-right: 3px;
   }
 }
 

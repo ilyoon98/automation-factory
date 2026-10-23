@@ -1568,6 +1568,31 @@ describe('차량 운송', () => {
     expect(w.stationFacing(10, 10)).toBeNull();
   });
 
+  it('같은 정류장에서 차례를 기다리는 트럭은 화면에서 도로를 따라 줄을 선다 (시뮬레이션 자리는 그대로)', () => {
+    const { w, a } = roadWorld(0);
+    const v1 = w.buildTruck(a)!;
+    const v2 = w.cloneTruck(v1)!;
+    const v3 = w.cloneTruck(v1)!;
+    run(w, 0.5);
+    expect([v1.state, v2.state, v3.state]).toEqual(['loading', 'loading', 'loading']);
+    expect(v2.tile).toBe(v1.tile);
+    const spots = w.truckSpots();
+    // 맨 앞(먼저 온·id가 작은) 트럭은 제자리, 나머지 둘은 서로 다른 도로 칸
+    expect(spots.has(v1.id)).toBe(false);
+    const s2 = spots.get(v2.id)!;
+    const s3 = spots.get(v3.id)!;
+    const cell = (p: { x: number; y: number }) => Math.floor(p.y) * w.width + Math.floor(p.x);
+    expect(w.isRoad(cell(s2))).toBe(true);
+    expect(w.isRoad(cell(s3))).toBe(true);
+    expect(new Set([v1.tile, cell(s2), cell(s3)]).size).toBe(3);
+    // 클릭은 보이는 자리로 고른다
+    expect(w.vehicleAt(s3.x, s3.y)).toBe(v3);
+    // 달리기 시작하면 줄에서 빠진다
+    a.inBuf.set('iron-ore', 200);
+    for (let i = 0; i < 60 * 20 && v1.state === 'loading'; i++) w.tick();
+    expect(w.truckSpots().has(v1.id)).toBe(false);
+  });
+
   it('정류장이 없어지면 멈추고, 저장·불러오기 뒤에도 하던 일을 이어서 한다', () => {
     const { w, a, b } = roadWorld();
     const v = w.buildTruck(a)!;

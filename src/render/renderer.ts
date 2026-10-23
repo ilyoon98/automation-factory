@@ -252,10 +252,12 @@ export class Renderer {
       const storages = new Set(visible.filter((b) => b.type === 'storage').map((b) => world.storageGroup(b)[0]));
       for (const leader of storages) this.drawStorageInfo(world, leader);
     }
-    // 트럭은 건물 위에 (도로 옆 정류장에 서 있을 때도 보이게)
+    // 트럭은 건물 위에 (도로 옆 정류장에 서 있을 때도 보이게). 같은 칸에 서 있는 트럭들은 도로를 따라 줄 세워 그린다
+    const spots = world.truckSpots();
     for (const v of world.vehicles.values()) {
-      if (v.x < x0 - 1 || v.y < y0 - 1 || v.x > x1 + 2 || v.y > y1 + 2) continue;
-      this.drawTruck(v, v.id === view.selectedVehicle);
+      const p = spots.get(v.id) ?? v;
+      if (p.x < x0 - 1 || p.y < y0 - 1 || p.x > x1 + 2 || p.y > y1 + 2) continue;
+      this.drawTruck(v, v.id === view.selectedVehicle, p);
     }
     this.drawPuffs();
     this.drawSparkle(world);
@@ -1002,11 +1004,12 @@ export class Renderer {
   }
 
   /** 트럭: 가까운 네 방향 그림, 짐 양에 따라 빈 차·조금·가득. 멈춘 이유가 있으면 ! */
-  private drawTruck(v: Vehicle, selected: boolean): void {
+  /** at: 그릴 자리 (줄 선 트럭은 실제 자리와 다르다) */
+  private drawTruck(v: Vehicle, selected: boolean, at: { x: number; y: number; angle: number }): void {
     const u = this.u;
-    const dir = (((Math.round(v.angle / (Math.PI / 2)) + 1) % 4) + 4) % 4;
+    const dir = (((Math.round(at.angle / (Math.PI / 2)) + 1) % 4) + 4) % 4;
     const fill = v.load / TRUCK.capacity;
-    const [sx, sy] = this.cam.worldToScreen(Math.round(v.x * TILE - 8) / TILE, Math.round(v.y * TILE - 8) / TILE);
+    const [sx, sy] = this.cam.worldToScreen(Math.round(at.x * TILE - 8) / TILE, Math.round(at.y * TILE - 8) / TILE);
     if (selected) {
       // 차 모양(가로 16×12, 세로 12×16)에 맞춘 테두리
       const side = dir % 2 === 1;

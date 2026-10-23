@@ -2090,15 +2090,89 @@ export class World {
     return [...this.vehicles.values()].filter((v) => v.stops.some((s) => s.id === st.id));
   }
 
-  /** (x, y) 칸 좌표에서 가장 가까운 트럭 (반 칸 안). 없으면 null */
+  /** (x, y) 칸 좌표에서 가장 가까운 트럭 (반 칸 안, 화면에 보이는 자리 기준). 없으면 null */
   vehicleAt(x: number, y: number): Vehicle | null {
+    const spots = this.truckSpots();
     let best: Vehicle | null = null;
     let bestD = 0.5;
     for (const v of this.vehicles.values()) {
-      const d = Math.hypot(v.x - x, v.y - y);
+      const p = spots.get(v.id) ?? v;
+      const d = Math.hypot(p.x - x, p.y - y);
       if (d < bestD) [best, bestD] = [v, d];
     }
     return best;
+  }
+
+  /**
+   * 화면용: 같은 칸에 서 있는 트럭들(정류장에서 싣고 내리거나 차례를 기다림, 충전기 앞에서 충전)을 줄 세운 자리.
+   * 맨 앞(먼저 온) 트럭은 제자리, 나머지는 그 칸에서 도로를 따라 뒤쪽 칸에 한 대씩. 달리는 트럭은 지금처럼 겹쳐 지나간다.
+   * 시뮬레이션은 바꾸지 않는다 (트럭은 실제로는 모두 그 칸에 있다). 줄이 없으면 빈 맵
+   */
+  truckSpots(): Map<number, { x: number; y: number; angle: number }> {
+    const groups = new Map<number, Vehicle[]>();
+    for (const v of this.vehicles.values()) {
+      const parked = v.state === 'loading' || v.state === 'unloading' || v.charger;
+      if (!parked) continue;
+      const g = groups.get(v.tile);
+      if (g) g.push(v);
+      else groups.set(v.tile, [v]);
+    }
+    const spots = new Map<number, { x: number; y: number; angle: number }>();
+    for (const [tile, g] of groups) {
+      if (g.length < 2) continue;
+      g.sort((a, b) => a.arrivedAt - b.arrivedAt || a.id - b.id);
+      const cells = this.queueCells(tile, g[0].angle, g.length - 1);
+      let prev = { x: (tile % this.width) + 0.5, y: Math.floor(tile / this.width) + 0.5 };
+      g.forEach((v, k) => {
+        if (k === 0) return;
+        // 칸이 모자라면 마지막 칸에 겹친다
+        const c = cells[Math.min(k - 1, cells.length - 1)];
+        if (c === undefined) return;
+        const x = (c % this.width) + 0.5;
+        const y = Math.floor(c / this.width) + 0.5;
+        // 앞 트럭 쪽을 본다
+        spots.set(v.id, { x, y, angle: Math.atan2(prev.y - y, prev.x - x) });
+        prev = { x, y };
+      });
+    }
+    return spots;
+  }
+
+  /** tile에서 도로를 따라 가까운 순서로 n칸 (맨 앞 트럭이 온 쪽, 즉 바라보는 반대쪽을 먼저) */
+  private queueCells(tile: number, angle: number, n: number): number[] {
+    const w = this.width;
+    // 맨 앞 트럭이 바라보는 방향 (이쪽에 있는 칸이 "앞")
+    const hx = Math.cos(angle);
+    const hy = Math.sin(angle);
+    const dirs = [
+      [0, -1],
+      [1, 0],
+      [0, 1],
+      [-1, 0],
+    ];
+    // 도로를 따라 가까운 순서로 넉넉히 찾은 다음, 트럭이 온 쪽(뒤·옆)을 먼저 채우고 앞쪽은 모자랄 때만
+    const found: { j: number; d: number; front: boolean }[] = [];
+    const seen = new Map([[tile, 0]]);
+    const queue = [tile];
+    const ox = tile % w;
+    const oy = Math.floor(tile / w);
+    while (queue.length && found.length < n * 2 + 8) {
+      const t = queue.shift()!;
+      const tx = t % w;
+      const ty = Math.floor(t / w);
+      for (const [dx, dy] of dirs) {
+        const x = tx + dx;
+        const y = ty + dy;
+        const j = y * w + x;
+        if (!this.inBounds(x, y) || seen.has(j) || !this.isRoad(j)) continue;
+        const d = seen.get(t)! + 1;
+        seen.set(j, d);
+        found.push({ j, d, front: (x - ox) * hx + (y - oy) * hy > 0.5 });
+        queue.push(j);
+      }
+    }
+    found.sort((p, q) => Number(p.front) - Number(q.front) || p.d - q.d);
+    return found.slice(0, n).map((c) => c.j);
   }
 
   /** from에서 도로로 갈 수 있는 가장 가까운 정류장. prefer 종류를 먼저 고른다 */

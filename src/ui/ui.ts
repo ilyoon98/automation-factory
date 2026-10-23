@@ -34,7 +34,8 @@ import {
   type PatchReport,
   type World,
 } from '../sim/world';
-import { blueprintPreview, defaultBlueprintName, saveBlueprint } from './blueprints';
+import { blueprintCode, blueprintPreview, defaultBlueprintName, saveBlueprint } from './blueprints';
+import { copyText } from './clipboard';
 import { GUIDE, findTarget, type GuideFocus } from './guide';
 import { Codex, depositName, type DepositId } from './codex';
 import { buildingIconUrl, depositIconUrl, itemIcon, itemLink, truckIconUrl, withBuildingIcons } from './icons';
@@ -931,12 +932,14 @@ export class UI {
       <div class="row"><span>건물</span><b>${bp.entries.length}개 · ${bp.w}×${bp.h}칸</b></div>
       <p class="muted">맵을 클릭하면 붙여넣어요. 우클릭·Esc로 내려놓기.</p>`;
     if (saved) {
-      html += `<p class="muted">청사진 탭(K)에 저장돼 있어요.</p>`;
+      html += `<p class="muted">청사진 탭(K)에 저장돼 있어요.</p>
+        <div class="actions"><button data-act="bp-share">📋 공유 코드 복사</button></div>`;
     } else {
       html += `<label class="recipe">이름 <input data-act="bp-name" maxlength="24" placeholder="${escapeHtml(defaultBlueprintName(bp))}"></label>
-        <div class="actions"><button data-act="bp-save">💾 청사진으로 저장</button></div>
+        <div class="actions"><button data-act="bp-save">💾 청사진으로 저장</button><button data-act="bp-share">📋 공유 코드 복사</button></div>
         <p class="muted">저장하면 아래 청사진 탭(K)에서 언제든 다시 꺼내 써요. 이 PC에만 남아요.</p>`;
     }
+    html += `<p class="muted">공유 코드를 메신저로 보내면, 친구는 청사진 탭(K) 맨 끝 칸에 붙여넣어 받아요.</p>`;
     el.innerHTML = html;
   }
 
@@ -1426,6 +1429,16 @@ export class UI {
     this.toast(`청사진 '${name}' 저장 — 청사진 탭(K)에서 다시 꺼내 써요`);
   }
 
+  /** 지금 든 묶음의 공유 코드를 클립보드에 (이름은 저장한 이름, 없으면 적은 이름·저절로 붙는 이름) */
+  private async shareCopied(): Promise<void> {
+    const bp = this.game.input.paste;
+    if (!bp) return;
+    const typed = $<HTMLInputElement>('info').querySelector<HTMLInputElement>('[data-act="bp-name"]')?.value.trim();
+    const name = this.game.input.pasteName ?? this.savedPastes.get(bp) ?? (typed || defaultBlueprintName(bp));
+    const ok = await copyText(await blueprintCode(name, bp));
+    this.toast(ok ? `'${name}' 공유 코드를 복사했어요 — 메신저에 붙여넣어 보내세요` : '복사하지 못했어요');
+  }
+
   private onInfoClick(e: MouseEvent): void {
     const act = (e.target as HTMLElement).closest<HTMLElement>('[data-act]')?.dataset.act;
     const input = this.game.input;
@@ -1440,6 +1453,7 @@ export class UI {
     if (input.paste && !this.selected()) {
       if (act === 'close') input.paste = null;
       if (act === 'bp-save') this.saveCopied();
+      if (act === 'bp-share') void this.shareCopied();
       this.update();
       return;
     }
@@ -1923,32 +1937,6 @@ function productionBlock(st: MachineStats): string {
 function offline(net: Session): boolean {
   // exe는 늘 자기 서버가 있다 (방장 PC 서버에서 내 서버로 갈아타는 찰나에 방 창이 닫히지 않게)
   return !net.connected && !net.borrowed && !net.joining && !net.desktop;
-}
-
-/** 클립보드에 복사. http로 연 다른 PC(보안 컨텍스트가 아님)에서는 navigator.clipboard가 없어서 옛 방식으로 */
-async function copyText(text: string): Promise<boolean> {
-  try {
-    if (navigator.clipboard && window.isSecureContext) {
-      await navigator.clipboard.writeText(text);
-      return true;
-    }
-  } catch {
-    // 아래 옛 방식으로
-  }
-  const ta = document.createElement('textarea');
-  ta.value = text;
-  ta.style.position = 'fixed';
-  ta.style.opacity = '0';
-  document.body.appendChild(ta);
-  ta.select();
-  let ok = false;
-  try {
-    ok = document.execCommand('copy');
-  } catch {
-    ok = false;
-  }
-  ta.remove();
-  return ok;
 }
 
 /** 플레이어가 정한 이름처럼 남이 입력한 글자를 HTML에 넣을 때 */

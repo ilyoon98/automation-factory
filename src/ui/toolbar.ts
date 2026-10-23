@@ -1,7 +1,18 @@
 import { BUILDINGS, CATEGORIES, type BuildingType, type Category } from '../data/buildings';
 import type { Input } from '../input/input';
 import type { World } from '../sim/world';
-import { blueprintPreview, blueprintTabIcon, blueprints, removeBlueprint } from './blueprints';
+import type { Blueprint } from '../sim/blueprint';
+import {
+  blueprintCode,
+  blueprintPreview,
+  blueprintTabIcon,
+  blueprints,
+  parseBlueprintCode,
+  removeBlueprint,
+  saveBlueprint,
+  uniqueBlueprintName,
+} from './blueprints';
+import { copyText } from './clipboard';
 import { buildingIconUrl, itemIcon, truckIconUrl } from './icons';
 
 /** 건물 탭들 + 맨 끝 청사진 탭 (K) */
@@ -235,7 +246,7 @@ export class Toolbar {
     this.syncScrollbar();
   }
 
-  /** 청사진 탭: 저장한 청사진들. 누르면 붙여넣기, 우클릭하면 지우기 */
+  /** 청사진 탭: 저장한 청사진들 (누르면 붙여넣기, 📋 코드 복사, ✕ 지우기)과 맨 끝에 공유 코드 붙여넣는 칸 */
   private renderBlueprints(palette: HTMLElement): void {
     const list = blueprints();
     if (!list.length) {
@@ -249,19 +260,64 @@ export class Toolbar {
         ${i < 9 ? `<span class="key">${i + 1}</span>` : ''}
         <img src="${blueprintPreview(s.bp)}" alt="">
         <span class="name">${escapeHtml(s.name)}</span>
-        <span class="cost">건물 ${n}개 · ${s.bp.w}×${s.bp.h}</span>`;
-      btn.title = `${s.name}\n건물 ${n}개 · ${s.bp.w}×${s.bp.h}칸\n클릭: 붙여넣기 · 우클릭: 지우기`;
-      btn.addEventListener('click', () => this.input.startPaste(s.bp, s.name));
-      btn.addEventListener('contextmenu', (e) => {
-        e.preventDefault();
+        <span class="cost">건물 ${n}개 · ${s.bp.w}×${s.bp.h}</span>
+        <span class="share" title="공유 코드 복사 (친구에게 보내기)">📋</span>
+        <span class="del" title="이 청사진 지우기">✕</span>`;
+      btn.title = `${s.name}\n건물 ${n}개 · ${s.bp.w}×${s.bp.h}칸\n클릭: 붙여넣기 · 📋: 공유 코드 복사 · ✕(또는 우클릭): 지우기`;
+      const remove = () => {
         if (!confirm(`'${s.name}' 청사진을 지울까요?`)) return;
         removeBlueprint(i);
         this.renderPalette();
+      };
+      btn.addEventListener('click', (e) => {
+        const t = e.target as HTMLElement;
+        if (t.closest('.del')) remove();
+        else if (t.closest('.share')) void this.shareCode(s.name, s.bp);
+        else this.input.startPaste(s.bp, s.name);
+      });
+      btn.addEventListener('contextmenu', (e) => {
+        e.preventDefault();
+        remove();
       });
       palette.appendChild(btn);
     });
+    // 친구가 보낸 공유 코드 붙여넣기
+    const box = document.createElement('div');
+    box.className = 'pal pal-import';
+    box.innerHTML = `<span class="name">📥 받은 코드 넣기</span>
+      <input data-act="bp-code" placeholder="AF1.… 공유 코드를 붙여넣기 (Ctrl+V)">
+      <button data-act="bp-import">가져오기</button>`;
+    const field = box.querySelector<HTMLInputElement>('input')!;
+    const go = () => void this.importCode(field.value);
+    box.querySelector('button')!.addEventListener('click', go);
+    field.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') go();
+    });
+    palette.appendChild(box);
     palette.scrollLeft = 0;
     this.syncScrollbar();
+  }
+
+  /** 공유 코드를 클립보드에 */
+  private async shareCode(name: string, bp: Blueprint): Promise<void> {
+    const code = await blueprintCode(name, bp);
+    const ok = await copyText(code);
+    this.input.notify(ok ? `'${name}' 공유 코드를 복사했어요 — 메신저에 붙여넣어 보내세요` : '복사하지 못했어요');
+  }
+
+  /** 받은 공유 코드를 청사진으로 저장하고 바로 들기 */
+  private async importCode(code: string): Promise<void> {
+    if (!code.trim()) return;
+    const got = await parseBlueprintCode(code);
+    if (!got) {
+      this.input.notify('공유 코드가 아니거나 잘렸어요. "AF1."로 시작하는 줄 전체를 붙여넣어 주세요');
+      return;
+    }
+    const name = uniqueBlueprintName(got.name);
+    saveBlueprint(name, got.bp);
+    this.renderPalette();
+    this.input.startPaste(blueprints().find((s) => s.name === name)!.bp, name);
+    this.input.notify(`청사진 '${name}'을 받았어요 (건물 ${got.bp.entries.length}개) — 클릭해서 붙여넣기`);
   }
 }
 

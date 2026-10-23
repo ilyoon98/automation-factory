@@ -402,6 +402,11 @@ export class Input implements ViewState {
     }
   }
 
+  /** 짧은 안내 (툴바처럼 입력을 거쳐 알릴 때) */
+  notify(msg: string): void {
+    this.cb.toast(msg);
+  }
+
   /** 청사진을 들고 붙여넣기 대기 (name = 저장함에서 꺼낸 이름) */
   startPaste(bp: Blueprint, name: string | null): void {
     this.paste = bp;

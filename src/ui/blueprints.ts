@@ -1,5 +1,7 @@
 import { BUILDINGS, isBeltType, type BuildingType } from '../data/buildings';
-import type { Blueprint } from '../sim/blueprint';
+import type { ItemId } from '../data/items';
+import type { Blueprint, BlueprintEntry } from '../sim/blueprint';
+import type { Dir } from '../sim/dir';
 
 /**
  * 청사진 저장함: Ctrl + 드래그로 복사한 공장 묶음에 이름을 붙여 이 PC(브라우저·exe)에 남겨 둔다.
@@ -69,6 +71,77 @@ export function defaultBlueprintName(bp: Blueprint): string {
 }
 
 const previews = new WeakMap<Blueprint, string>();
+
+// ───────────────────────── 공유 코드 ─────────────────────────
+// 청사진을 글자 한 줄로: "AF1." + (이름과 건물 목록 JSON을 deflate로 줄여 base64url).
+// 메신저로 보내고, 받은 사람은 청사진 탭의 칸에 붙여넣는다.
+
+const CODE_PREFIX = 'AF1.';
+
+type CodeEntry = [string, number, number, number, (string | 0)?, (string | 0)?, (string | 0)?];
+
+async function pipe(bytes: Uint8Array<ArrayBuffer>, stream: CompressionStream | DecompressionStream): Promise<Uint8Array<ArrayBuffer>> {
+  const out = new Response(new Blob([bytes]).stream().pipeThrough(stream));
+  return new Uint8Array(await out.arrayBuffer());
+}
+
+function toBase64Url(bytes: Uint8Array): string {
+  let s = '';
+  for (const b of bytes) s += String.fromCharCode(b);
+  return btoa(s).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+
+function fromBase64Url(text: string): Uint8Array<ArrayBuffer> {
+  const s = atob(text.replace(/-/g, '+').replace(/_/g, '/'));
+  const out = new Uint8Array(s.length);
+  for (let i = 0; i < s.length; i++) out[i] = s.charCodeAt(i);
+  return out;
+}
+
+/** 공유 코드 만들기 */
+export async function blueprintCode(name: string, bp: Blueprint): Promise<string> {
+  const e: CodeEntry[] = bp.entries.map((x) => {
+    const row: CodeEntry = [x.type, x.dx, x.dy, x.dir, x.recipe ?? 0, x.filter ?? 0, x.mode ?? 0];
+    while (row.length > 4 && row[row.length - 1] === 0) row.pop();
+    return row;
+  });
+  const json = JSON.stringify({ n: name, w: bp.w, h: bp.h, e });
+  return CODE_PREFIX + toBase64Url(await pipe(new TextEncoder().encode(json), new CompressionStream('deflate-raw')));
+}
+
+/** 공유 코드 읽기. 코드가 아니거나 깨졌으면 null. 이 버전에 없는 건물은 뺀다 */
+export async function parseBlueprintCode(code: string): Promise<{ name: string; bp: Blueprint } | null> {
+  const text = code.trim().replace(/\s+/g, '');
+  if (!text.startsWith(CODE_PREFIX)) return null;
+  try {
+    const raw = await pipe(fromBase64Url(text.slice(CODE_PREFIX.length)), new DecompressionStream('deflate-raw'));
+    const d = JSON.parse(new TextDecoder().decode(raw)) as { n: string; w: number; h: number; e: CodeEntry[] };
+    const entries: BlueprintEntry[] = d.e
+      .filter((r) => r[0] in BUILDINGS)
+      .map(([type, dx, dy, dir, recipe, filter, mode]) => ({
+        type: type as BuildingType,
+        dx: Number(dx),
+        dy: Number(dy),
+        dir: (Number(dir) & 3) as Dir,
+        recipe: recipe || null,
+        filter: (filter || null) as ItemId | null,
+        ...(mode === 'load' || mode === 'unload' ? { mode } : {}),
+      }));
+    if (!entries.length) return null;
+    return { name: String(d.n || '받은 청사진').slice(0, 24), bp: { entries, w: Number(d.w), h: Number(d.h) } };
+  } catch {
+    return null;
+  }
+}
+
+/** 이미 있는 이름이면 뒤에 번호를 붙인다 */
+export function uniqueBlueprintName(name: string): string {
+  const names = new Set(blueprints().map((s) => s.name));
+  if (!names.has(name)) return name;
+  let n = 2;
+  while (names.has(`${name} ${n}`)) n++;
+  return `${name} ${n}`;
+}
 
 /** 미리보기 (32×32): 건물마다 그 색 네모, 컨베이어는 가는 줄 */
 export function blueprintPreview(bp: Blueprint): string {

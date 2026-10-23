@@ -1573,3 +1573,19 @@ h3 small {
     outline-color: #3b2716;
   }
 }
+/* 청사진 탭: 아직 저장한 게 없을 때 */
+#palette .pal-empty {
+  margin: 10px 6px;
+  font: 11px var(--font-s);
+  color: var(--muted);
+  white-space: normal;
+}
+/* 청사진 이름 칸 */
+#info input[data-act='bp-name'] {
+  flex: 1;
+  min-width: 0;
+  font: inherit;
+  padding: 3px 5px;
+  border: 2px solid var(--ink);
+  background: #fffaf0;
+}

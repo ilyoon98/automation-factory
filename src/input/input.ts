@@ -72,6 +72,8 @@ export class Input implements ViewState {
   multi: number[] = [];
   /** 붙여넣기 대기 중인 청사진 */
   paste: Blueprint | null = null;
+  /** 청사진 저장함에서 꺼낸 것이면 그 이름 (방금 복사한 것이면 null → 정보창에서 저장할 수 있다) */
+  pasteName: string | null = null;
   /** 기계마다 분당 생산량 표시 (I 키, 위쪽 "생산량" 버튼) */
   showRates = false;
   /** 건물 종류별로 마지막에 고른 설정 (레시피 id 또는 분류기 아이템). 새로 지을 때 그대로 적용한다. */
@@ -302,10 +304,8 @@ export class Input implements ViewState {
       const bp = copyArea(this.cb.getWorld(), s.x0, s.y0, s.x1, s.y1);
       this.selection = null;
       if (bp) {
-        this.paste = bp;
-        this.tool = null;
-        this.selectedId = null;
-        this.cb.toast(`${bp.entries.length}개 복사 — 클릭해서 붙여넣기 (우클릭·Esc 취소)`);
+        this.startPaste(bp, null);
+        this.cb.toast(`${bp.entries.length}개 복사 — 클릭해서 붙여넣기 (우클릭·Esc 취소) · 오른쪽 창에서 청사진으로 저장`);
       }
       this.cb.changed();
     }
@@ -400,6 +400,18 @@ export class Input implements ViewState {
         break;
       }
     }
+  }
+
+  /** 청사진을 들고 붙여넣기 대기 (name = 저장함에서 꺼낸 이름) */
+  startPaste(bp: Blueprint, name: string | null): void {
+    this.paste = bp;
+    this.pasteName = name;
+    this.tool = null;
+    this.selectedId = null;
+    this.selectedVehicle = null;
+    this.multi = [];
+    if (name) this.cb.toast(`청사진 '${name}' — 클릭해서 붙여넣기 (우클릭·Esc 취소)`);
+    this.cb.changed();
   }
 
   /** 단체 선택한 건물을 모두 철거 (되돌리기 한 단계) */

@@ -21,6 +21,7 @@ import type { Input } from '../input/input';
 import { lanRoomCheck, type Session } from '../net/session';
 import { VERSION } from '../version';
 import { STATUS_LABEL, countOf, type Building, type StationMode, type Status } from '../sim/building';
+import type { Blueprint } from '../sim/blueprint';
 import type { Exec } from '../sim/commands';
 import { DX, DY } from '../sim/dir';
 import { ROUTE_MAX, ROUTE_MIN, VEHICLE_STATUS_LABEL, type RouteStop, type Vehicle, type VehicleStatus } from '../sim/vehicle';
@@ -33,6 +34,7 @@ import {
   type PatchReport,
   type World,
 } from '../sim/world';
+import { blueprintPreview, defaultBlueprintName, saveBlueprint } from './blueprints';
 import { GUIDE, findTarget, type GuideFocus } from './guide';
 import { Codex, depositName, type DepositId } from './codex';
 import { buildingIconUrl, depositIconUrl, itemIcon, itemLink, truckIconUrl, withBuildingIcons } from './icons';
@@ -151,6 +153,8 @@ export class UI {
   private toastTimer = 0;
   /** 목표 달성 소리를 낼지 가리려고 지난번에 본 공장 */
   private guideWorld: World | null = null;
+  /** 방금 복사해서 저장한 묶음 → 저장한 이름 */
+  private savedPastes = new WeakMap<Blueprint, string>();
   /** 지금 목표가 가리키는 것 */
   private guideFocus: GuideFocus | null = null;
   /** 지금 목표가 맵에서 가리키는 곳 (건물을 들었을 때) */
@@ -301,6 +305,13 @@ export class UI {
     });
 
     $('info').addEventListener('click', (e) => this.onInfoClick(e));
+    // 청사진 이름 칸에서 Enter = 저장
+    $('info').addEventListener('keydown', (e) => {
+      if (e.key !== 'Enter' || (e.target as HTMLElement).dataset.act !== 'bp-name') return;
+      e.preventDefault();
+      this.saveCopied();
+      this.update();
+    });
     $('info').addEventListener('change', (e) => {
       const sel = e.target as HTMLSelectElement;
       const v = this.selectedVehicle();
@@ -862,6 +873,10 @@ export class UI {
       if (group.length) this.game.input.selectedId = group[0].id;
     }
     const b = this.selected();
+    if (!b && this.game.input.paste) {
+      this.updatePasteInfo(this.game.input.paste, this.game.input.pasteName);
+      return;
+    }
     if (!b) {
       el.hidden = true;
       this.infoKey = '';
@@ -900,6 +915,29 @@ export class UI {
         o.textContent = `${o.dataset.name} (${sourceCount(w, src, o.value as ItemId)}개)`;
       });
     }
+  }
+
+  /** 붙여넣기 중: 무엇을 들었는지, 방금 복사한 것이면 이름 붙여 청사진 저장함에 저장 */
+  private updatePasteInfo(bp: Blueprint, name: string | null): void {
+    const el = $('info');
+    el.hidden = false;
+    // 글자를 치는 동안 다시 그리지 않게, 든 것이 바뀔 때만
+    const key = `paste|${name ?? ''}|${bp.entries.length}|${bp.w}x${bp.h}|${this.savedPastes.has(bp)}`;
+    if (key === this.infoKey) return;
+    this.infoKey = key;
+    const saved = name ?? (this.savedPastes.has(bp) ? this.savedPastes.get(bp)! : null);
+    let html = `<header><img class="swatch" src="${blueprintPreview(bp)}" alt=""><h3>${saved ? `청사진 · ${escapeHtml(saved)}` : '복사한 묶음'}</h3>
+      <button class="x" data-act="close">×</button></header>
+      <div class="row"><span>건물</span><b>${bp.entries.length}개 · ${bp.w}×${bp.h}칸</b></div>
+      <p class="muted">맵을 클릭하면 붙여넣어요. 우클릭·Esc로 내려놓기.</p>`;
+    if (saved) {
+      html += `<p class="muted">청사진 탭(K)에 저장돼 있어요.</p>`;
+    } else {
+      html += `<label class="recipe">이름 <input data-act="bp-name" maxlength="24" placeholder="${escapeHtml(defaultBlueprintName(bp))}"></label>
+        <div class="actions"><button data-act="bp-save">💾 청사진으로 저장</button></div>
+        <p class="muted">저장하면 아래 청사진 탭(K)에서 언제든 다시 꺼내 써요. 이 PC에만 남아요.</p>`;
+    }
+    el.innerHTML = html;
   }
 
   /** 단체 선택한 건물들 (철거된 건 빼고) */
@@ -1376,6 +1414,18 @@ export class UI {
     el.querySelector('.dyn')!.innerHTML = lines.join('');
   }
 
+  /** 지금 든 복사 묶음을 청사진 저장함에 (이름을 안 적으면 "조립기 묶음" 같은 이름) */
+  private saveCopied(): void {
+    const bp = this.game.input.paste;
+    if (!bp) return;
+    const typed = $<HTMLInputElement>('info').querySelector<HTMLInputElement>('[data-act="bp-name"]')?.value.trim();
+    const name = typed || defaultBlueprintName(bp);
+    saveBlueprint(name, bp);
+    this.savedPastes.set(bp, name);
+    this.toolbar.refreshBlueprints();
+    this.toast(`청사진 '${name}' 저장 — 청사진 탭(K)에서 다시 꺼내 써요`);
+  }
+
   private onInfoClick(e: MouseEvent): void {
     const act = (e.target as HTMLElement).closest<HTMLElement>('[data-act]')?.dataset.act;
     const input = this.game.input;
@@ -1384,6 +1434,12 @@ export class UI {
     if (truck) {
       input.selectedVehicle = Number(truck);
       input.selectedId = null;
+      this.update();
+      return;
+    }
+    if (input.paste && !this.selected()) {
+      if (act === 'close') input.paste = null;
+      if (act === 'bp-save') this.saveCopied();
       this.update();
       return;
     }

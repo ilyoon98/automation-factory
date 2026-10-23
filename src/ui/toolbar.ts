@@ -1,7 +1,12 @@
 import { BUILDINGS, CATEGORIES, type BuildingType, type Category } from '../data/buildings';
 import type { Input } from '../input/input';
 import type { World } from '../sim/world';
+import { blueprintPreview, blueprintTabIcon, blueprints, removeBlueprint } from './blueprints';
 import { buildingIconUrl, itemIcon, truckIconUrl } from './icons';
+
+/** 건물 탭들 + 맨 끝 청사진 탭 (K) */
+type Tab = Category | 'blueprints';
+const BP_KEY = 'k';
 
 /** 탭마다 대표 그림 (운송은 트럭) */
 const TAB_ICON: Record<Category, () => string> = {
@@ -22,7 +27,7 @@ const categoryOf = (type: BuildingType): Category | null =>
  * - 다른 방법(Q로 집기 등)으로 다른 탭의 건물을 들면 그 탭으로 넘어간다.
  */
 export class Toolbar {
-  private category: Category = 'logistics';
+  private category: Tab = 'logistics';
   private buttons = new Map<BuildingType, HTMLButtonElement>();
   private lastTool: BuildingType | null = null;
 
@@ -105,13 +110,27 @@ export class Toolbar {
 
   private syncScrollbar: () => void = () => {};
 
-  /** 지금 탭의 i번째(0부터) 건물 */
+  /** 지금 탭의 i번째(0부터) 건물. 청사진 탭이면 i번째 청사진을 들고 null */
   slot(i: number): BuildingType | null {
+    if (this.category === 'blueprints') {
+      const s = blueprints()[i];
+      if (s) this.input.startPaste(s.bp, s.name);
+      return null;
+    }
     return CATEGORIES.find((c) => c.id === this.category)?.items[i] ?? null;
   }
 
-  /** 탭 단축키(z, x, c, v, b)면 그 탭으로 바꾸고 true */
+  /** 청사진을 저장·삭제했으면 목록을 다시 그린다 */
+  refreshBlueprints(): void {
+    if (this.category === 'blueprints') this.renderPalette();
+  }
+
+  /** 탭 단축키(z, x, c, v, b, n, k)면 그 탭으로 바꾸고 true */
   selectByKey(key: string): boolean {
+    if (key === BP_KEY) {
+      this.setCategory('blueprints');
+      return true;
+    }
     const c = CATEGORIES.find((cat) => cat.key === key);
     if (!c) return false;
     this.setCategory(c.id);
@@ -120,8 +139,9 @@ export class Toolbar {
 
   /** Tab / Shift+Tab */
   cycle(delta: number): void {
-    const i = CATEGORIES.findIndex((c) => c.id === this.category);
-    this.setCategory(CATEGORIES[(i + delta + CATEGORIES.length) % CATEGORIES.length].id);
+    const tabs: Tab[] = [...CATEGORIES.map((c) => c.id), 'blueprints'];
+    const i = tabs.indexOf(this.category);
+    this.setCategory(tabs[(i + delta + tabs.length) % tabs.length]);
   }
 
   update(w: World): void {
@@ -153,7 +173,7 @@ export class Toolbar {
     for (const [t, btn] of this.buttons) btn.classList.toggle('guide-pulse', t === want && cat === this.category);
   }
 
-  private setCategory(id: Category): void {
+  private setCategory(id: Tab): void {
     if (this.category === id) return;
     this.category = id;
     this.renderPalette();
@@ -169,9 +189,16 @@ export class Toolbar {
       btn.addEventListener('click', () => this.setCategory(c.id));
       tabs.appendChild(btn);
     }
+    const bp = document.createElement('button');
+    bp.className = 'tab';
+    bp.dataset.cat = 'blueprints';
+    bp.title = 'Ctrl + 드래그로 복사한 공장 묶음을 저장해 두고 다시 꺼내 써요';
+    bp.innerHTML = `<img class="ticon" src="${blueprintTabIcon()}" alt="">청사진 <kbd>${BP_KEY.toUpperCase()}</kbd>`;
+    bp.addEventListener('click', () => this.setCategory('blueprints'));
+    tabs.appendChild(bp);
     const hint = document.createElement('span');
     hint.className = 'hint';
-    const keys = CATEGORIES.map((c) => `<kbd>${c.key.toUpperCase()}</kbd>`).join('');
+    const keys = [...CATEGORIES.map((c) => c.key), BP_KEY].map((k) => `<kbd>${k.toUpperCase()}</kbd>`).join('');
     hint.innerHTML = `${keys} 또는 <kbd>Tab</kbd>: 탭 바꾸기 · <kbd>1</kbd>~<kbd>9</kbd>: 건물 고르기 · 우클릭: 도감`;
     tabs.appendChild(hint);
   }
@@ -183,6 +210,10 @@ export class Toolbar {
     const palette = document.getElementById('palette')!;
     palette.innerHTML = '';
     this.buttons.clear();
+    if (this.category === 'blueprints') {
+      this.renderBlueprints(palette);
+      return;
+    }
     const items = CATEGORIES.find((c) => c.id === this.category)?.items ?? [];
     items.forEach((type, i) => {
       const def = BUILDINGS[type];
@@ -203,4 +234,37 @@ export class Toolbar {
     palette.scrollLeft = 0;
     this.syncScrollbar();
   }
+
+  /** 청사진 탭: 저장한 청사진들. 누르면 붙여넣기, 우클릭하면 지우기 */
+  private renderBlueprints(palette: HTMLElement): void {
+    const list = blueprints();
+    if (!list.length) {
+      palette.innerHTML = `<p class="pal-empty">저장한 청사진이 없어요. <kbd>Ctrl</kbd> + 드래그로 공장 묶음을 복사한 뒤, 오른쪽 창에서 💾 저장하면 여기에 모여요.</p>`;
+    }
+    list.forEach((s, i) => {
+      const n = s.bp.entries.length;
+      const btn = document.createElement('button');
+      btn.className = 'pal';
+      btn.innerHTML = `
+        ${i < 9 ? `<span class="key">${i + 1}</span>` : ''}
+        <img src="${blueprintPreview(s.bp)}" alt="">
+        <span class="name">${escapeHtml(s.name)}</span>
+        <span class="cost">건물 ${n}개 · ${s.bp.w}×${s.bp.h}</span>`;
+      btn.title = `${s.name}\n건물 ${n}개 · ${s.bp.w}×${s.bp.h}칸\n클릭: 붙여넣기 · 우클릭: 지우기`;
+      btn.addEventListener('click', () => this.input.startPaste(s.bp, s.name));
+      btn.addEventListener('contextmenu', (e) => {
+        e.preventDefault();
+        if (!confirm(`'${s.name}' 청사진을 지울까요?`)) return;
+        removeBlueprint(i);
+        this.renderPalette();
+      });
+      palette.appendChild(btn);
+    });
+    palette.scrollLeft = 0;
+    this.syncScrollbar();
+  }
+}
+
+function escapeHtml(s: string): string {
+  return s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]!);
 }

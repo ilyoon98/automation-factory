@@ -374,17 +374,17 @@ const ITEM_PAINT: Record<ItemShape, (p: Pen, c: { hi: string; mid: string; lo: s
     ], { K: PAL.ink, h: c.hi, m: c.mid, l: c.lo, E: tone(c.mid, 0.45) });
   },
   sheet: (p, c) => {
-    // 귀퉁이가 접힌 종이 한 장, 글줄 두 줄
+    // 끈으로 묶은 종이 다발: 윗장(접힌 귀퉁이, 글줄) + 옆으로 보이는 종이 결(어두운 줄), 세로로 감은 붉은 끈
     stamp(p, 0, 0, [
-      '.KKKK...',
-      '.KhhKK..',
-      '.KhhKmK.',
-      '.KhLLLK.',
-      '.KhmmmK.',
-      '.KhLLmK.',
-      '.KmmmlK.',
+      '.KKKKK..',
+      'KhhhrhKK',
+      'KhLLrhmK',
+      'KmmmrmmK',
+      'KLLLrLLK',
+      'KmmmrmmK',
+      'KLLLrLLK',
       '.KKKKKK.',
-    ], { K: PAL.ink, h: c.hi, m: c.mid, l: c.lo, L: tone(c.lo, -0.25) });
+    ], { K: PAL.ink, h: c.hi, m: c.mid, L: tone(c.lo, -0.15), r: PAL.brick.mid });
   },
 };
 

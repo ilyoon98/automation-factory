@@ -106,6 +106,20 @@ export const TECHS: Tech[] = [
     unlockRecipes: ['steel'],
   },
   {
+    id: 'forestry',
+    icon: '🌲',
+    category: 'resources',
+    name: '산림',
+    description: '벌목기·식목기·제재소. 나무를 베고 다시 심는 끝없는 자원, 통나무 → 목재·숯 (숯은 석탄 대신 땔감·강철)',
+    cost: [
+      { item: 'iron-plate', count: 300 },
+      { item: 'gear', count: 150 },
+    ],
+    requires: ['steel'],
+    unlockBuildings: ['lumberjack', 'planter', 'sawmill'],
+    unlockRecipes: ['saw', 'charcoal', 'steel-charcoal'],
+  },
+  {
     id: 'electronics',
     icon: '🔌',
     category: 'production',

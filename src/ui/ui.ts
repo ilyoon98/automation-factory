@@ -1,5 +1,6 @@
 import {
   BUILDINGS,
+  FOREST,
   GENERATOR_POWER,
   HUB_BASE_POWER,
   HYDRO_POWER,
@@ -19,7 +20,7 @@ import { ENDLESS_BY_ID, ENDLESS_REQUIRES, ENDLESS_TECHS, TECHS, TECH_BY_ID, TECH
 import type { Input } from '../input/input';
 import { lanRoomCheck, type Session } from '../net/session';
 import { VERSION } from '../version';
-import { STATUS_LABEL, type Building, type StationMode, type Status } from '../sim/building';
+import { STATUS_LABEL, countOf, type Building, type StationMode, type Status } from '../sim/building';
 import type { Exec } from '../sim/commands';
 import { DX, DY } from '../sim/dir';
 import { ROUTE_MAX, ROUTE_MIN, VEHICLE_STATUS_LABEL, type RouteStop, type Vehicle, type VehicleStatus } from '../sim/vehicle';
@@ -80,6 +81,8 @@ const STATUS_COLOR: Record<Status, string> = {
   'no-fuel': '#c0392b',
   'no-water': '#c0392b',
   'no-filter': '#c0392b',
+  'no-trees': '#8a7a66',
+  'no-room': '#e8893a',
 };
 
 const VEHICLE_STATUS_COLOR: Record<VehicleStatus, string> = {
@@ -131,6 +134,9 @@ const HAS_STATUS: BuildingType[] = [
   'generator',
   'hydro',
   'unloader',
+  'lumberjack',
+  'planter',
+  'sawmill',
 ];
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -928,7 +934,7 @@ export class UI {
       }
     }
     html += `<div class="dyn"></div><div class="actions">`;
-    if (!['hub', 'generator', 'underground', 'storage', 'road', 'solar', 'hydro', 'charger'].includes(b.type)) {
+    if (!['hub', 'generator', 'underground', 'storage', 'road', 'solar', 'hydro', 'charger', 'planter'].includes(b.type)) {
       html += `<button data-act="rotate">회전 (R)</button>`;
     }
     if (b.type !== 'hub') html += `<button data-act="remove" class="danger">철거 (Del)</button>`;
@@ -992,15 +998,43 @@ export class UI {
       case 'washer':
       case 'separator':
       case 'electric-furnace':
+      case 'sawmill':
         lines.push(`<div class="row"><span>입력</span><b>${buf(b.inBuf)}</b></div>`);
         lines.push(`<div class="row"><span>출력 대기</span><b>${buf(b.outBuf)}</b></div>`);
         lines.push(`<div class="row"><span>전력</span><b>${b.def.power} kW</b></div>`);
         break;
-      case 'generator':
-        lines.push(`<div class="row"><span>연료</span><b>${itemIcon('coal')} ${b.fuel} / 5</b></div>`);
-        lines.push(`<div class="row"><span>출력</span><b>${Math.round(b.load)} / ${GENERATOR_POWER} kW</b></div>`);
-        lines.push(`<p class="muted">허브·태양광·수력으로 모자란 만큼만 석탄을 태워요.</p>`);
+      case 'lumberjack':
+      case 'planter': {
+        // 범위 안 나무: 다 자란 것 · 자라는 것 · 심을 수 있는 빈 땅
+        let grown = 0;
+        let growing = 0;
+        let room = 0;
+        for (const i of b.mineTiles) {
+          if (w.tree[i] >= 1) grown++;
+          else if (w.tree[i] > 0) growing++;
+          else if (w.canPlant(i)) room++;
+        }
+        lines.push(`<div class="row"><span>범위 안 나무</span><b>다 자람 ${grown} · 자라는 중 ${growing}</b></div>`);
+        if (b.type === 'planter') {
+          lines.push(`<div class="row"><span>심을 빈 땅</span><b>${room}칸</b></div>`);
+          lines.push(`<div class="row"><span>묘목</span><b>${itemIcon('sapling')} ${countOf(b.inBuf, 'sapling')} / ${FOREST.planterCap}</b></div>`);
+          lines.push(`<p class="muted">점선 안 빈 땅에 ${FOREST.plant}초에 하나씩 심어요. 나무는 ${FOREST.grow / 60}분이면 다 자라요. 다 캔 광맥 자리에도 심어요.</p>`);
+        } else {
+          lines.push(`<div class="row"><span>출력 대기</span><b>${buf(b.outBuf)}</b></div>`);
+          lines.push(`<p class="muted">점선 안의 다 자란 나무를 ${FOREST.cut}초에 한 그루 베어 통나무 ${FOREST.logs} + 묘목 1을 앞으로 내보내요. 묘목은 식목기로 보내 다시 심어 주세요.</p>`);
+        }
+        lines.push(`<div class="row"><span>전력</span><b>${b.def.power} kW</b></div>`);
         break;
+      }
+      case 'generator': {
+        const charcoal = countOf(b.inBuf, 'charcoal');
+        lines.push(
+          `<div class="row"><span>연료</span><b>${itemIcon('coal')} ${b.fuel}${charcoal ? ` · ${itemIcon('charcoal')} ${charcoal}` : ''} / 5</b></div>`,
+        );
+        lines.push(`<div class="row"><span>출력</span><b>${Math.round(b.load)} / ${GENERATOR_POWER} kW</b></div>`);
+        lines.push(`<p class="muted">허브·태양광·수력으로 모자란 만큼만 태워요. 숯도 땔감으로 받아 먼저 태워요 (숯 1 = 석탄의 2/3).</p>`);
+        break;
+      }
       case 'hydro':
         lines.push(`<div class="row"><span>물</span><b>${itemIcon('water')} ${b.fuel} / 10</b></div>`);
         lines.push(`<div class="row"><span>출력</span><b>${Math.round(b.load)} / ${HYDRO_POWER} kW</b></div>`);
@@ -1547,7 +1581,7 @@ export class UI {
         lines.push(`<span class="muted">100%에 필요: ${st.maxIn.map((i) => `${itemIcon(i.item)}분당 ${fmtNum(i.count)}`).join(' ')}</span>`);
       }
       if (tool && !isBeltType(b.type)) {
-        const rotatable = !['hub', 'generator', 'solar', 'hydro', 'charger'].includes(b.type);
+        const rotatable = !['hub', 'generator', 'solar', 'hydro', 'charger', 'planter'].includes(b.type);
         lines.push(`<span class="muted">클릭: 설정 열기${rotatable ? ' · R: 이 건물 회전' : ''}</span>`);
       }
     }

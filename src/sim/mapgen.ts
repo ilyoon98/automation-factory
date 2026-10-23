@@ -48,8 +48,38 @@ export function generateWorld(seed: number, size = MAP_SIZE): World {
 
   addLakes(w, seed);
   w.createHub(c - 1, c - 1);
+  addForests(w, seed);
   for (const s of STARTING_STOCK) w.stock.set(s.item, s.count);
   return w;
+}
+
+/**
+ * 자연 숲(다 자란 나무 군락)을 만든다. 하나는 허브에서 조금 떨어진 곳(첫 통나무·묘목), 나머지는 멀리.
+ * 광맥·물·건물이 있는 칸은 건너뛴다 (숲이 생기기 전 저장에 더할 때도 쓴다. 랜덤은 칸 모양에만 써서 어디든 같은 숲).
+ */
+export function addForests(w: World, seed: number): void {
+  const rng = createRng((seed ^ 0x7a3e91) >>> 0);
+  const c = Math.floor(w.width / 2);
+  const groves: [number, number][] = [[12 + rng() * 4, 2.8]];
+  for (let k = 0; k < 6; k++) groves.push([24 + rng() * (w.width / 2 - 32), 3 + rng() * 2.5]);
+  for (const [dist, r] of groves) {
+    const a = rng() * Math.PI * 2;
+    const cx = c + Math.cos(a) * dist;
+    const cy = c + Math.sin(a) * dist;
+    const R = Math.ceil(r + 1);
+    for (let dy = -R; dy <= R; dy++) {
+      for (let dx = -R; dx <= R; dx++) {
+        const x = Math.round(cx + dx);
+        const y = Math.round(cy + dy);
+        const d = Math.hypot(dx, dy);
+        if (d > r) continue;
+        // 가장자리로 갈수록 듬성듬성
+        if (rng() > 0.95 - (d / r) * 0.45) continue;
+        if (!w.inBounds(x, y) || !w.canPlant(w.idx(x, y))) continue;
+        w.setTree(x, y, 1);
+      }
+    }
+  }
 }
 
 /**

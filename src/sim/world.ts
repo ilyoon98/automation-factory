@@ -1,6 +1,8 @@
 import {
   BUILDINGS,
+  CHARCOAL_ENERGY,
   COAL_ENERGY,
+  FOREST,
   GENERATOR_POWER,
   HUB_BASE_POWER,
   HYDRO_POWER,
@@ -13,6 +15,7 @@ import {
   UNLOADER_INTERVAL,
   WATER_ENERGY,
   isBeltType,
+  isForestType,
   isMinerType,
   isRecipeMachine,
   type BuildingType,
@@ -31,6 +34,8 @@ export const BELT_SPEED = 1.5;
 /** 같은 컨베이어 위 아이템 최소 간격 (칸). 한 칸에 최대 4개 */
 export const BELT_SPACING = 0.25;
 const MINER_OUT_CAP = 2;
+/** 벌목기가 쌓아 두는 통나무·묘목 (두 그루분) */
+const LUMBER_OUT_CAP = 6;
 /** 기계 입력/출력 버퍼: 레시피 몇 회분까지 쌓아 두는지 */
 const MACHINE_BUFFER_CRAFTS = 2;
 const GENERATOR_FUEL_CAP = 5;
@@ -208,6 +213,14 @@ export class World {
    * 그 위 채굴기가 저장·불러오기 뒤에도 같은 광맥에서 계속 캔다.
    */
   readonly patchOf: Int32Array;
+  /** 칸마다 나무 자람 정도 (0 = 없음, 0~1 = 자라는 중, 1 = 다 자람). 광맥·물·건물 칸에는 없다 */
+  readonly tree: Float64Array;
+  /** 자라는 중인 나무 칸들 */
+  private growing: number[] = [];
+  /** 불러온 저장에 나무 층이 있었는지 (숲이 생기기 전 저장이면 false → 자연 숲을 더한다) */
+  forestsLoaded = true;
+  /** 심어서 다 자란 나무 수 (목표 안내용, 저장하지 않음) */
+  treesGrown = 0;
   private patches = new Map<number, Patch>();
   private patchesDirty = true;
   /**
@@ -265,6 +278,7 @@ export class World {
     this.resAmount = new Float64Array(n);
     this.occ = new Int32Array(n);
     this.patchOf = new Int32Array(n);
+    this.tree = new Float64Array(n);
   }
 
   // ───────────────────────── 조회 ─────────────────────────
@@ -734,6 +748,12 @@ export class World {
     if (replaceBelts && !isBeltType(type)) for (const belt of this.beltsUnder(type, x, y)) this.remove(belt);
     const def = BUILDINGS[type];
     if (!free) for (const c of def.cost) addTo(this.stock, c.item, -c.count);
+    // 나무 위에 지으면 나무를 벤다 (다 자란 나무는 통나무로 돌려준다)
+    for (let dy = 0; dy < def.size; dy++) {
+      for (let dx = 0; dx < def.size; dx++) {
+        if (this.clearTree(this.idx(x + dx, y + dy)) && !free) addTo(this.stock, 'log', FOREST.logs);
+      }
+    }
     const b = new Building(this.nextId++, type, x, y, dir);
     this.attach(b);
     // 광맥이 없는 땅에 놓은 채굴기는 흙을 캔다 (광맥 위에 놓은 건 광맥이 바닥나면 멈춘다)
@@ -796,6 +816,8 @@ export class World {
       for (let dx = 0; dx < b.size; dx++) this.occ[this.idx(b.x + dx, b.y + dy)] = b.id;
     }
     if (isMinerType(b.type)) b.mineTiles = this.mineTilesFor(b.type, b.x, b.y, b.size);
+    // 벌목기·식목기: 둘레 범위 칸들 (건물은 움직이지 않으니 한 번만)
+    if (isForestType(b.type)) b.mineTiles = this.forestTiles(b);
     if (isMinerType(b.type) && b.type !== 'pump') {
       this.ensurePatches();
       b.minePatches = this.patchesUnder(b);
@@ -845,6 +867,8 @@ export class World {
   /** 지금 하는 작업 1회에 걸리는 시간 (초) */
   craftTime(b: Building): number {
     if (isMinerType(b.type)) return 1 / ((b.def.speed ?? 1) * this.boost('endless-mining'));
+    if (b.type === 'lumberjack') return FOREST.cut / this.boost('endless-mining');
+    if (b.type === 'planter') return FOREST.plant;
     return (this.recipeOf(b)?.time ?? 1) / this.boost('endless-crafting');
   }
 
@@ -856,7 +880,8 @@ export class World {
 
   /** 채굴기·제련로·조립기의 최근 생산 현황. 그 밖의 건물이나 레시피가 없으면 null */
   machineStats(b: Building): MachineStats | null {
-    if (!isCrafter(b)) return null;
+    // 식목기는 나무가 자라는 속도에 묶여 있어 가동률이 의미 없다
+    if (!isCrafter(b) || b.type === 'planter') return null;
     let maxOut: ItemStack[];
     let maxIn: ItemStack[] = [];
     if (isMinerType(b.type)) {
@@ -871,6 +896,12 @@ export class World {
           : patchItem;
       if (!item) return null;
       maxOut = [{ item, count: 60 / this.craftTime(b) }];
+    } else if (b.type === 'lumberjack') {
+      const perMin = 60 / this.craftTime(b);
+      maxOut = [
+        { item: 'log', count: FOREST.logs * perMin },
+        { item: 'sapling', count: perMin },
+      ];
     } else {
       const r = this.recipeOf(b);
       if (!r) return null;
@@ -905,8 +936,10 @@ export class World {
     for (const b of this.buildings.values()) {
       if (b.type === 'generator' || b.type === 'hydro') {
         const hydro = b.type === 'hydro';
-        const unit = hydro ? WATER_ENERGY : COAL_ENERGY;
-        const f = flow(hydro ? 'water' : 'coal');
+        // 석탄 발전기는 숯이 들어 있으면 숯을 먼저 태운다
+        const charcoal = !hydro && countOf(b.inBuf, 'charcoal') > 0;
+        const unit = hydro ? WATER_ENERGY : charcoal ? CHARCOAL_ENERGY : COAL_ENERGY;
+        const f = flow(hydro ? 'water' : charcoal ? 'charcoal' : 'coal');
         f.used += (b.load / unit) * 60;
         f.usedMax += ((hydro ? HYDRO_POWER : GENERATOR_POWER) / unit) * 60;
         f.users++;
@@ -1019,6 +1052,75 @@ export class World {
     if (b.held) addTo(this.stock, b.held, b.heldN);
     b.held = null;
     b.heldN = 0;
+  }
+
+  // ───────────────────────── 숲 ─────────────────────────
+
+  /** 나무를 심을 수 있는 칸: 광맥·물·건물·나무가 없는 땅 (다 캔 광맥 자리 포함) */
+  canPlant(i: number): boolean {
+    return !this.resItem[i] && !this.occ[i] && this.tree[i] === 0;
+  }
+
+  /** (x, y)에 나무를 놓는다. growth 1 = 다 자란 나무 (맵 만들 때), 그보다 작으면 거기서부터 자란다 */
+  setTree(x: number, y: number, growth: number): void {
+    const i = this.idx(x, y);
+    const was = this.tree[i];
+    this.tree[i] = growth;
+    if (growth > 0 && growth < 1 && !(was > 0 && was < 1)) this.growing.push(i);
+  }
+
+  /** 칸의 나무를 없앤다 (벨 때·건물을 지을 때). 다 자란 나무였으면 true */
+  private clearTree(i: number): boolean {
+    const g = this.tree[i];
+    if (g <= 0) return false;
+    this.tree[i] = 0;
+    if (g < 1) {
+      const k = this.growing.indexOf(i);
+      if (k >= 0) this.growing.splice(k, 1);
+    }
+    return g >= 1;
+  }
+
+  /** 자라는 나무를 한 틱만큼 키운다 */
+  private growTrees(): void {
+    if (!this.growing.length) return;
+    const step = DT / FOREST.grow;
+    let keep = 0;
+    for (const i of this.growing) {
+      const g = Math.min(1, this.tree[i] + step);
+      this.tree[i] = g;
+      if (g >= 1) this.treesGrown++;
+      else this.growing[keep++] = i;
+    }
+    this.growing.length = keep;
+  }
+
+  /** 벌목기·식목기가 다루는 칸들: 건물 둘레 FOREST.range칸 (건물 칸 빼고, 위에서 아래·왼쪽에서 오른쪽 차례) */
+  forestTiles(b: { x: number; y: number; size: number }): number[] {
+    const r = FOREST.range;
+    const out: number[] = [];
+    for (let y = b.y - r; y < b.y + b.size + r; y++) {
+      for (let x = b.x - r; x < b.x + b.size + r; x++) {
+        if (!this.inBounds(x, y)) continue;
+        if (x >= b.x && x < b.x + b.size && y >= b.y && y < b.y + b.size) continue;
+        out.push(this.idx(x, y));
+      }
+    }
+    return out;
+  }
+
+  /** 저장용: 나무가 있는 칸 [칸 번호, 자람 정도] */
+  private treeList(): [number, number][] {
+    const out: [number, number][] = [];
+    for (let i = 0; i < this.tree.length; i++) if (this.tree[i] > 0) out.push([i, this.tree[i]]);
+    return out;
+  }
+
+  /** 맵의 나무 수 (다 자란 것, 자라는 것) */
+  treeCount(): { grown: number; growing: number } {
+    let grown = 0;
+    for (const g of this.tree) if (g >= 1) grown++;
+    return { grown, growing: this.growing.length };
   }
 
   /** 뽑아낼 칸들: 양수기는 물 칸, 채굴기는 광맥 칸 (물 제외) */
@@ -1326,6 +1428,7 @@ export class World {
       this.incomeBuckets[sec % 60].clear();
     }
 
+    this.growTrees();
     for (const b of this.buildings.values()) if (isCrafter(b)) this.tryStart(b);
     this.updatePower();
     for (const b of this.buildings.values()) {
@@ -1388,6 +1491,30 @@ export class World {
   /** 재료가 있고 출력 공간이 있으면 제작을 시작한다 (재료는 시작할 때 소모). */
   private tryStart(b: Building): void {
     if (b.crafting) return;
+    if (b.type === 'lumberjack') {
+      if (sumOf(b.outBuf) >= LUMBER_OUT_CAP) {
+        b.status = 'output-full';
+        return;
+      }
+      if (!b.mineTiles.some((i) => this.tree[i] >= 1)) {
+        b.status = 'no-trees';
+        return;
+      }
+      b.crafting = true;
+      return;
+    }
+    if (b.type === 'planter') {
+      if (countOf(b.inBuf, 'sapling') <= 0) {
+        b.status = 'no-input';
+        return;
+      }
+      if (!b.mineTiles.some((i) => this.canPlant(i))) {
+        b.status = 'no-room';
+        return;
+      }
+      b.crafting = true;
+      return;
+    }
     if (isMinerType(b.type)) {
       let total = 0;
       for (const n of b.outBuf.values()) total += n;
@@ -1436,7 +1563,7 @@ export class World {
         solar += SOLAR_POWER;
         b.status = 'working';
       } else if (b.type === 'generator' || b.type === 'hydro') {
-        if (b.energy > 0 || b.fuel > 0) (b.type === 'hydro' ? hydros : gens).push(b);
+        if (b.energy > 0 || b.fuel > 0 || countOf(b.inBuf, 'charcoal') > 0) (b.type === 'hydro' ? hydros : gens).push(b);
         else {
           b.load = 0;
           b.status = b.type === 'hydro' ? 'no-water' : 'no-fuel';
@@ -1462,14 +1589,22 @@ export class World {
     this.power = { demand, capacity, supply, satisfaction, charge };
   }
 
-  /** 발전기들이 load(kW)만큼 한 틱 동안 연료(석탄·물)를 쓴다. 연료 1개 = unit kJ */
+  /**
+   * 발전기들이 load(kW)만큼 한 틱 동안 연료(석탄·물)를 쓴다. 연료 1개 = unit kJ.
+   * 석탄 발전기는 숯(inBuf)을 먼저 태운다 (끝없이 얻는 쪽을 먼저, 석탄은 아껴 쓴다)
+   */
   private burn(gens: Building[], load: number, unit: number): void {
     for (const g of gens) {
       g.load = load;
       g.energy -= load * DT;
-      while (g.energy <= 0 && g.fuel > 0) {
-        g.fuel--;
-        g.energy += unit;
+      while (g.energy <= 0) {
+        if (countOf(g.inBuf, 'charcoal') > 0) {
+          addTo(g.inBuf, 'charcoal', -1);
+          g.energy += CHARCOAL_ENERGY;
+        } else if (g.fuel > 0) {
+          g.fuel--;
+          g.energy += unit;
+        } else break;
       }
       if (g.energy < 0) g.energy = 0;
       g.status = load > 0 ? 'working' : 'idle';
@@ -1494,6 +1629,23 @@ export class World {
   }
 
   private finishCraft(b: Building): void {
+    if (b.type === 'lumberjack') {
+      // 범위에서 처음 찾은 다 자란 나무를 벤다 (그사이 누가 베었으면 다음 나무)
+      const i = b.mineTiles.find((t) => this.tree[t] >= 1);
+      if (i === undefined) return;
+      this.clearTree(i);
+      addTo(b.outBuf, 'log', FOREST.logs);
+      addTo(b.outBuf, 'sapling', 1);
+      return;
+    }
+    if (b.type === 'planter') {
+      const i = b.mineTiles.find((t) => this.canPlant(t));
+      if (i === undefined || countOf(b.inBuf, 'sapling') <= 0) return;
+      addTo(b.inBuf, 'sapling', -1);
+      // 아주 조금 자란 상태로 심는다 (0은 "나무 없음")
+      this.setTree(i % this.width, Math.floor(i / this.width), 0.001);
+      return;
+    }
     if (b.mineDirt) {
       addTo(b.outBuf, 'dirt', 1);
       return;
@@ -1673,10 +1825,18 @@ export class World {
       case 'washer':
       case 'separator':
       case 'electric-furnace':
+      case 'sawmill':
         return this.machineAccept(n, item);
+      case 'planter':
+        if (item !== 'sapling' || countOf(n.inBuf, 'sapling') >= FOREST.planterCap) return false;
+        addTo(n.inBuf, 'sapling', 1);
+        return true;
       case 'generator':
-        if (item !== 'coal' || n.fuel >= GENERATOR_FUEL_CAP) return false;
-        n.fuel++;
+        // 석탄은 fuel, 숯은 inBuf에 (태울 때 에너지가 다르다). 합쳐서 GENERATOR_FUEL_CAP개까지
+        if (item !== 'coal' && item !== 'charcoal') return false;
+        if (n.fuel + countOf(n.inBuf, 'charcoal') >= GENERATOR_FUEL_CAP) return false;
+        if (item === 'coal') n.fuel++;
+        else addTo(n.inBuf, 'charcoal', 1);
         return true;
       case 'hydro':
         if (item !== 'water' || n.fuel >= HYDRO_WATER_CAP) return false;
@@ -1703,6 +1863,23 @@ export class World {
     if (!r && n.type !== 'assembler') {
       r = this.autoRecipe(n.type as MachineKind, item);
       if (r) n.recipe = r.id;
+    }
+    // 처음 재료가 여러 레시피에 쓰여서 잘못 골랐을 수 있다 (철판 먼저 → 석탄 강철, 그다음 숯).
+    // 쉬는 중이고, 들고 있는 재료와 새 재료를 다 쓰는 다른 레시피가 있으면 그것으로 바꾼다
+    // (빈 기계는 바꾸지 않는다: 처음 들어온 재료로 정한 레시피가 섞인 컨베이어에서 오락가락하지 않게)
+    const held = [...n.inBuf].filter(([, k]) => k > 0).map(([it]) => it);
+    if (r && n.type !== 'assembler' && !n.crafting && held.length && !r.inputs.some((i) => i.item === item)) {
+      const alt = Object.values(RECIPES).find(
+        (x) =>
+          x.machine === n.type &&
+          this.unlockedRecipes.has(x.id) &&
+          x.inputs.some((i) => i.item === item) &&
+          held.every((h) => x.inputs.some((i) => i.item === h)),
+      );
+      if (alt) {
+        n.recipe = alt.id;
+        r = alt;
+      }
     }
     if (!r) return false;
     const input = r.inputs.find((i) => i.item === item);
@@ -2542,6 +2719,7 @@ export class World {
       stock: [...this.stock],
       researched: [...this.researched],
       ...(this.levels.size ? { levels: [...this.levels] } : {}),
+      trees: this.treeList(),
       guide: [...this.guideDone],
       buildings: [...this.buildings.values()].map((b) => ({
         id: b.id,
@@ -2601,6 +2779,9 @@ export class World {
       w.resItem[i] = ITEM_IDS[itemIdx];
       w.resAmount[i] = a < 0 ? Infinity : a;
     }
+    // 나무 (숲이 생기기 전 저장에는 없다 → 불러오는 쪽에서 자연 숲을 더한다)
+    if (data.trees) for (const [i, g] of data.trees) w.setTree(i % w.width, Math.floor(i / w.width), g);
+    else w.forestsLoaded = false;
     // 광맥 번호 (없으면 지금 칸들로 다시 묶는다)
     for (const [i, p] of data.patches ?? []) w.patchOf[i] = p;
     // 광맥 번호가 저장돼 있을 때만 (번호를 새로 매기면 다른 광맥과 짝이 맞지 않는다)
@@ -2751,6 +2932,7 @@ export class World {
     h.num(this.researched.size);
     for (const [id, n] of this.levels) h.str(id).num(n);
     for (let i = 0; i < this.resAmount.length; i++) if (this.resItem[i]) h.num(i).num(this.resAmount[i]);
+    for (let i = 0; i < this.tree.length; i++) if (this.tree[i] > 0) h.num(i).num(this.tree[i]);
     for (const b of this.buildings.values()) {
       h.num(b.id).str(b.type).num(b.x).num(b.y).num(b.dir).str(b.recipe ?? '').str(b.filter ?? '');
       h.num(b.progress).num(b.crafting ? 1 : 0).num(b.outRR).num(b.mineIdx).num(b.fuel).num(b.energy);
@@ -2870,6 +3052,8 @@ export interface SaveData {
   researched: string[];
   /** 끝없는 연구 [연구 id, 단계] (없으면 모두 0) */
   levels?: [string, number][];
+  /** 나무 [칸 번호, 자람 정도] (없으면 숲이 생기기 전 저장) */
+  trees?: [number, number][];
   /** 이룬 목표 제목들 */
   guide?: string[];
   buildings: SavedBuilding[];
@@ -2946,6 +3130,7 @@ export function acceptsFrom(n: Building, fromSide: Dir): boolean {
     case 'generator':
     case 'hydro':
     case 'storage':
+    case 'planter':
       return true;
     case 'smelter':
     case 'assembler':
@@ -2953,6 +3138,7 @@ export function acceptsFrom(n: Building, fromSide: Dir): boolean {
     case 'washer':
     case 'separator':
     case 'electric-furnace':
+    case 'sawmill':
     case 'merger':
       return fromSide !== n.dir;
     case 'splitter':
@@ -2970,6 +3156,8 @@ export function acceptsFrom(n: Building, fromSide: Dir): boolean {
 function outputsToward(n: Building, d: Dir): boolean {
   if (isSplitterType(n.type)) return d !== opposite(n.dir);
   if (n.type === 'station') return n.stationMode === 'unload' && d === n.dir;
+  // 식목기는 받기만 한다
+  if (n.type === 'planter') return false;
   if (isCrafter(n) || n.type === 'unloader' || n.type === 'merger') return d === n.dir;
   return false;
 }
@@ -3030,7 +3218,7 @@ function firstItem(m: Map<ItemId, number>): ItemId | null {
 }
 
 function isCrafter(b: Building): boolean {
-  return isMinerType(b.type) || isRecipeMachine(b.type);
+  return isMinerType(b.type) || isRecipeMachine(b.type) || isForestType(b.type);
 }
 
 /** 건물 테두리 바깥 칸들과, 건물에서 그 칸으로 향하는 방향 */

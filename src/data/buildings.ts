@@ -23,11 +23,14 @@ export type BuildingType =
   | 'road'
   | 'station'
   | 'charger'
+  | 'lumberjack'
+  | 'planter'
+  | 'sawmill'
   | 'solar'
   | 'hydro'
   | 'electric-furnace';
 
-export type Category = 'logistics' | 'production' | 'power' | 'storage' | 'transport';
+export type Category = 'logistics' | 'production' | 'power' | 'storage' | 'transport' | 'forest';
 
 /**
  * 하단 툴바 카테고리. key로 탭을 바꾸고, 숫자 1~9로 items의 순서대로 고른다.
@@ -49,6 +52,7 @@ export const CATEGORIES: { id: Category; name: string; key: string; items: Build
   { id: 'power', name: '전력', key: 'c', items: ['generator', 'solar', 'hydro'] },
   { id: 'storage', name: '보관', key: 'v', items: ['storage', 'unloader'] },
   { id: 'transport', name: '운송', key: 'b', items: ['road', 'station', 'charger'] },
+  { id: 'forest', name: '숲', key: 'n', items: ['lumberjack', 'planter', 'sawmill'] },
 ];
 
 export interface BuildingDef {
@@ -370,6 +374,47 @@ export const BUILDINGS: Record<BuildingType, BuildingDef> = {
     placeable: true,
   },
 
+  // ───── 숲·나무 ─────
+  lumberjack: {
+    type: 'lumberjack',
+    name: '벌목기',
+    size: 2,
+    cost: [
+      { item: 'iron-plate', count: 20 },
+      { item: 'gear', count: 10 },
+    ],
+    power: 50,
+    color: '#6f8f3a',
+    description: '둘레 3칸(8×8) 안의 다 자란 나무를 2초에 한 그루 베어 노란 화살표(앞)로 통나무 2 + 묘목 1을 내보낸다.',
+    placeable: true,
+  },
+  planter: {
+    type: 'planter',
+    name: '식목기',
+    size: 2,
+    cost: [
+      { item: 'iron-plate', count: 15 },
+      { item: 'gear', count: 10 },
+    ],
+    power: 30,
+    color: '#5fae5a',
+    description: '컨베이어로 묘목을 받아 둘레 3칸(8×8) 안의 빈 땅에 1초에 하나 심는다. 다 캔 광맥 자리에도 심는다. 나무는 2분이면 다 자란다. 아무 면으로나 받는다.',
+    placeable: true,
+  },
+  sawmill: {
+    type: 'sawmill',
+    name: '제재소',
+    size: 2,
+    cost: [
+      { item: 'iron-plate', count: 20 },
+      { item: 'gear', count: 10 },
+    ],
+    power: 90,
+    color: '#b08040',
+    description: '통나무를 목재 2 + 톱밥 1로 켠다. 노란 화살표(앞)로 내보내고, 나머지 세 면으로 받는다.',
+    placeable: true,
+  },
+
   // ───── 석탄 독립: 석탄 없이 전력과 강철 ─────
   solar: {
     type: 'solar',
@@ -465,12 +510,31 @@ export const crossesRoad = (tool: BuildingType, there: BuildingType) =>
 /** 땅(광맥·흙·물)에서 뽑아내는 건물 */
 export const isMinerType = (t: BuildingType) => t === 'miner' || t === 'miner-2' || t === 'pump';
 /** 레시피로 재료를 결과물로 바꾸는 건물 */
-export const RECIPE_MACHINES: BuildingType[] = ['smelter', 'assembler', 'crusher', 'washer', 'separator', 'electric-furnace'];
+export const RECIPE_MACHINES: BuildingType[] = ['smelter', 'assembler', 'crusher', 'washer', 'separator', 'electric-furnace', 'sawmill'];
 export const isRecipeMachine = (t: BuildingType) => RECIPE_MACHINES.includes(t);
+/** 둘레의 나무를 다루는 건물 (벌목기·식목기) */
+export const isForestType = (t: BuildingType) => t === 'lumberjack' || t === 'planter';
+
+/** 숲·나무 */
+export const FOREST = {
+  /** 묘목이 다 자란 나무가 되는 시간 (초) */
+  grow: 120,
+  /** 벌목기·식목기가 다루는 범위: 건물 둘레 이만큼 (2×2 + 둘레 3칸 = 8×8) */
+  range: 3,
+  /** 벌목기가 한 그루 베는 시간, 식목기가 하나 심는 시간 (초) */
+  cut: 2,
+  plant: 1,
+  /** 다 자란 나무 한 그루 = 통나무 몇 개 (벌목기는 묘목 1도) */
+  logs: 2,
+  /** 식목기에 쌓아 두는 묘목 수 */
+  planterCap: 5,
+};
 
 export const HUB_BASE_POWER = 300;
 export const GENERATOR_POWER = 900;
 export const COAL_ENERGY = 4000;
+/** 숯 1개의 에너지 (석탄의 2/3쯤): 끝없이 얻지만 약한 땔감 */
+export const CHARCOAL_ENERGY = 2500;
 /** 태양광 패널 한 대 (늘 이만큼) */
 export const SOLAR_POWER = 100;
 /** 수력 발전기 한 대 최대 출력과 물 1개의 에너지 (kJ). 최대로 돌면 초당 물 2개 = 양수기 1대 */

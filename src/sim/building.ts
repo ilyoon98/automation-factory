@@ -12,7 +12,9 @@ export type Status =
   | 'depleted'
   | 'no-fuel'
   | 'no-water'
-  | 'no-filter';
+  | 'no-filter'
+  | 'no-trees'
+  | 'no-room';
 
 export const STATUS_LABEL: Record<Status, string> = {
   idle: '대기',
@@ -25,6 +27,8 @@ export const STATUS_LABEL: Record<Status, string> = {
   'no-fuel': '연료 없음',
   'no-water': '물 없음',
   'no-filter': '아이템 선택 안 함',
+  'no-trees': '다 자란 나무 없음',
+  'no-room': '심을 땅 없음',
 };
 
 export type StationMode = 'load' | 'unload';

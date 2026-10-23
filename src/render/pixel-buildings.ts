@@ -14,6 +14,9 @@ const STONE: Ramp = { hi: '#ddd3bf', mid: '#b5a990', lo: '#877b66' };
 const DARK_WOOD: Ramp = { hi: PAL.wood.lo, mid: PAL.wood.dark, lo: '#3f2712' };
 const HOLE = '#2a1a10';
 const CREAM = '#f3e7c9';
+/** 나뭇잎 (pixel.ts의 TREE_LEAF와 같은 색) */
+const TREE_LEAF_HI = '#86c06a';
+const TREE_LEAF_MID = '#5f9a4e';
 const TAU = Math.PI * 2;
 
 /**
@@ -353,6 +356,66 @@ define('crusher', 32, 32, 5, (p, f) => {
   p.rect(17, 20, 9, 4, PAL.ink);
   p.rect(18, 21, 7, 3, HOLE);
   if (f) p.px(19 + (f % 4), 22, STONE.mid);
+  for (const x of [15, 27]) bolt(p, x, 21, IRON);
+});
+
+// ───── 숲: 벌목기·식목기·제재소 ─────
+
+/** 둥근 톱날 (f로 돈다) */
+function sawBlade(p: Pen, cx: number, cy: number, r: number, f: number): void {
+  const a = (f ? f - 1 : 0) * (TAU / 16);
+  shapeAround(p, cx, cy, r, (x, y) => {
+    const dx = x - cx;
+    const dy = y - cy;
+    const d = Math.hypot(dx, dy);
+    if (d > r) return null;
+    // 톱니: 바깥 1픽셀은 각도에 따라 들쭉날쭉
+    if (d > r - 1.2 && Math.floor(((Math.atan2(dy, dx) - a + TAU) % TAU) / (TAU / 12)) % 2) return null;
+    return d < 1.6 ? PAL.metal.dark : lit(dx, dy, { hi: PAL.metal.hi, mid: PAL.metal.mid, lo: PAL.metal.lo });
+  });
+}
+
+define('lumberjack', 32, 32, 5, (p, f) => {
+  machine(p, ramp('#7a9a48'), DARK_WOOD);
+  // 윗면: 통나무 받침대와 톱날
+  p.rect(4, 12, 24, 5, PAL.ink);
+  p.rect(5, 13, 22, 3, PAL.wood.mid);
+  p.rect(5, 13, 22, 1, PAL.wood.hi);
+  for (const x of [9, 16, 23]) p.rect(x, 13, 1, 3, PAL.wood.lo);
+  sawBlade(p, 16, 8, 5.5, f);
+  // 앞면 오른쪽: 나무껍질 무늬
+  for (let x = 16; x < 28; x += 3) p.rect(x, 21, 2, 6, DARK_WOOD.lo);
+});
+
+define('planter', 32, 32, 5, (p, f) => {
+  machine(p, ramp('#8a6a44'), DARK_WOOD);
+  // 윗면: 흙 고랑 + 줄지은 새싹
+  p.rect(4, 3, 24, 15, PAL.ink);
+  p.rect(5, 4, 22, 13, '#6a4a2c');
+  for (let y = 6; y < 16; y += 4) {
+    p.rect(5, y, 22, 1, '#82603a');
+    for (let x = 7; x < 26; x += 5) {
+      const up = f && (x + y + f) % 3 === 0 ? 1 : 0;
+      p.px(x, y - 1 - up, TREE_LEAF_MID);
+      p.px(x + 1, y - 2 - up, TREE_LEAF_HI);
+    }
+  }
+  // 앞면 오른쪽: 묘목 통
+  p.rect(16, 20, 11, 7, PAL.ink);
+  p.rect(17, 21, 9, 5, PAL.wood.mid);
+  p.rect(17, 21, 9, 1, PAL.wood.hi);
+});
+
+define('sawmill', 32, 32, 5, (p, f) => {
+  machine(p, PAL.wood, DARK_WOOD);
+  // 윗면: 작업대 위 판자와 큰 톱날
+  p.rect(3, 9, 26, 7, PAL.ink);
+  p.rect(4, 10, 24, 5, '#e3b06c');
+  p.rect(4, 10, 24, 1, '#f2cf96');
+  for (const x of [10, 22]) p.rect(x, 10, 1, 5, PAL.wood.lo);
+  sawBlade(p, 16, 9, 6.5, f);
+  // 톱밥
+  if (f) for (let k = 0; k < 3; k++) p.px(8 + (hash(f * 7 + k) % 16), 16, '#d9b98a');
   for (const x of [15, 27]) bolt(p, x, 21, IRON);
 });
 

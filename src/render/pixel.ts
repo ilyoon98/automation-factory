@@ -318,6 +318,37 @@ const ITEM_PAINT: Record<ItemShape, (p: Pen, c: { hi: string; mid: string; lo: s
     p.rect(3, 6, 3, 1, c.lo);
     p.px(3, 4, c.hi);
   },
+  sapling: (p, c) => {
+    // 흙 한 줌에서 돋은 새싹 (잎 두 장)
+    p.rect(1, 6, 6, 2, PAL.ink);
+    p.rect(2, 6, 4, 1, PAL.wood.mid);
+    p.rect(3, 3, 1, 3, PAL.ink);
+    p.rect(1, 1, 3, 2, PAL.ink);
+    p.rect(4, 2, 3, 2, PAL.ink);
+    p.rect(2, 1, 1, 1, c.hi);
+    p.rect(1, 2, 2, 1, c.mid);
+    p.rect(5, 2, 2, 1, c.mid);
+    p.px(4, 3, c.lo);
+  },
+  log: (p, c) => {
+    // 옆으로 누운 통나무, 오른쪽 끝에 나이테
+    p.rect(0, 2, 7, 5, PAL.ink);
+    p.rect(1, 3, 5, 3, c.mid);
+    p.rect(1, 3, 5, 1, c.hi);
+    p.rect(1, 5, 5, 1, c.lo);
+    p.rect(5, 1, 3, 7, PAL.ink);
+    p.rect(6, 2, 1, 5, '#e3b06c');
+    p.px(6, 4, c.lo);
+  },
+  plank: (p, c) => {
+    // 판자 두 장
+    p.rect(0, 1, 8, 3, PAL.ink);
+    p.rect(0, 4, 8, 3, PAL.ink);
+    p.rect(1, 2, 6, 1, c.mid);
+    p.rect(1, 5, 6, 1, c.mid);
+    p.px(2, 2, c.hi);
+    p.px(5, 5, c.lo);
+  },
 };
 
 for (const item of ITEM_IDS) {
@@ -409,6 +440,44 @@ for (let v = 0; v < 4; v++) {
     p.px((h >>> 20) & 15, (h >>> 24) & 15, PAL.water.dark);
   });
 }
+
+// ───────────────────────── 나무 (16×16) ─────────────────────────
+
+/** 나뭇잎 색 (지도·멀리서 볼 때도) */
+export const TREE_LEAF = { hi: '#86c06a', mid: '#5f9a4e', lo: '#3f6f3c' };
+
+/** 둥근 나뭇잎 덩어리: 잉크 테두리, 위·왼쪽 밝게, 아래 그늘 */
+function canopy(p: Pen, cx: number, cy: number, r: number): void {
+  p.disc(cx, cy, r + 1, PAL.ink);
+  p.disc(cx, cy, r, TREE_LEAF.mid);
+  p.disc(cx + 0.8, cy + 1.2, r - 1.2, TREE_LEAF.lo);
+  p.disc(cx - 0.4, cy - 0.2, r - 1.6, TREE_LEAF.mid);
+  p.disc(cx - r * 0.35, cy - r * 0.35, Math.max(1, r * 0.35), TREE_LEAF.hi);
+}
+
+/** tree:0 새싹 · tree:1 어린 나무 · tree:2 다 자란 나무 (2프레임: 바람에 윗부분이 한 픽셀 흔들림) */
+define('tree:0', 16, 16, 1, (p) => {
+  p.rect(5, 11, 6, 2, PAL.shadow);
+  p.rect(7, 8, 1, 4, PAL.ink);
+  p.rect(5, 6, 3, 2, PAL.ink);
+  p.rect(8, 5, 3, 2, PAL.ink);
+  p.px(6, 6, TREE_LEAF.hi);
+  p.px(9, 5, TREE_LEAF.mid);
+  p.px(9, 6, TREE_LEAF.lo);
+});
+define('tree:1', 16, 16, 1, (p) => {
+  p.rect(4, 12, 9, 2, PAL.shadow);
+  p.rect(7, 9, 2, 4, PAL.ink);
+  p.rect(7, 9, 1, 3, PAL.wood.lo);
+  canopy(p, 8, 7, 3.5);
+});
+define('tree:2', 16, 16, 2, (p, f) => {
+  p.rect(2, 13, 13, 2, PAL.shadow);
+  p.rect(6, 10, 4, 5, PAL.ink);
+  p.rect(7, 10, 2, 4, PAL.wood.lo);
+  p.px(7, 10, PAL.wood.mid);
+  canopy(p, 8 + (f ? 0.5 : 0), 6.5, 5.6);
+});
 
 // ───────────────────────── 컨베이어 (16×16, 오른쪽 기준) ─────────────────────────
 

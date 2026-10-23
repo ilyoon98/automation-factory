@@ -1,4 +1,4 @@
-import { BUILDINGS, CATEGORIES, TRUCK, isMinerType, isRecipeMachine, type BuildingType } from '../data/buildings';
+import { BUILDINGS, CATEGORIES, FOREST, TRUCK, isMinerType, isRecipeMachine, type BuildingType } from '../data/buildings';
 import { ITEMS, type ItemId } from '../data/items';
 import { RECIPES, recipesFor, type MachineKind, type Recipe } from '../data/recipes';
 import { TECHS } from '../data/tech';
@@ -88,7 +88,9 @@ const SOURCES: { item: DepositId; building: BuildingType; note: string; dirt?: b
 /** 레시피가 아닌 쓰임새: [아이템] ─건물─▶ 결과 */
 const OTHER_USES: { item: ItemId; building: BuildingType; result: string; note: string }[] = [
   { item: 'coal', building: 'generator', result: '⚡ 전력 최대 900kW', note: '1개 = 4000kJ' },
+  { item: 'charcoal', building: 'generator', result: '⚡ 전력 최대 900kW', note: '1개 = 2500kJ<br>석탄보다 먼저 태움' },
   { item: 'water', building: 'hydro', result: '⚡ 전력 최대 600kW', note: '1개 = 300kJ' },
+  { item: 'sapling', building: 'planter', result: '🌱 빈 땅에 심기', note: '2분이면 다 자람' },
 ];
 
 /** 전기를 만드는 건물 */
@@ -124,6 +126,10 @@ function portText(b: BuildingType): string {
       return '아이템은 지나가지 않아요. 트럭만 다녀요.';
     case 'charger':
       return '아이템은 받지도 내보내지도 않아요. 바로 옆 도로에 선 트럭을 공장 전력으로 충전해요.';
+    case 'lumberjack':
+      return '노란 화살표(앞면)로 통나무·묘목을 내보내요. 받는 곳은 없어요. R로 돌릴 수 있어요.';
+    case 'planter':
+      return '아무 면으로나 묘목을 받아요. 내보내는 것은 없어요.';
     default:
       return '';
   }
@@ -135,6 +141,7 @@ const ITEM_GROUPS: { name: string; items: ItemId[] }[] = [
   { name: '금속 · 부품', items: ['iron-plate', 'copper-plate', 'gear', 'copper-wire', 'steel', 'circuit'] },
   { name: '흙 정제', items: ['gravel', 'sand', 'mineral-dust', 'iron-concentrate', 'copper-concentrate'] },
   { name: '부산물 · 건설 재료', items: ['mud', 'slag', 'brick', 'concrete'] },
+  { name: '숲', items: ['sapling', 'log', 'wood', 'sawdust', 'charcoal'] },
 ];
 
 const fmt = (n: number) => {
@@ -352,6 +359,19 @@ export class Codex {
       </div>`;
 
     const sourceRows = SOURCES.filter((s) => s.item === item).map((s) => this.sourceRow(w, s, item));
+    // 통나무·묘목: 다 자란 나무를 벌목기로 (광맥이 아니라 다시 심어 키우는 숲)
+    if (item === 'log' || item === 'sapling') {
+      const n = item === 'log' ? FOREST.logs : 1;
+      sourceRows.push(
+        flowRow({
+          left: plain('🌲 다 자란 나무'),
+          mid: machine('lumberjack'),
+          right: chip(item, `×${n}`, item),
+          tag: `분당 ${fmt((60 / FOREST.cut) * n)}<br>다시 심으면 끝없음`,
+          cls: w.unlockedBuildings.has('lumberjack') ? '' : 'locked',
+        }),
+      );
+    }
     const otherUseRows = OTHER_USES.filter((s) => s.item === item).map((s) =>
       flowRow({ left: chip(item, '×1', item), mid: machine(s.building), right: plain(s.result), tag: s.note }),
     );

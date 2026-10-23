@@ -1,7 +1,7 @@
 import type { ItemId, ItemStack } from './items';
 
 /** 레시피를 쓰는 기계 */
-export type MachineKind = 'smelter' | 'assembler' | 'crusher' | 'washer' | 'separator' | 'electric-furnace';
+export type MachineKind = 'smelter' | 'assembler' | 'crusher' | 'washer' | 'separator' | 'electric-furnace' | 'sawmill';
 
 export interface Recipe {
   id: string;
@@ -182,6 +182,38 @@ export const RECIPES: Record<string, Recipe> = {
     machine: 'electric-furnace',
     time: 5,
     inputs: [{ item: 'iron-plate', count: 2 }],
+    outputs: [{ item: 'steel', count: 1 }],
+  },
+
+  // ───── 숲·나무 ─────
+  saw: {
+    id: 'saw',
+    name: '목재',
+    machine: 'sawmill',
+    time: 2,
+    inputs: [{ item: 'log', count: 1 }],
+    outputs: [
+      { item: 'wood', count: 2 },
+      { item: 'sawdust', count: 1 },
+    ],
+  },
+  charcoal: {
+    id: 'charcoal',
+    name: '숯',
+    machine: 'smelter',
+    time: 3,
+    inputs: [{ item: 'log', count: 2 }],
+    outputs: [{ item: 'charcoal', count: 1 }],
+  },
+  'steel-charcoal': {
+    id: 'steel-charcoal',
+    name: '강철 (숯)',
+    machine: 'smelter',
+    time: 5,
+    inputs: [
+      { item: 'iron-plate', count: 2 },
+      { item: 'charcoal', count: 1 },
+    ],
     outputs: [{ item: 'steel', count: 1 }],
   },
 };

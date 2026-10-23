@@ -1,9 +1,11 @@
 import {
   BUILDINGS,
+  FOREST,
   STATION_CAPACITY,
   TRUCK,
   UNDERGROUND_MAX_GAP,
   isBeltType,
+  isForestType,
   type BuildingType,
 } from '../data/buildings';
 import { ITEMS, type ItemId } from '../data/items';
@@ -16,7 +18,7 @@ import { DX, DY, type Dir } from '../sim/dir';
 import { BELT_SPEED, World, isLineType, patchAlert, storageBounds } from '../sim/world';
 import type { Camera } from './camera';
 import { roundRect } from './draw-item';
-import { NUM_ADVANCE, ORE_GROUND, PAL, TILE, hash, loadSpriteOverrides, sprite, spriteHalf, tone } from './pixel';
+import { NUM_ADVANCE, ORE_GROUND, PAL, TILE, TREE_LEAF, hash, loadSpriteOverrides, sprite, spriteHalf, tone } from './pixel';
 import { MACHINE } from './pixel-buildings';
 
 /** 렌더러가 입력 상태에서 필요로 하는 것 */
@@ -61,6 +63,8 @@ const HAS_PORTS: BuildingType[] = [
   'unloader',
   'station',
   'electric-furnace',
+  'lumberjack',
+  'sawmill',
 ];
 
 /** 정류장 종류별 색: 싣기 초록, 내리기 주황 */
@@ -292,6 +296,7 @@ export class Renderer {
       if (b) {
         const [sx, sy] = cam.worldToScreen(b.x, b.y);
         this.outline(sx, sy, b.size * z, b.size * z, SELECT);
+        if (isForestType(b.type)) this.drawForestRange(b.x, b.y, b.size);
       }
     }
     // 고른 트럭: 오가는 두 정류장과 가는 길
@@ -640,6 +645,14 @@ export class Renderer {
     }
   }
 
+  /** 벌목기·식목기가 다루는 범위 (건물 둘레 FOREST.range칸) 점선 */
+  private drawForestRange(x: number, y: number, size: number): void {
+    const r = FOREST.range;
+    const w = (size + 2 * r) * this.cam.zoom;
+    const [sx, sy] = this.cam.worldToScreen(x - r, y - r);
+    this.outline(sx, sy, w, w, TREE_LEAF.hi, true);
+  }
+
   /** 2겹 테두리 (안쪽 색 + 바깥 잉크). dash면 점선 */
   private outline(sx: number, sy: number, w: number, h: number, color: string, dash = false): void {
     const ctx = this.ctx;
@@ -679,6 +692,18 @@ export class Renderer {
         const h = hash(i);
         const [sx, sy] = cam.worldToScreen(x, y);
         this.blit(`water:${h & 3}`, Math.floor(t + ((h >>> 4) & 3)), sx, sy);
+      }
+    }
+    // 나무: 자람 정도에 따라 새싹·어린 나무·나무. 다 자란 나무는 바람에 살짝 흔들린다
+    const sway = world.time * 0.7;
+    for (let y = y0; y <= y1; y++) {
+      for (let x = x0; x <= x1; x++) {
+        const i = world.idx(x, y);
+        const g = world.tree[i];
+        if (g <= 0) continue;
+        const stage = treeStage(g);
+        const [sx, sy] = cam.worldToScreen(x, y);
+        this.blit(`tree:${stage}`, stage === 2 ? Math.floor(sway + (hash(i) & 7)) % 2 : 0, sx, sy);
       }
     }
   }
@@ -910,6 +935,18 @@ export class Renderer {
       case 'charger':
         this.blit('charger', 0, sx, sy);
         break;
+      case 'lumberjack':
+        this.blit('lumberjack', anim(working), sx, sy);
+        plate('log');
+        break;
+      case 'planter':
+        this.blit('planter', anim(working, 6), sx, sy);
+        plate('sapling');
+        break;
+      case 'sawmill':
+        this.blit('sawmill', anim(working, 12), sx, sy);
+        plate(world.recipeOf(b)?.outputs[0].item);
+        break;
     }
 
     if (HAS_PORTS.includes(b.type)) this.drawPorts(b.type, b.dir, sx, sy, b.stationMode);
@@ -1140,6 +1177,7 @@ export class Renderer {
       ctx.fillRect(sx, sy, w, w);
     }
     this.outline(sx, sy, w, w, ok ? '#7fd17a' : PAL.red);
+    if (isForestType(tool)) this.drawForestRange(ox, oy, def.size);
     const shown = !setting ? null : tool === 'sorter' || tool === 'unloader' ? (setting as ItemId) : RECIPES[setting]?.outputs[0].item;
     if (shown) {
       if (def.size === 1) this.drawStack(shown, ox + 0.5, oy + 6 / TILE);
@@ -1431,10 +1469,16 @@ function groundSprite(world: World, i: number): string {
   return `ground:${h & 7}`;
 }
 
-/** 바닥 칸 그림이 바뀌었는지 볼 번호 */
+/** 나무 그림 단계: 0 새싹, 1 어린 나무, 2 다 자란 나무 */
+function treeStage(g: number): number {
+  return g >= 1 ? 2 : g >= 0.35 ? 1 : 0;
+}
+
+/** 바닥 칸 그림이 바뀌었는지 볼 번호 (멀리서 볼 때 나무 색도 바닥에 굽는다) */
 function groundCode(world: World, i: number): number {
   const item = world.resItem[i];
   if (item === 'water') return 99;
+  if (world.tree[i] > 0) return 200 + treeStage(world.tree[i]);
   const k = item ? ORE_TILES.indexOf(item) : -1;
   return k < 0 ? 0 : 1 + k * 4 + richness(world.resAmount[i]);
 }
@@ -1443,6 +1487,8 @@ function groundCode(world: World, i: number): number {
 function lodColor(world: World, i: number): string {
   const item = world.resItem[i];
   if (item === 'water') return PAL.water.lo;
+  const g = world.tree[i];
+  if (g > 0) return treeStage(g) === 2 ? TREE_LEAF.lo : TREE_LEAF.hi;
   const base = item ? ORE_GROUND[item] : undefined;
   if (!base) return PAL.ground[0];
   const rich = richness(world.resAmount[i]);

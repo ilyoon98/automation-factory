@@ -87,6 +87,23 @@ export const GUIDE: GuideStep[] = [
     done: (w) => [...w.vehicles.values()].some((v) => v.tripStart >= 0),
   },
 
+  // ───── 숲·나무 ─────
+  {
+    title: '연구: 산림',
+    hint: '맵의 초록 숲은 베고 다시 심으면 끝이 없는 자원이에요. 연구 창(T) 자원 탭에서 산림을 연구하세요 (철판 300, 기어 150).',
+    done: (w) => w.researched.has('forestry'),
+  },
+  {
+    title: '나무 베기',
+    hint: '숲 탭(N)에서 벌목기(1)를 숲 가운데에 놓으세요. 점선 안의 다 자란 나무를 베어 앞(노란 화살표)으로 통나무와 묘목을 내보내요. 통나무는 제재소에서 목재로, 제련로에서 숯(석탄 대신 땔감·강철)으로.',
+    done: (w) => has(w, (t) => t === 'lumberjack') && (w.stockOf('log') > 0 || w.incomePerMinute('log') > 0),
+  },
+  {
+    title: '나무 심기',
+    hint: '식목기(N 2)를 빈 땅에 놓고 벌목기에서 나온 묘목을 컨베이어로 넣으세요. 점선 안 빈 땅에 심고, 2분이면 다 자라요. 벌목기와 범위를 겹치게 두면 숲이 끝없이 돌아가요.',
+    done: (w) => w.treesGrown > 0,
+  },
+
   // ───── M7: 광맥 독립 ─────
   {
     title: '연구: 흙 정제',

@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { STATION_CAPACITY, TRUCK } from '../data/buildings';
+import { CHARCOAL_ENERGY, COAL_ENERGY, FOREST, STATION_CAPACITY, TRUCK } from '../data/buildings';
 import { ENDLESS_BY_ID, TECHS, endlessCost } from '../data/tech';
 import { copyArea, pasteBlueprint } from './blueprint';
+import { countOf } from './building';
 import { applyCommand } from './commands';
 import type { Dir } from './dir';
 import { STARTING_STOCK, generateWorld } from './mapgen';
@@ -2087,6 +2088,131 @@ describe('공장 통계', () => {
     const f = w.factoryFlows().get('coal')!;
     expect(f.users).toBe(1);
     expect(f.usedMax).toBeCloseTo((900 / 4000) * 60);
+  });
+});
+
+describe('숲·나무', () => {
+  /** 비공개 함수를 테스트에서 부르기 (재료 넣기·태우기) */
+  const priv = (w: World) =>
+    w as unknown as {
+      machineAccept(b: unknown, item: string): boolean;
+      acceptItem(n: unknown, item: string, src: unknown, fromSide: number): boolean;
+      burn(gens: unknown[], load: number, unit: number): void;
+    };
+
+  it('새 맵에는 자연 숲(다 자란 나무)이 있고, 광맥·물·건물 칸에는 없다. 하나는 허브 가까이', () => {
+    const w = generateWorld(7);
+    expect(w.treeCount().grown).toBeGreaterThan(20);
+    const c = w.width / 2;
+    let near = Infinity;
+    for (let i = 0; i < w.tree.length; i++) {
+      if (w.tree[i] <= 0) continue;
+      expect(w.resItem[i]).toBeNull();
+      expect(w.occ[i]).toBe(0);
+      near = Math.min(near, Math.hypot((i % w.width) - c, Math.floor(i / w.width) - c));
+    }
+    expect(near).toBeLessThan(20);
+  });
+
+  it('벌목기: 범위(8×8) 안의 다 자란 나무를 2초에 한 그루 베어 통나무 2 + 묘목 1. 다 베면 "다 자란 나무 없음"', () => {
+    const w = makeWorld();
+    w.setTree(13, 13, 1); // 범위 안 (12~18)
+    w.setTree(25, 25, 1); // 범위 밖
+    const lj = w.place('lumberjack', 15, 15, 1)!;
+    run(w, FOREST.cut + 0.1);
+    expect(lj.outBuf.get('log')).toBe(FOREST.logs);
+    expect(lj.outBuf.get('sapling')).toBe(1);
+    expect(w.tree[w.idx(13, 13)]).toBe(0);
+    expect(w.tree[w.idx(25, 25)]).toBe(1);
+    run(w, 1);
+    expect(lj.status).toBe('no-trees');
+  });
+
+  it('식목기: 묘목을 받아 범위 안 빈 땅(광맥 칸은 빼고)에 1초에 하나 심고, 2분이면 다 자란다', () => {
+    const w = makeWorld();
+    const p = w.place('planter', 20, 20, 0)!;
+    w.setResource(17, 17, 'iron-ore', 100); // 범위 첫 칸은 광맥 → 건너뛴다
+    for (let k = 0; k < 3; k++) expect(priv(w).acceptItem(p, 'sapling', p, 0)).toBe(true);
+    run(w, 3 * FOREST.plant + 0.1);
+    expect(w.treeCount().growing).toBe(3);
+    expect(w.tree[w.idx(17, 17)]).toBe(0);
+    expect(w.tree[w.idx(18, 17)]).toBeGreaterThan(0);
+    expect(countOf(p.inBuf, 'sapling')).toBe(0);
+    run(w, 0.5);
+    expect(p.status).toBe('no-input');
+    run(w, FOREST.grow);
+    expect(w.treeCount()).toEqual({ grown: 3, growing: 0 });
+    expect(w.treesGrown).toBe(3);
+  });
+
+  it('나무 위에 지으면 나무를 벤다 (다 자란 나무는 통나무 2를 허브로, 자라던 나무는 그냥 없어진다)', () => {
+    const w = makeWorld();
+    w.setTree(5, 5, 1);
+    w.setTree(6, 5, 0.5);
+    w.place('belt', 5, 5, 1);
+    w.place('belt', 6, 5, 1);
+    expect(w.stockOf('log')).toBe(FOREST.logs);
+    expect(w.treeCount()).toEqual({ grown: 0, growing: 0 });
+  });
+
+  it('제재소: 통나무 1 → 목재 2 + 톱밥 1', () => {
+    const w = makeWorld();
+    const s = w.place('sawmill', 20, 20, 0)!;
+    expect(priv(w).machineAccept(s, 'log')).toBe(true);
+    expect(s.recipe).toBe('saw');
+    run(w, 2.1);
+    expect(s.outBuf.get('wood')).toBe(2);
+    expect(s.outBuf.get('sawdust')).toBe(1);
+  });
+
+  it('제련로: 통나무 → 숯. 철판이 먼저 와서 석탄 강철로 정해졌어도 숯이 오면 숯 강철로 바꾼다 (빈 제련로는 그대로)', () => {
+    const w = makeWorld();
+    const a = w.place('smelter', 20, 20, 0)!;
+    expect(priv(w).machineAccept(a, 'log')).toBe(true);
+    expect(a.recipe).toBe('charcoal');
+    const s = w.place('smelter', 24, 20, 0)!;
+    expect(priv(w).machineAccept(s, 'iron-plate')).toBe(true);
+    expect(s.recipe).toBe('steel');
+    expect(priv(w).machineAccept(s, 'charcoal')).toBe(true);
+    expect(s.recipe).toBe('steel-charcoal');
+    expect(priv(w).machineAccept(s, 'coal')).toBe(false);
+    // 비어 있는 제련로는 처음 정한 레시피 그대로 (다른 광석을 받지 않는다)
+    const e = w.place('smelter', 24, 24, 0)!;
+    expect(priv(w).machineAccept(e, 'iron-ore')).toBe(true);
+    e.inBuf.clear();
+    expect(priv(w).machineAccept(e, 'copper-ore')).toBe(false);
+    expect(e.recipe).toBe('iron-plate');
+  });
+
+  it('석탄 발전기는 숯도 땔감으로 받고(석탄과 합쳐 5개까지), 숯을 먼저 태운다 (숯 1 = 2,500kJ)', () => {
+    const w = makeWorld();
+    const g = w.place('generator', 20, 20, 0)!;
+    const put = (item: string) => priv(w).acceptItem(g, item, g, 0);
+    for (let k = 0; k < 3; k++) expect(put('coal')).toBe(true);
+    expect(put('charcoal')).toBe(true);
+    expect(put('charcoal')).toBe(true);
+    expect(put('charcoal')).toBe(false);
+    priv(w).burn([g], 900, COAL_ENERGY);
+    expect(countOf(g.inBuf, 'charcoal')).toBe(1);
+    expect(g.fuel).toBe(3);
+    expect(g.energy).toBeCloseTo(CHARCOAL_ENERGY - 900 / TICK_RATE, 6);
+  });
+
+  it('저장·불러오기와 체크섬에 나무. 나무 층이 없는 예전 저장은 표시해 둔다 (불러오는 쪽에서 자연 숲을 더함)', () => {
+    const w = makeWorld();
+    w.setTree(5, 5, 1);
+    w.setTree(6, 6, 0.25);
+    const before = w.checksum();
+    const data = JSON.parse(JSON.stringify(w.serialize()));
+    const copy = World.deserialize(data);
+    expect(copy.tree[copy.idx(5, 5)]).toBe(1);
+    expect(copy.tree[copy.idx(6, 6)]).toBe(0.25);
+    expect(copy.forestsLoaded).toBe(true);
+    expect(copy.checksum()).toBe(before);
+    run(copy, 1);
+    expect(copy.tree[copy.idx(6, 6)]).toBeGreaterThan(0.25);
+    delete data.trees;
+    expect(World.deserialize(data).forestsLoaded).toBe(false);
   });
 });
 

@@ -1,7 +1,7 @@
 import { BUILDINGS, isBeltType, type BuildingType } from '../data/buildings';
 import { ITEMS } from '../data/items';
 import type { Camera } from '../render/camera';
-import { ORE_GROUND } from '../render/pixel';
+import { ORE_GROUND, TREE_LEAF } from '../render/pixel';
 import { patchAlert, type World } from '../sim/world';
 
 /** 픽셀 맵과 같은 따뜻한 공방 색 */
@@ -141,7 +141,7 @@ export class Minimap {
       else if (item) {
         // 광맥: 맵에서 멀리 볼 때와 같은 광물별 바닥색
         c = rgb(ORE_GROUND[item] ?? ITEMS[item].color);
-      }
+      } else if (w.tree[i] > 0) c = rgb(w.tree[i] >= 1 ? TREE_LEAF.lo : TREE_LEAF.hi);
       const id = w.occ[i];
       const b = id ? w.buildings.get(id) : undefined;
       if (b) c = rgb(BUILDING_COLOR[b.type] ?? (isBeltType(b.type) ? BELT : BUILDINGS[b.type].color));

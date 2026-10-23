@@ -263,11 +263,25 @@ export class Toolbar {
         <span class="cost">건물 ${n}개 · ${s.bp.w}×${s.bp.h}</span>
         <span class="share" title="공유 코드 복사 (친구에게 보내기)">📋</span>
         <span class="del" title="이 청사진 지우기">✕</span>`;
-      btn.title = `${s.name}\n건물 ${n}개 · ${s.bp.w}×${s.bp.h}칸\n클릭: 붙여넣기 · 📋: 공유 코드 복사 · ✕(또는 우클릭): 지우기`;
+      btn.title = `${s.name}\n건물 ${n}개 · ${s.bp.w}×${s.bp.h}칸\n클릭: 붙여넣기 · 📋: 공유 코드 복사 · ✕(또는 우클릭) 두 번: 지우기`;
+      // 확인 창(confirm)은 앱 안 브라우저 등에서 뜨지 않을 수 있어서, ✕를 두 번 누르면 지운다
+      const del = btn.querySelector<HTMLElement>('.del')!;
+      let armed = 0;
       const remove = () => {
-        if (!confirm(`'${s.name}' 청사진을 지울까요?`)) return;
+        if (!armed) {
+          del.textContent = '지우기?';
+          btn.classList.add('confirm-del');
+          armed = window.setTimeout(() => {
+            armed = 0;
+            del.textContent = '✕';
+            btn.classList.remove('confirm-del');
+          }, 3000);
+          return;
+        }
+        clearTimeout(armed);
         removeBlueprint(i);
         this.renderPalette();
+        this.input.notify(`청사진 '${s.name}'을 지웠어요`);
       };
       btn.addEventListener('click', (e) => {
         const t = e.target as HTMLElement;

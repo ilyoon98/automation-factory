@@ -170,6 +170,8 @@ export function spriteHalf(name: string): Sprite | null {
   return half;
 }
 
+let overrides: Promise<string[]> | null = null;
+
 /** 등록된 그림 이름 전부 (바꿔 끼우기 안내용) */
 export function spriteNames(): { name: string; w: number; h: number; frames: number }[] {
   return [...defs].map(([name, d]) => ({ name, w: d.w, h: d.h, frames: d.frames }));
@@ -179,8 +181,14 @@ export function spriteNames(): { name: string; w: number; h: number; frames: num
  * 직접 그린 PNG로 바꿔 끼우기: public/sprites/manifest.json (["miner", "item:coal", ...]) 에 적힌 이름만
  * public/sprites/<이름>.png 를 불러와 코드 그림 대신 쓴다. 파일 이름에서는 ':'를 '_'로 (item_coal.png).
  * 크기는 코드 그림과 같아야 한다 (프레임은 가로로 이어 붙인다).
+ * 맵·UI 아이콘·그림 목록이 각자 불러도 한 번만 받는다.
  */
-export async function loadSpriteOverrides(): Promise<string[]> {
+export function loadSpriteOverrides(): Promise<string[]> {
+  overrides ??= fetchSpriteOverrides();
+  return overrides;
+}
+
+async function fetchSpriteOverrides(): Promise<string[]> {
   let names: string[] = [];
   try {
     const res = await fetch('sprites/manifest.json');

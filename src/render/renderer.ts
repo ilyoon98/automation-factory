@@ -87,8 +87,11 @@ const CHUNK = 16;
 /** 그림 1픽셀이 화면 픽셀 이만큼보다 작아지면(멀리서 보면) 바닥을 칸마다 단색으로 */
 const LOD_SCALE = 1;
 
-/** 캔버스 글꼴: 픽셀 글꼴 갈무리 (Galmuri11은 12px, Galmuri9는 10px의 배수에서 또렷하다) */
-const font = (px: number, bold = false) => `${bold ? 'bold ' : ''}${px}px ${px === 10 ? 'Galmuri9' : 'Galmuri11'}, system-ui, sans-serif`;
+/**
+ * 캔버스 글꼴: 픽셀 글꼴 갈무리 (Galmuri11은 12px, Galmuri9는 10px의 배수에서 또렷하다).
+ * zoom = "글자 또렷하게"를 켰을 때 UI에 걸린 배율 (125%면 0.8 → 기기 픽셀로 딱 12px)
+ */
+const font = (px: number, zoom = 1) => `${px * zoom}px ${px === 10 ? 'Galmuri9' : 'Galmuri11'}, system-ui, sans-serif`;
 
 /** 짓거나 철거한 자리에서 잠깐 퍼지는 먼지 (화면에만, 시뮬레이션과 무관) */
 interface Puff {
@@ -101,6 +104,9 @@ interface Puff {
   build: boolean;
   /** 먼지 알갱이: 건물 아래 가장자리에서 출발 위치(그림 픽셀)와 날아가는 속도(그림 픽셀/초) */
   dots: { x: number; vx: number; vy: number; big: boolean }[];
+  /** 철거: 건물 그림을 네모 조각으로 잘라 흩뿌린다. 조각 = 그림 안 위치(x, y)와 크기 s, 속도 */
+  art?: string;
+  shards?: { x: number; y: number; s: number; vx: number; vy: number }[];
 }
 
 /** 먼지가 남아 있는 시간 (초) */
@@ -109,8 +115,40 @@ const PUFF_SEC = 0.45;
 const PUFF_MAX = 160;
 /** 지을 때 이는 먼지 색 (바닥보다 조금 진한 모래색) */
 const PUFF_DUST = '#b89a63';
+/** 지은 건물이 위에서 툭 떨어져 내려앉는 시간 (초). 앞은 떨어지기, 뒤는 작게 한 번 더 튀기 */
+const HOP_FALL = 0.14;
+const HOP_SEC = 0.28;
+/** 철거 조각이 떨어지는 가속도 (그림 픽셀/초²) */
+const SHARD_G = 220;
+/** 연구를 마쳤을 때 허브 반짝임 시간 (초) */
+const SPARKLE_SEC = 0.6;
+
+/** 철거 조각에 쓸 건물 그림 (종류마다 대표 모양 하나, 첫 프레임) */
+function artOf(b: Building): string {
+  switch (b.type) {
+    case 'station':
+      return `station-${b.stationMode}`;
+    case 'storage':
+      return 'storage:15';
+    case 'road':
+      return 'road:0';
+    case 'underground':
+      return `underground-${b.ugMode === 'in' ? 'in' : 'out'}`;
+    default:
+      return b.type;
+  }
+}
+
+/** 끝난 연구 수 (끝없는 연구는 단계마다 하나) */
+function researchCount(world: World): number {
+  let n = world.researched.size;
+  for (const lv of world.levels.values()) n += lv;
+  return n;
+}
 
 export class Renderer {
+  /** 맵 글씨 배율: "글자 또렷하게"를 켜면 UI와 같은 배율 (main에서 넣는다, ui/crisp.ts) */
+  textZoom = 1;
   private ctx: CanvasRenderingContext2D;
   private dpr = 1;
   private cam!: Camera;
@@ -130,9 +168,14 @@ export class Renderer {
   /** 짓기·철거 먼지. 지난 프레임에 있던 건물과 비교해서 찾는다 (누가 지었든, 되돌리기든) */
   private puffs: Puff[] = [];
   private seenWorld: World | null = null;
-  private seen = new Map<number, { x: number; y: number; size: number }>();
+  private seen = new Map<number, { x: number; y: number; size: number; art: string }>();
   private seenNextId = 0;
   private seenCount = 0;
+  /** 막 지은 건물 id → 생긴 시각 (툭 내려앉기) */
+  private hops = new Map<number, number>();
+  /** 지난 프레임까지 끝난 연구 수, 허브 반짝임이 시작된 시각 (없으면 -1) */
+  private seenResearch = 0;
+  private sparkleT0 = -1;
 
   constructor(private canvas: HTMLCanvasElement) {
     this.ctx = canvas.getContext('2d')!;
@@ -215,6 +258,7 @@ export class Renderer {
       this.drawTruck(v, v.id === view.selectedVehicle);
     }
     this.drawPuffs();
+    this.drawSparkle(world);
     if (this.n >= 1) {
       const low = new Set<number>();
       for (const r of world.patchReports()) if (patchAlert(r) === 'low') for (const m of r.miners) low.add(m.id);
@@ -311,37 +355,70 @@ export class Renderer {
 
   /** 지난 프레임과 비교해 새로 생기거나 사라진 건물 자리에 먼지를 만든다 */
   private trackBuildings(world: World): void {
-    const remember = (b: Building) => this.seen.set(b.id, { x: b.x, y: b.y, size: b.size });
+    const remember = (b: Building) => this.seen.set(b.id, { x: b.x, y: b.y, size: b.size, art: artOf(b) });
     // 공장이 통째로 바뀌면(새 게임·불러오기·방 참가) 먼지 없이 기억만 새로
     if (world !== this.seenWorld) {
       this.seenWorld = world;
       this.seen.clear();
       for (const b of world.buildings.values()) remember(b);
       this.puffs = [];
-    } else if (world.nextId !== this.seenNextId || world.buildings.size !== this.seenCount) {
-      const now = performance.now() / 1000;
+      this.hops.clear();
+      this.seenResearch = researchCount(world);
+      this.sparkleT0 = -1;
+      return;
+    }
+    const now = performance.now() / 1000;
+    if (world.nextId !== this.seenNextId || world.buildings.size !== this.seenCount) {
       for (const b of world.buildings.values()) {
         if (this.seen.has(b.id)) continue;
         remember(b);
-        this.addPuff(b.x, b.y, b.size, true, now);
+        // 건물은 위에서 툭 떨어져 내려앉고, 땅에 닿을 때 먼지 (컨베이어·도로는 끌어 놓으니 먼지만)
+        const hop = !isLineType(b.type) && b.type !== 'road';
+        if (hop) this.hops.set(b.id, now);
+        this.addPuff(b.x, b.y, b.size, true, hop ? now + HOP_FALL : now);
       }
       for (const [id, s] of this.seen) {
         if (world.buildings.has(id)) continue;
         this.seen.delete(id);
-        this.addPuff(s.x, s.y, s.size, false, now);
+        this.hops.delete(id);
+        this.addPuff(s.x, s.y, s.size, false, now, s.art);
       }
     }
     this.seenNextId = world.nextId;
     this.seenCount = world.buildings.size;
+    // 화면 밖에서 지어 한 번도 안 그린 건물도 잊는다
+    for (const [id, t0] of this.hops) if (now - t0 >= HOP_SEC) this.hops.delete(id);
+    // 연구를 마치면 (누가 했든) 허브에서 반짝
+    const done = researchCount(world);
+    if (done > this.seenResearch) this.sparkleT0 = now;
+    this.seenResearch = done;
   }
 
-  private addPuff(x: number, y: number, size: number, build: boolean, now: number): void {
+  /** 막 지은 건물이 떠 있는 높이 (그림 픽셀, 위로 +). 떨어져 내려앉은 뒤 작게 한 번 더 튄다 */
+  private hopLift(b: Building): number {
+    if (!this.hops.size) return 0;
+    const t0 = this.hops.get(b.id);
+    if (t0 === undefined) return 0;
+    const t = performance.now() / 1000 - t0;
+    if (t >= HOP_SEC) {
+      this.hops.delete(b.id);
+      return 0;
+    }
+    const h = b.size === 1 ? 4 : 6;
+    if (t < HOP_FALL) {
+      const k = t / HOP_FALL;
+      return Math.round(h * (1 - k * k));
+    }
+    return Math.round((h / 3) * Math.sin((Math.PI * (t - HOP_FALL)) / (HOP_SEC - HOP_FALL)));
+  }
+
+  private addPuff(x: number, y: number, size: number, build: boolean, now: number, art?: string): void {
     if (this.puffs.length >= PUFF_MAX) return;
     const w = size * TILE;
     const n = size === 1 ? 4 : 8;
     const dots: Puff['dots'] = [];
     for (let i = 0; i < n; i++) {
-      // 아래 가장자리를 따라 고르게 놓고 바깥쪽 위로 튄다 (지으면 내려앉으며 이는 먼지, 철거하면 흩어지는 나무 조각)
+      // 아래 가장자리를 따라 고르게 놓고 바깥쪽 위로 튄다 (지으면 내려앉으며 이는 먼지, 철거하면 이는 흙먼지)
       const side = (i + 0.5) / n;
       dots.push({
         x: side * w,
@@ -350,7 +427,27 @@ export class Renderer {
         big: i % 3 === 0,
       });
     }
-    this.puffs.push({ x, y, size, t0: now, build, dots });
+    // 철거: 그림을 4×4 조각으로 잘라 가운데에서 바깥쪽 위로 흩뿌린다 (작은 건물은 덜 세게)
+    let shards: Puff['shards'];
+    if (art && sprite(art)) {
+      shards = [];
+      const s = w / 4;
+      const power = size === 1 ? 0.6 : 1;
+      for (let j = 0; j < 4; j++) {
+        for (let i = 0; i < 4; i++) {
+          const dx = (i - 1.5) / 1.5;
+          const dy = (j - 1.5) / 1.5;
+          shards.push({
+            x: i * s,
+            y: j * s,
+            s,
+            vx: (dx * 30 + (Math.random() - 0.5) * 36) * power,
+            vy: (-42 + dy * 10 - Math.random() * 26) * power,
+          });
+        }
+      }
+    }
+    this.puffs.push({ x, y, size, t0: now, build, dots, art, shards });
   }
 
   private drawPuffs(): void {
@@ -362,13 +459,27 @@ export class Renderer {
     const u = this.u;
     for (const p of this.puffs) {
       const t = now - p.t0;
+      // 지을 때 먼지는 건물이 땅에 닿을 때부터
+      if (t < 0) continue;
       const k = t / PUFF_SEC;
       const [sx, sy] = this.cam.worldToScreen(p.x, p.y);
       const bottom = p.size * TILE;
       ctx.globalAlpha = 1 - k * k;
-      // 지을 때는 처음 0.12초 동안 테두리가 반짝 (어디에 생겼는지 눈에 띄게)
+      // 지을 때는 땅에 닿고 0.12초 동안 테두리가 반짝 (어디에 생겼는지 눈에 띄게)
       if (p.build && t < 0.12) this.outline(sx - u, sy - u, (bottom + 2) * u, (bottom + 2) * u, PAL.brass.hi);
-      ctx.fillStyle = p.build ? PUFF_DUST : PAL.wood.lo;
+      // 철거 조각: 날아가다 떨어지고, 뒤 절반에는 조각 가운데만 남아 부스러진다
+      const img = p.shards && sprite(p.art!);
+      if (img) {
+        const crumble = k > 0.55;
+        for (const c of p.shards!) {
+          const cs = crumble ? c.s / 2 : c.s;
+          const ox = crumble ? c.s / 4 : 0;
+          const px = Math.round(c.x + ox + c.vx * t);
+          const py = Math.round(c.y + ox + c.vy * t + 0.5 * SHARD_G * t * t);
+          ctx.drawImage(img.img, c.x + ox, c.y + ox, cs, cs, sx + px * u, sy + py * u, cs * u, cs * u);
+        }
+      }
+      ctx.fillStyle = PUFF_DUST;
       for (const d of p.dots) {
         // 위로 튀었다가 조금 떨어진다 (그림 픽셀 단위로 맞춰 또렷하게)
         const px = Math.round(d.x + d.vx * t);
@@ -376,6 +487,55 @@ export class Renderer {
         const sz = d.big ? 2 : 1;
         ctx.fillRect(sx + px * u, sy + py * u, sz * u, sz * u);
       }
+    }
+    ctx.globalAlpha = 1;
+  }
+
+  /**
+   * 연구를 마쳤을 때 허브 둘레로 퍼지는 별 반짝임 (0.6초).
+   * 별은 그림 픽셀 단위 십자 모양: 처음엔 크게, 퍼질수록 작아져 점 하나로 사라진다
+   */
+  private drawSparkle(world: World): void {
+    if (this.sparkleT0 < 0) return;
+    const t = performance.now() / 1000 - this.sparkleT0;
+    const hub = world.hub;
+    if (t >= SPARKLE_SEC || !hub) {
+      this.sparkleT0 = -1;
+      return;
+    }
+    if (this.lod) return;
+    const ctx = this.ctx;
+    const u = this.u;
+    const k = t / SPARKLE_SEC;
+    const [sx, sy] = this.cam.worldToScreen(hub.x, hub.y);
+    const half = (hub.size * TILE) / 2;
+    // 처음 0.15초는 허브 테두리가 놋쇠색으로 반짝
+    if (t < 0.15) this.outline(sx - u, sy - u, (half * 2 + 2) * u, (half * 2 + 2) * u, PAL.brass.hi);
+    const ease = 1 - (1 - k) * (1 - k);
+    const r = half - 4 + 22 * ease;
+    const arm = k < 0.35 ? 2 : k < 0.7 ? 1 : 0;
+    const star = (x: number, y: number, c: string) => {
+      ctx.fillStyle = c;
+      ctx.fillRect(sx + (x - arm) * u, sy + y * u, (arm * 2 + 1) * u, u);
+      ctx.fillRect(sx + x * u, sy + (y - arm) * u, u, (arm * 2 + 1) * u);
+    };
+    ctx.globalAlpha = k < 0.7 ? 1 : 1 - (k - 0.7) / 0.3;
+    const n = 12;
+    for (let i = 0; i < n; i++) {
+      // 바깥 별과 안쪽 별이 번갈아 (안쪽은 조금 늦게, 반대 방향으로 살짝 돈다)
+      const inner = i % 2 === 1;
+      const a = (i / n) * Math.PI * 2 + (inner ? -0.5 : 0.5) * k;
+      const rr = inner ? r * 0.72 : r;
+      const x = Math.round(half + Math.cos(a) * rr);
+      const y = Math.round(half + Math.sin(a) * rr);
+      star(x, y, inner ? PAL.brass.hi : '#fffbe8');
+    }
+    // 굴뚝 쪽으로 올라가는 작은 불티
+    ctx.fillStyle = PAL.brass.hi;
+    for (let i = 0; i < 5; i++) {
+      const x = Math.round(half - 12 + i * 6 + Math.sin(k * 9 + i) * 2);
+      const y = Math.round(half - 6 - (20 + (i % 3) * 6) * ease);
+      ctx.fillRect(sx + x * u, sy + y * u, u, u);
     }
     ctx.globalAlpha = 1;
   }
@@ -429,17 +589,27 @@ export class Renderer {
     baseline: CanvasTextBaseline = 'middle',
   ): void {
     const ctx = this.ctx;
-    ctx.font = font(size);
+    ctx.font = font(size, this.textZoom);
     ctx.textAlign = align;
     ctx.textBaseline = baseline;
-    x = Math.round(x);
-    y = Math.round(y);
+    x = this.snap(x, 'x');
+    y = this.snap(y, 'y');
     if (outline) {
+      // 테두리 1픽셀 = 글꼴 1픽셀 (글자 또렷하게를 켜면 기기 픽셀 하나)
+      const d = this.textZoom;
       ctx.fillStyle = outline;
-      for (const [dx, dy] of [[-1, 0], [1, 0], [0, -1], [0, 1]]) ctx.fillText(str, x + dx, y + dy);
+      for (const [dx, dy] of [[-d, 0], [d, 0], [0, -d], [0, d]]) ctx.fillText(str, x + dx, y + dy);
     }
     ctx.fillStyle = color;
     ctx.fillText(str, x, y);
+  }
+
+  /** 화면 좌표(CSS px)를 가장 가까운 기기 픽셀 경계로 (배율이 125%처럼 정수가 아니어도 글자가 또렷하게) */
+  private snap(v: number, axis: 'x' | 'y'): number {
+    const m = this.ctx.getTransform();
+    const k = axis === 'x' ? m.a : m.d;
+    const o = axis === 'x' ? m.e : m.f;
+    return (Math.round(v * k + o) - o) / k;
   }
 
   /** 그림 픽셀 칸 (x, y, w, h) 안에 들어가는 가장 큰 크기로 글씨. 안 들어가면 그리지 않는다 */
@@ -447,14 +617,15 @@ export class Renderer {
     const u = this.u;
     const ctx = this.ctx;
     for (const size of [24, 12, 10]) {
-      ctx.font = font(size);
+      ctx.font = font(size, this.textZoom);
       const tw = ctx.measureText(str).width;
-      if (size + 2 > box.h * u || tw + 4 > box.w * u) continue;
+      const fs = size * this.textZoom;
+      if (fs + 2 > box.h * u || tw + 4 > box.w * u) continue;
       const cx = sx + (box.x + box.w / 2) * u;
       const cy = sy + (box.y + box.h / 2) * u;
       if (pill) {
         const w = Math.round(tw + 6);
-        const h = size + 4;
+        const h = Math.round(fs + 4);
         const x = Math.round(cx - w / 2);
         const y = Math.round(cy - h / 2);
         ctx.fillStyle = PAL.ink;
@@ -629,7 +800,7 @@ export class Renderer {
     const g = storageBounds(world.storageGroup(b));
     const mask = (b.y === g.y0 ? 1 : 0) | (b.x + b.size === g.x1 ? 2 : 0) | (b.y + b.size === g.y1 ? 4 : 0) | (b.x === g.x0 ? 8 : 0);
     const [sx, sy] = this.cam.worldToScreen(b.x, b.y);
-    this.blit(`storage:${mask}`, 0, sx, sy);
+    this.blit(`storage:${mask}`, 0, sx, sy - this.hopLift(b) * this.u);
   }
 
   /** 창고 묶음 하나의 이름표(가장 많은 아이템), 채운 정도, 개수 (묶음 가운데에 한 번) */
@@ -659,7 +830,9 @@ export class Renderer {
 
   private drawBuilding(world: World, b: Building): void {
     if (b.type === 'storage') return this.drawStorage(world, b);
-    const [sx, sy] = this.cam.worldToScreen(b.x, b.y);
+    const [sx, sy0] = this.cam.worldToScreen(b.x, b.y);
+    // 막 지었으면 툭 내려앉는 중 (이름표·막대·화살표도 같이)
+    const sy = sy0 - this.hopLift(b) * this.u;
     // 멀리서: 몸체 그림만 (멈춘 채로, 이름표·막대·화살표 없이)
     if (this.lod) return this.blit(b.type === 'station' ? `station-${b.stationMode}` : b.type, 0, sx, sy);
     const u = this.u;
@@ -901,9 +1074,9 @@ export class Renderer {
     const ctx = this.ctx;
     const [sx, sy] = this.cam.worldToScreen(b.x, b.y);
     const w = b.size * this.cam.zoom;
-    ctx.font = font(12);
+    ctx.font = font(12, this.textZoom);
     const tw = Math.ceil(ctx.measureText(text).width) + 8;
-    const th = 16;
+    const th = Math.round(12 * this.textZoom) + 4;
     const x = Math.round(sx + w / 2 - tw / 2);
     const y = Math.round(sy - th / 2);
     ctx.fillStyle = PAL.ink;
@@ -1122,16 +1295,17 @@ export class Renderer {
   /** 색 바탕 이름표 (왼쪽 위 기준) */
   private drawTag(x: number, y: number, text: string, color: string): void {
     const ctx = this.ctx;
-    ctx.font = font(12);
+    ctx.font = font(12, this.textZoom);
     const w = ctx.measureText(text).width + 10;
+    const h = Math.round(12 * this.textZoom) + 5;
     ctx.fillStyle = color;
     ctx.beginPath();
-    roundRect(ctx, x, y, w, 17, 4);
+    roundRect(ctx, x, y, w, h, 4);
     ctx.fill();
     ctx.fillStyle = '#14171b';
     ctx.textAlign = 'left';
     ctx.textBaseline = 'middle';
-    ctx.fillText(text, x + 5, y + 9);
+    ctx.fillText(text, this.snap(x + 5, 'x'), this.snap(y + h / 2 + 0.5, 'y'));
   }
 
   /** 핑: 퍼지는 동그라미. 화면 밖이면 가장자리에 그쪽을 가리키는 화살표 */
@@ -1184,7 +1358,7 @@ export class Renderer {
       ctx.lineWidth = 1.5;
       ctx.stroke();
       ctx.restore();
-      ctx.font = font(12);
+      ctx.font = font(12, this.textZoom);
       const tw = ctx.measureText(p.name).width + 10;
       const tx = Math.min(cam.viewW - tw - 4, Math.max(4, ex - tw / 2 - Math.cos(a) * 30));
       const ty = Math.min(cam.viewH - 21, Math.max(44, ey - 8 - Math.sin(a) * 26));

@@ -956,9 +956,14 @@ export class Renderer {
       case 'solar': {
         // 패널 위로 가끔 반짝임이 지나간다
         const step = Math.floor(t * 6 + b.id * 5) % 16;
-        this.blit('solar', step < 4 ? step + 1 : 0, sx, sy);
+        // 해가 없으면(밤) 반짝이지 않는다
+        this.blit('solar', b.load > 0 && step < 4 ? step + 1 : 0, sx, sy);
         break;
       }
+      case 'wind':
+        // 바람이 셀수록 빨리 돈다
+        this.blit('wind', anim(true, 3 + (b.load / 150) * 9), sx, sy);
+        break;
       case 'hydro':
         // 물이 많을수록 빨리 돈다. 물 눈금은 진행 막대 자리에
         this.blit('hydro', anim(b.load > 0, 4 + (b.load / 600) * 8), sx, sy);

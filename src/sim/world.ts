@@ -7,6 +7,7 @@ import {
   HUB_BASE_POWER,
   HYDRO_POWER,
   SOLAR_POWER,
+  SOLAR_WEATHER,
   STATION_CAPACITY,
   STORAGE_CAPACITY,
   STORAGE_GROUP_MAX,
@@ -14,6 +15,7 @@ import {
   UNDERGROUND_MAX_GAP,
   UNLOADER_INTERVAL,
   WATER_ENERGY,
+  WIND_POWER,
   isBeltType,
   isForestType,
   isMinerType,
@@ -25,6 +27,7 @@ import { RECIPES, type MachineKind, type Recipe } from '../data/recipes';
 import { ENDLESS_BY_ID, ENDLESS_REQUIRES, INITIAL_BUILDINGS, INITIAL_RECIPES, TECH_BY_ID, endlessCost } from '../data/tech';
 import { Building, addTo, countOf, type BeltItem, type StationMode } from './building';
 import { DX, DY, opposite, rotateCW, type Dir } from './dir';
+import { darkness, weatherMix } from './sky';
 import { ROUTE_MIN, Vehicle, type RouteStop, type VehicleState } from './vehicle';
 
 export const TICK_RATE = 60;
@@ -1601,11 +1604,14 @@ export class World {
     let solar = 0;
     const gens: Building[] = [];
     const hydros: Building[] = [];
+    const sun = this.solarOutput();
+    const wind = this.windOutput();
     for (const b of this.buildings.values()) {
       if (b.crafting && b.def.power > 0) demand += b.def.power;
-      if (b.type === 'solar') {
-        solar += SOLAR_POWER;
-        b.status = 'working';
+      if (b.type === 'solar' || b.type === 'wind') {
+        b.load = b.type === 'solar' ? sun : wind;
+        solar += b.load;
+        b.status = b.load > 0 ? 'working' : 'idle';
       } else if (b.type === 'generator' || b.type === 'hydro') {
         if (b.energy > 0 || b.fuel > 0 || countOf(b.inBuf, 'charcoal') > 0) (b.type === 'hydro' ? hydros : gens).push(b);
         else {
@@ -1618,6 +1624,7 @@ export class World {
     let charge = 0;
     for (const v of this.vehicles.values()) charge += this.chargeWant(v);
     demand += charge;
+    // 허브·태양광·풍력: 아무것도 들지 않는 전력
     const free = HUB_BASE_POWER + solar;
     const capacity = free + hydros.length * HYDRO_POWER + gens.length * GENERATOR_POWER;
     const supply = Math.min(demand, capacity);
@@ -1631,6 +1638,16 @@ export class World {
     this.burn(hydros, hydroLoad, WATER_ENERGY);
     this.burn(gens, genLoad, COAL_ENERGY);
     this.power = { demand, capacity, supply, satisfaction, charge };
+  }
+
+  /** 지금 태양광 패널 한 대의 출력 (kW): 해가 있는 만큼 × 날씨 */
+  solarOutput(): number {
+    return SOLAR_POWER * (1 - darkness(this.time)) * weatherMix(this.seed, this.time, (k) => SOLAR_WEATHER[k]);
+  }
+
+  /** 지금 풍력 발전기 한 대의 출력 (kW): 날씨만 따른다 */
+  windOutput(): number {
+    return weatherMix(this.seed, this.time, (k) => WIND_POWER[k]);
   }
 
   /**

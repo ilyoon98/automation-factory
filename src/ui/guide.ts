@@ -1,4 +1,4 @@
-import { FOREST, type BuildingType } from '../data/buildings';
+import { FOREST, HUB_BASE_POWER, type BuildingType } from '../data/buildings';
 import { ITEM_IDS, type ItemId } from '../data/items';
 import type { World } from '../sim/world';
 
@@ -114,22 +114,22 @@ export const GUIDE: GuideStep[] = [
     focus: () => ({ build: 'assembler' }),
   },
   {
-    title: '구리판 생산',
-    hint: '주황색 구리광맥에도 채굴기 → 제련로 → 허브 줄을 만드세요.',
-    done: (w) => w.incomePerMinute('copper-plate') > 0,
-    focus: (w) => (mining(w, 'copper-ore') ? { build: 'smelter' } : { build: 'miner', target: 'copper-ore' }),
-  },
-  {
     title: '연구: 석탄 발전',
-    hint: '석탄 발전을 연구하세요 (철판 250, 기어 80, 구리판 150). 기계를 몇 대 더 늘리면 빨리 모여요.',
+    hint: `허브 전력(${HUB_BASE_POWER}kW)으로는 기계 몇 대뿐이에요. 석탄 발전을 연구하세요 (철판 120, 기어 40).`,
     done: (w) => w.researched.has('power'),
     focus: () => ({ research: 'power' }),
   },
   {
     title: '발전기에 석탄 넣기',
-    hint: '짙은 회색 석탄광맥에 채굴기를 놓으세요. 컨베이어로 석탄 발전기(C 1)까지 이어요. 왼쪽 전력 공급이 300kW를 넘으면 성공이에요.',
-    done: (w) => w.power.capacity > 300,
+    hint: `짙은 회색 석탄광맥에 채굴기를 놓으세요. 컨베이어로 석탄 발전기(C 1)까지 이어요. 왼쪽 전력 공급이 ${HUB_BASE_POWER}kW를 넘으면 성공이에요.`,
+    done: (w) => w.power.capacity > HUB_BASE_POWER,
     focus: (w) => (mining(w, 'coal') ? { build: 'generator' } : { build: 'miner', target: 'coal' }),
+  },
+  {
+    title: '구리판 생산',
+    hint: '주황색 구리광맥에도 채굴기 → 제련로 → 허브 줄을 만드세요.',
+    done: (w) => w.incomePerMinute('copper-plate') > 0,
+    focus: (w) => (mining(w, 'copper-ore') ? { build: 'smelter' } : { build: 'miner', target: 'copper-ore' }),
   },
   {
     title: '강철 생산',
@@ -233,7 +233,7 @@ export const GUIDE: GuideStep[] = [
   },
   {
     title: '석탄 없이 전기 만들기',
-    hint: '재생 에너지를 연구하세요. 태양광 패널(늘 100kW)을 깔거나, 수력 발전기에 양수기 물을 넣어요. 수력 발전기(나무 물레방아)에는 목재가 들어요.',
+    hint: '재생 에너지를 연구하세요. 태양광 패널(맑은 낮 150kW)을 깔거나, 수력 발전기에 양수기 물을 넣어요. 수력 발전기(나무 물레방아)에는 목재가 들어요.',
     done: (w) => [...w.buildings.values()].some((b) => b.type === 'solar' || (b.type === 'hydro' && b.load > 0)),
     focus: (w) => after(w, ['renewables'], { build: 'solar' }),
   },

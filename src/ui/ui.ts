@@ -5,6 +5,7 @@ import {
   HUB_BASE_POWER,
   HYDRO_POWER,
   SOLAR_POWER,
+  WIND_POWER,
   STATION_CAPACITY,
   TRUCK,
   UNLOADER_INTERVAL,
@@ -650,15 +651,10 @@ export class UI {
     // 시계, 속도
     const t = Math.floor(w.time);
     const time = `${Math.floor(t / 60)}:${String(t % 60).padStart(2, '0')}`;
-    if (ambientEnabled()) {
-      // 하늘 아이콘 (낮·해 질 녘·밤·흐림·비)
-      const sky = skyLabel(w.seed, w.time);
-      $('clock').textContent = `${sky.icon} ${time}`;
-      $('clock').title = `${sky.text} · 게임 시간 ${time} (하루 ${DAY_SEC / 60}분)`;
-    } else {
-      $('clock').textContent = time;
-      $('clock').title = '게임 시간';
-    }
+    // 하늘 아이콘 (낮·해 질 녘·밤·흐림·비). 태양광·풍력 출력이 하늘을 따르니 화면 효과를 꺼도 보인다
+    const sky = skyLabel(w.seed, w.time);
+    $('clock').textContent = `${sky.icon} ${time}`;
+    $('clock').title = `${sky.text} · 게임 시간 ${time} (하루 ${DAY_SEC / 60}분) · 태양광 ${Math.round(w.solarOutput())}kW · 풍력 ${Math.round(w.windOutput())}kW (한 대)`;
     document.querySelectorAll<HTMLButtonElement>('#topbar [data-speed]').forEach((btn) => {
       btn.classList.toggle('active', Number(btn.dataset.speed) === this.game.speed);
     });
@@ -744,15 +740,17 @@ export class UI {
     const pct = Math.round(p.satisfaction * 100);
     const color = p.satisfaction >= 1 ? '#3f8a3a' : p.satisfaction >= 0.6 ? '#b7791f' : '#c0392b';
     const usage = p.capacity ? Math.min(1, p.demand / p.capacity) : 0;
-    // 어디서 오는 전력인지: 허브 · 태양광 · 수력 · 석탄 (돌 수 있는 최대치)
-    const src = { solar: 0, hydro: 0, coal: 0 };
+    // 어디서 오는 전력인지: 허브 · 태양광 · 풍력 (지금 내는 만큼) · 수력 · 석탄 (돌 수 있는 최대치)
+    const src = { solar: 0, wind: 0, hydro: 0, coal: 0 };
     for (const b of w.buildings.values()) {
-      if (b.type === 'solar') src.solar += SOLAR_POWER;
+      if (b.type === 'solar') src.solar += b.load;
+      else if (b.type === 'wind') src.wind += b.load;
       else if (b.type === 'hydro' && (b.fuel > 0 || b.energy > 0)) src.hydro += HYDRO_POWER;
       else if (b.type === 'generator' && (b.fuel > 0 || b.energy > 0)) src.coal += GENERATOR_POWER;
     }
     const parts = [`허브 ${HUB_BASE_POWER}`];
-    if (src.solar) parts.push(`태양광 ${src.solar}`);
+    if (src.solar) parts.push(`태양광 ${Math.round(src.solar)}`);
+    if (src.wind) parts.push(`풍력 ${Math.round(src.wind)}`);
     if (src.hydro) parts.push(`수력 ${src.hydro}`);
     if (src.coal) parts.push(`석탄 ${src.coal}`);
     $('power').innerHTML = `
@@ -1079,7 +1077,7 @@ export class UI {
       }
     }
     html += `<div class="dyn"></div><div class="actions">`;
-    if (!['hub', 'generator', 'underground', 'storage', 'road', 'solar', 'hydro', 'charger', 'planter'].includes(b.type)) {
+    if (!['hub', 'generator', 'underground', 'storage', 'road', 'solar', 'hydro', 'wind', 'charger', 'planter'].includes(b.type)) {
       html += `<button data-act="rotate">회전 (R)</button>`;
     }
     if (b.type !== 'hub') html += `<button data-act="remove" class="danger">철거 (Del)</button>`;
@@ -1187,17 +1185,25 @@ export class UI {
           `<div class="row"><span>연료</span><b>${itemIcon('coal')} ${b.fuel}${charcoal ? ` · ${itemIcon('charcoal')} ${charcoal}` : ''} / 5</b></div>`,
         );
         lines.push(`<div class="row"><span>출력</span><b>${Math.round(b.load)} / ${GENERATOR_POWER} kW</b></div>`);
-        lines.push(`<p class="muted">허브·태양광·수력으로 모자란 만큼만 태워요. 숯도 땔감으로 받아 먼저 태워요 (숯 1 = 석탄의 2/3).</p>`);
+        lines.push(`<p class="muted">허브·태양광·풍력·수력으로 모자란 만큼만 태워요. 숯도 땔감으로 받아 먼저 태워요 (숯 1 = 석탄의 2/3).</p>`);
         break;
       }
       case 'hydro':
         lines.push(`<div class="row"><span>물</span><b>${itemIcon('water')} ${b.fuel} / 10</b></div>`);
         lines.push(`<div class="row"><span>출력</span><b>${Math.round(b.load)} / ${HYDRO_POWER} kW</b></div>`);
-        lines.push(`<p class="muted">허브·태양광으로 모자란 만큼만 물을 써요 (석탄 발전기보다 먼저). 최대로 돌면 초당 물 2개 = 양수기 1대.</p>`);
+        lines.push(`<p class="muted">허브·태양광·풍력으로 모자란 만큼만 물을 써요 (석탄 발전기보다 먼저). 최대로 돌면 초당 물 2개 = 양수기 1대.</p>`);
         break;
       case 'solar':
-        lines.push(`<div class="row"><span>출력</span><b>${SOLAR_POWER} kW (늘)</b></div>`);
-        lines.push(`<p class="muted">아무것도 넣지 않아도 돼요. 전력이 모자라면 더 깔아 주세요.</p>`);
+        lines.push(`<div class="row"><span>출력</span><b>${Math.round(b.load)} / ${SOLAR_POWER} kW</b></div>`);
+        lines.push(
+          `<p class="muted">해가 있는 동안만 돌아요. 맑은 낮 ${SOLAR_POWER}kW, 흐리면 절반, 비가 오면 4분의 1, 밤에는 0이에요. 밤에는 풍력·수력·석탄이 메워 줘야 해요.</p>`,
+        );
+        break;
+      case 'wind':
+        lines.push(`<div class="row"><span>출력</span><b>${Math.round(b.load)} kW</b></div>`);
+        lines.push(
+          `<p class="muted">밤낮없이 돌아요. 바람은 날씨를 따라 맑으면 ${WIND_POWER.clear}kW, 흐리면 ${WIND_POWER.cloudy}kW, 비가 오면 ${WIND_POWER.rain}kW예요.</p>`,
+        );
         break;
       case 'charger': {
         // 이 충전기 옆 도로 칸과, 거기 서서 충전하는 트럭
@@ -1791,7 +1797,7 @@ export class UI {
         lines.push(`<span class="muted">100%에 필요: ${st.maxIn.map((i) => `${itemIcon(i.item)}분당 ${fmtNum(i.count)}`).join(' ')}</span>`);
       }
       if (tool && !isBeltType(b.type)) {
-        const rotatable = !['hub', 'generator', 'solar', 'hydro', 'charger', 'planter'].includes(b.type);
+        const rotatable = !['hub', 'generator', 'solar', 'hydro', 'wind', 'charger', 'planter'].includes(b.type);
         lines.push(`<span class="muted">클릭: 설정 열기${rotatable ? ' · R: 이 건물 회전' : ''}</span>`);
       }
     }

@@ -1,11 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { BUILDINGS, CHARCOAL_ENERGY, COAL_ENERGY, FOREST, STATION_CAPACITY, TRUCK } from '../data/buildings';
+import { BUILDINGS, CHARCOAL_ENERGY, COAL_ENERGY, FOREST, HUB_BASE_POWER, SOLAR_POWER, STATION_CAPACITY, TRUCK, WIND_POWER } from '../data/buildings';
 import { ENDLESS_BY_ID, TECHS, endlessCost } from '../data/tech';
 import { copyArea, pasteBlueprint } from './blueprint';
 import { countOf } from './building';
 import { applyCommand } from './commands';
 import type { Dir } from './dir';
 import { STARTING_STOCK, generateWorld } from './mapgen';
+import { DAY_SEC, WEATHER_SEC, darkness, weatherOf, type WeatherKind } from './sky';
 import { BELT_SPACING, TICK_RATE, World, describeEdit, patchAlert } from './world';
 
 /** 모든 건물·레시피 해금 */
@@ -334,15 +335,19 @@ describe('기계별 생산 현황', () => {
     w.createHub(5, 5);
     w.stock.set('iron-plate', 1000);
     w.stock.set('gear', 1000);
+    w.stock.set('steel', 1000);
+    w.stock.set('circuit', 1000);
+    unlockAll(w);
+    // 고급 채굴기 4대 = 720kW
     const miners = [[8, 5, 3], [3, 5, 1], [5, 8, 0], [5, 3, 2]] as const;
     for (const [x, y, d] of miners) {
       ore(w, x, y);
-      w.place('miner', x, y, d);
+      w.place('miner-2', x, y, d);
     }
     run(w, 60);
     const st = w.machineStats(w.buildingAt(8, 5)!)!;
-    expect(st.util).toBeCloseTo(300 / 360, 2);
-    expect(st.lowPower).toBeCloseTo(1 - 300 / 360, 2);
+    expect(st.util).toBeCloseTo(HUB_BASE_POWER / 720, 2);
+    expect(st.lowPower).toBeCloseTo(1 - HUB_BASE_POWER / 720, 2);
   });
 
   it('레시피가 없으면 현황도 없다', () => {
@@ -360,11 +365,13 @@ describe('전력', () => {
     w.stock.set('iron-plate', 1000);
     w.stock.set('gear', 1000);
     w.stock.set('stone', 1000);
+    w.stock.set('steel', 1000);
+    w.stock.set('circuit', 1000);
     unlockAll(w);
-    // 네 채굴기 모두 허브를 향한다
+    // 네 고급 채굴기(180kW, 1초에 2개) 모두 허브를 향한다: 수요 720kW > 허브 400kW
     for (const [x, y, d] of [[8, 5, 3], [3, 5, 1], [5, 8, 0], [5, 3, 2]] as const) {
       ore(w, x, y);
-      w.place('miner', x, y, d);
+      w.place('miner-2', x, y, d);
     }
     return w;
   }
@@ -372,11 +379,12 @@ describe('전력', () => {
   it('수요가 공급보다 크면 모든 기계가 같은 비율로 느려진다', () => {
     const w = minersAroundHub();
     run(w, 60);
-    expect(w.power.demand).toBe(360);
-    expect(w.power.satisfaction).toBeCloseTo(300 / 360, 5);
+    expect(w.power.demand).toBe(720);
+    expect(w.power.satisfaction).toBeCloseTo(HUB_BASE_POWER / 720, 5);
+    // 4대 × 2개 × 60초 × 400/720 ≈ 267
     const got = w.stockOf('iron-ore');
-    expect(got).toBeGreaterThanOrEqual(195);
-    expect(got).toBeLessThanOrEqual(201);
+    expect(got).toBeGreaterThanOrEqual(258);
+    expect(got).toBeLessThanOrEqual(268);
   });
 
   it('발전기가 연료를 태워 부족분을 채운다', () => {
@@ -385,10 +393,94 @@ describe('전력', () => {
     g.fuel = 2;
     run(w, 10);
     expect(w.power.satisfaction).toBe(1);
-    expect(g.load).toBeCloseTo(60, 5);
-    // 60kW × 10초 = 600kJ 소모, 석탄 1개(4000kJ) 개봉
+    expect(g.load).toBeCloseTo(320, 5);
+    // 320kW × 10초 = 3200kJ 소모, 석탄 1개(4000kJ) 개봉
     expect(g.fuel).toBe(1);
-    expect(g.energy).toBeCloseTo(4000 - 600, 0);
+    expect(g.energy).toBeCloseTo(4000 - 3200, 0);
+  });
+});
+
+describe('하늘을 따라 도는 전력: 태양광·풍력', () => {
+  /** 날씨가 kind인 첫 날씨 칸의 한가운데 시각 (바뀌는 중이 아닐 때) */
+  function timeOf(w: World, kind: WeatherKind): number {
+    for (let slot = 1; slot < 1000; slot++) if (weatherOf(w.seed, slot) === kind) return slot * WEATHER_SEC + WEATHER_SEC / 2;
+    throw new Error(`날씨 ${kind}가 없다`);
+  }
+
+  function skyWorld(seed = 7) {
+    const w = makeWorld();
+    w.seed = seed;
+    w.stock.set('brick', 100);
+    w.stock.set('circuit', 100);
+    return w;
+  }
+
+  /** 날씨는 그대로 두고 하루 중 때만 바꾼 시각 (낮 0.3, 밤 0.8) */
+  const at = (time: number, phase: number) => Math.floor(time / DAY_SEC) * DAY_SEC + phase * DAY_SEC;
+
+  it('태양광은 낮에만 돌고, 흐리면 절반, 비가 오면 4분의 1', () => {
+    const w = skyWorld();
+    const p = w.place('solar', 20, 20, 0)!;
+    for (const [kind, k] of [['clear', 1], ['cloudy', 0.5], ['rain', 0.25]] as const) {
+      const t = timeOf(w, kind);
+      w.time = t;
+      w.tick();
+      // 날씨 칸 한가운데라 하루 중 때는 그때그때 다르다: 해가 있는 만큼만
+      expect(p.load).toBeCloseTo(SOLAR_POWER * k * (1 - darkness(t)), 6);
+    }
+    // 맑은 낮에는 다 내고, 밤에는 0 (작동 중이 아니라 대기)
+    w.time = 0;
+    w.tick();
+    expect(p.load).toBe(SOLAR_POWER);
+    w.time = DAY_SEC * 0.8;
+    w.tick();
+    expect(p.load).toBe(0);
+    expect(p.status).toBe('idle');
+    expect(w.power.capacity).toBe(HUB_BASE_POWER);
+  });
+
+  it('풍력은 밤낮없이 날씨만 따른다: 맑음 60 · 흐림 100 · 비 150', () => {
+    const w = skyWorld();
+    const t = w.place('wind', 20, 20, 0)!;
+    for (const kind of ['clear', 'cloudy', 'rain'] as const) {
+      const time = timeOf(w, kind);
+      for (const phase of [0.3, 0.8]) {
+        w.time = at(time, phase);
+        // 같은 날씨 칸 안에서만 비교 (때를 바꾸다 다른 날씨 칸으로 넘어가면 건너뛴다)
+        if (weatherOf(w.seed, Math.floor(w.time / WEATHER_SEC)) !== kind || w.time % WEATHER_SEC < 30) continue;
+        w.tick();
+        expect(t.load).toBeCloseTo(WIND_POWER[kind], 6);
+      }
+    }
+    w.time = 0;
+    w.tick();
+    expect(w.power.capacity).toBeCloseTo(HUB_BASE_POWER + WIND_POWER.clear, 6);
+    expect(t.status).toBe('working');
+  });
+
+  it('날씨가 바뀔 때는 출력도 서서히 바뀐다', () => {
+    const w = skyWorld();
+    const t = w.place('wind', 20, 20, 0)!;
+    // 앞 칸과 날씨가 다른 칸의 시작
+    let slot = 1;
+    while (weatherOf(w.seed, slot) === weatherOf(w.seed, slot - 1)) slot++;
+    const from = WIND_POWER[weatherOf(w.seed, slot - 1)];
+    const to = WIND_POWER[weatherOf(w.seed, slot)];
+    w.time = slot * WEATHER_SEC + 10;
+    w.tick();
+    expect(t.load).toBeGreaterThan(Math.min(from, to));
+    expect(t.load).toBeLessThan(Math.max(from, to));
+  });
+
+  it('풍력 발전기는 "풍력 발전" 연구로 열리고, 철판·기어로 짓는다', () => {
+    const w = new World(30, 30);
+    w.createHub(0, 9);
+    w.stock.set('iron-plate', 1000);
+    w.stock.set('gear', 1000);
+    expect(w.place('wind', 10, 10, 0)).toBeNull();
+    w.applyTech('automation');
+    w.applyTech('wind');
+    expect(w.place('wind', 10, 10, 0)).not.toBeNull();
   });
 });
 
@@ -398,34 +490,38 @@ describe('석탄 독립: 태양광·수력·전기로', () => {
     const w = makeWorld();
     w.stock.set('brick', 100);
     w.stock.set('circuit', 100);
+    w.stock.set('steel', 100);
     return w;
   }
 
-  it('태양광 패널은 아무것도 넣지 않아도 100kW를 더한다', () => {
+  it('태양광 패널은 아무것도 넣지 않아도 맑은 낮에 150kW를 더한다', () => {
     const w = coalFreeWorld();
     w.place('solar', 20, 20, 0);
     w.tick();
-    expect(w.power.capacity).toBe(300 + 100);
+    expect(w.power.capacity).toBe(HUB_BASE_POWER + SOLAR_POWER);
   });
 
   it('수력 발전기는 물로 모자란 만큼만 돌고, 석탄 발전기보다 먼저 쓴다', () => {
     const w = coalFreeWorld();
-    // 수요 450kW (전기로 1대): 허브 300 + 수력 150, 석탄은 그대로
+    // 수요 750kW (전기로 1대 450 + 분리기 1대 300): 허브 400 + 수력 350, 석탄은 그대로
     const f = w.place('electric-furnace', 10, 10, 1)!;
     w.setRecipe(f, 'steel-e');
     f.inBuf.set('iron-plate', 4);
+    const s = w.place('separator', 10, 5, 1)!;
+    w.setRecipe(s, 'separate');
+    s.inBuf.set('mineral-dust', 4);
     const h = w.place('hydro', 15, 15, 0)!;
     h.fuel = 10;
     const g = w.place('generator', 20, 20, 0)!;
     g.fuel = 5;
     run(w, 4);
     expect(w.power.satisfaction).toBe(1);
-    expect(h.load).toBeCloseTo(150, 5);
+    expect(h.load).toBeCloseTo(350, 5);
     // 석탄 발전기는 놀고 있다 (발전기는 연료 하나를 미리 열어 두지만 쓰지는 않는다)
     expect(g.load).toBe(0);
     expect(g.fuel * 4000 + g.energy).toBe(5 * 4000);
-    // 150kW × 4초 = 600kJ = 물 2개 분량
-    expect(h.fuel * 300 + h.energy).toBeCloseTo(10 * 300 - 600, 5);
+    // 350kW × 4초 = 1400kJ
+    expect(h.fuel * 300 + h.energy).toBeCloseTo(10 * 300 - 1400, 5);
   });
 
   it('물이 떨어지면 "물 없음", 컨베이어로 물을 받는다', () => {
@@ -1968,14 +2064,14 @@ describe('차량 운송', () => {
       const { w, a } = baseWorld();
       const v1 = w.buildTruck(a)!;
       const v2 = w.cloneTruck(v1)!;
-      v1.battery = 0;
-      v2.battery = 0;
+      const others = [w.cloneTruck(v1)!, w.cloneTruck(v1)!];
+      for (const v of [v1, v2, ...others]) v.battery = 0;
       run(w, 1);
-      // 허브 300kW에 트럭 둘이 200kW씩 → 75%
-      expect(w.power.charge).toBe(2 * TRUCK.charge);
-      expect(w.power.satisfaction).toBeCloseTo(0.75, 6);
-      // 첫 틱은 정류장에 닿기만 하고, 그다음부터 150kW씩
-      expect(v1.battery).toBeCloseTo(TRUCK.charge * 0.75 * (1 - 1 / 60), 3);
+      // 허브 400kW에 트럭 넷이 200kW씩 → 50%
+      expect(w.power.charge).toBe(4 * TRUCK.charge);
+      expect(w.power.satisfaction).toBeCloseTo(0.5, 6);
+      // 첫 틱은 정류장에 닿기만 하고, 그다음부터 100kW씩
+      expect(v1.battery).toBeCloseTo(TRUCK.charge * 0.5 * (1 - 1 / 60), 3);
       expect(v2.battery).toBeCloseTo(v1.battery, 6);
     });
 

@@ -1,3 +1,4 @@
+import type { WeatherKind } from '../sim/sky';
 import type { ItemStack } from './items';
 
 export type BuildingType =
@@ -28,6 +29,7 @@ export type BuildingType =
   | 'sawmill'
   | 'solar'
   | 'hydro'
+  | 'wind'
   | 'electric-furnace';
 
 export type Category = 'logistics' | 'production' | 'power' | 'storage' | 'transport' | 'forest';
@@ -49,7 +51,7 @@ export const CATEGORIES: { id: Category; name: string; key: string; items: Build
     key: 'x',
     items: ['miner', 'smelter', 'assembler', 'miner-2', 'crusher', 'washer', 'separator', 'pump', 'electric-furnace'],
   },
-  { id: 'power', name: '전력', key: 'c', items: ['generator', 'solar', 'hydro'] },
+  { id: 'power', name: '전력', key: 'c', items: ['generator', 'solar', 'hydro', 'wind'] },
   { id: 'storage', name: '보관', key: 'v', items: ['storage', 'unloader'] },
   { id: 'transport', name: '운송', key: 'b', items: ['road', 'station', 'charger'] },
   { id: 'forest', name: '숲', key: 'n', items: ['lumberjack', 'planter', 'sawmill'] },
@@ -81,7 +83,7 @@ export const BUILDINGS: Record<BuildingType, BuildingDef> = {
     cost: [],
     power: 0,
     color: '#5b6cff',
-    description: '창고. 들어온 아이템을 보관하고, 건설 재료로 쓴다. 기본 전력 300kW 제공.',
+    description: '창고. 들어온 아이템을 보관하고, 건설 재료로 쓴다. 기본 전력 400kW 제공.',
     placeable: false,
   },
   belt: {
@@ -429,7 +431,7 @@ export const BUILDINGS: Record<BuildingType, BuildingDef> = {
     ],
     power: 0,
     color: '#3d6fb0',
-    description: '아무것도 넣지 않아도 늘 100kW를 만든다. 약하지만 끝이 없어서, 넓게 깔수록 전력이 늘어난다.',
+    description: '아무것도 넣지 않아도 해가 있는 동안 전기를 만든다. 맑은 낮 150kW, 흐리면 절반, 비가 오면 4분의 1, 밤에는 0.',
     placeable: true,
   },
   hydro: {
@@ -447,6 +449,19 @@ export const BUILDINGS: Record<BuildingType, BuildingDef> = {
     color: '#2f8fae',
     description:
       '양수기로 퍼 온 물을 넣으면 최대 600kW를 만든다. 물 1개 = 300kJ라 최대로 돌면 초당 물 2개 (양수기 1대 분량). 아무 면으로나 받는다.',
+    placeable: true,
+  },
+  wind: {
+    type: 'wind',
+    name: '풍력 발전기',
+    size: 2,
+    cost: [
+      { item: 'iron-plate', count: 20 },
+      { item: 'gear', count: 10 },
+    ],
+    power: 0,
+    color: '#8fb3c9',
+    description: '아무것도 넣지 않아도 밤낮없이 돈다. 바람은 날씨를 따라서 맑으면 60kW, 흐리면 100kW, 비가 오면 150kW.',
     placeable: true,
   },
   'electric-furnace': {
@@ -538,13 +553,17 @@ export const FOREST = {
   revive: 50,
 };
 
-export const HUB_BASE_POWER = 300;
+export const HUB_BASE_POWER = 400;
 export const GENERATOR_POWER = 900;
 export const COAL_ENERGY = 4000;
 /** 숯 1개의 에너지 (석탄의 2/3쯤): 끝없이 얻지만 약한 땔감 */
 export const CHARCOAL_ENERGY = 2500;
-/** 태양광 패널 한 대 (늘 이만큼) */
-export const SOLAR_POWER = 100;
+/** 태양광 패널 한 대가 맑은 낮에 내는 전력. 밤에는 0, 해 질 녘·해 뜰 녘에는 서서히 */
+export const SOLAR_POWER = 150;
+/** 날씨에 따라 태양광이 내는 비율 */
+export const SOLAR_WEATHER: Record<WeatherKind, number> = { clear: 1, cloudy: 0.5, rain: 0.25 };
+/** 풍력 발전기 한 대가 날씨마다 내는 전력 (밤낮 상관없이) */
+export const WIND_POWER: Record<WeatherKind, number> = { clear: 60, cloudy: 100, rain: 150 };
 /** 수력 발전기 한 대 최대 출력과 물 1개의 에너지 (kJ). 최대로 돌면 초당 물 2개 = 양수기 1대 */
 export const HYDRO_POWER = 600;
 export const WATER_ENERGY = 300;

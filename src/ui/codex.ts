@@ -97,7 +97,8 @@ const OTHER_USES: { item: ItemId; building: BuildingType; result: string; note: 
 const POWER_MADE: Partial<Record<BuildingType, string>> = {
   generator: '석탄으로 전력 최대 900kW',
   hydro: '물로 전력 최대 600kW',
-  solar: '전력 100kW (늘)',
+  solar: '맑은 낮 전력 150kW (밤 0)',
+  wind: '전력 60~150kW (날씨 따라)',
 };
 
 /** 건물마다 어디로 받고 어디로 내보내는지 */
@@ -119,6 +120,7 @@ function portText(b: BuildingType): string {
     case 'hydro':
       return '아무 면으로나 받아요.';
     case 'solar':
+    case 'wind':
       return '받는 것도 내보내는 것도 없어요. 놓기만 하면 전기를 만들어요.';
     case 'station':
       return '싣기 정류장은 아무 면으로나 받고, 내리기 정류장은 노란 화살표(앞)로 내보내요. 트럭은 테두리에 닿은 도로에 서요.';

@@ -40,6 +40,7 @@ const machines: [BuildingType, string | null][] = [
   ['generator', null],
   ['solar', null],
   ['hydro', null],
+  ['wind', null],
 ];
 machines.forEach(([type, recipe], k) => {
   const b = put(type, k * 3, 0, (k % 4) as Dir);
@@ -161,7 +162,7 @@ function frame(now: number): void {
     b.status = 'working';
     b.load = 300;
     b.fuel = 3;
-    b.crafting = b.type !== 'generator' && b.type !== 'solar' && b.type !== 'hydro';
+    b.crafting = !['generator', 'solar', 'hydro', 'wind'].includes(b.type);
     b.progress = (world.time % 2) * 0.5;
   }
   renderer.draw(world, camera, view);

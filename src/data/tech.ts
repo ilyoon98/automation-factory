@@ -85,12 +85,24 @@ export const TECHS: Tech[] = [
     name: '석탄 발전',
     description: '석탄 발전기',
     cost: [
-      { item: 'iron-plate', count: 250 },
-      { item: 'gear', count: 80 },
-      { item: 'copper-plate', count: 150 },
+      { item: 'iron-plate', count: 120 },
+      { item: 'gear', count: 40 },
     ],
     requires: ['automation'],
     unlockBuildings: ['generator'],
+  },
+  {
+    id: 'wind',
+    icon: '🌬️',
+    category: 'power',
+    name: '풍력 발전',
+    description: '풍력 발전기 (연료 없이 밤낮없이, 날씨가 궂을수록 세게)',
+    cost: [
+      { item: 'iron-plate', count: 80 },
+      { item: 'gear', count: 30 },
+    ],
+    requires: ['automation'],
+    unlockBuildings: ['wind'],
   },
   {
     id: 'steel',
@@ -223,7 +235,7 @@ export const TECHS: Tech[] = [
     icon: '☀️',
     category: 'power',
     name: '재생 에너지',
-    description: '태양광 패널 (늘 100kW), 수력 발전기 (물로 최대 600kW). 석탄 없이 전기를 만든다',
+    description: '태양광 패널 (맑은 낮 150kW, 밤 0), 수력 발전기 (물로 최대 600kW). 석탄 없이 전기를 만든다',
     cost: [
       { item: 'brick', count: 100 },
       { item: 'circuit', count: 120 },

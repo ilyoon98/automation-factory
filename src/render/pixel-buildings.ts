@@ -654,6 +654,33 @@ define('hydro', 32, 32, 5, (p, f) => {
   for (let x = 4; x < 13; x += 4) p.rect(x, 21, 1, 3, '#57514a');
 });
 
+define('wind', 32, 32, 5, (p, f) => {
+  machine(p, STONE, ramp('#6f8fa6'), false);
+  // 기둥
+  p.rect(14, 10, 4, 15, PAL.ink);
+  p.rect(15, 10, 2, 15, CREAM);
+  p.rect(16, 10, 1, 15, '#d8c9a6');
+  // 날개 셋: 프레임마다 1/12바퀴 (날개가 셋이라 4프레임 = 1/3바퀴면 처음 모양으로 이어진다)
+  const a = -TAU / 4 + turn(f) * (TAU / 3);
+  const blade: Ramp = { hi: '#ffffff', mid: CREAM, lo: '#cdbb94' };
+  shapeAround(p, 16, 10, 9.5, (x, y) => {
+    const dx = x - 16;
+    const dy = y - 10;
+    const d = Math.hypot(dx, dy);
+    if (d < 1.8) return PAL.metal.mid;
+    if (d > 9.5) return null;
+    // 뿌리 쪽이 굵고 끝으로 갈수록 가늘다
+    const half = 1.9 - d * 0.1;
+    for (let k = 0; k < 3; k++) if (onSpoke(dx, dy, a + (k * TAU) / 3, half)) return lit(dx, dy, blade, 0.5);
+    return null;
+  });
+  // 앞면: 작은 문과 바람개비 무늬
+  p.rect(13, 21, 6, 7, PAL.ink);
+  p.rect(14, 22, 4, 6, DARK_WOOD.mid);
+  p.px(17, 25, PAL.brass.hi);
+  for (const x of [5, 8, 23, 26]) p.rect(x, 22, 1, 4, tone('#6f8fa6', -0.3));
+});
+
 // ───────────────────────── 창고 조각 (32×32, 묶음 가장자리 16가지) ─────────────────────────
 
 /** mask: 1 = 위, 2 = 오른쪽, 4 = 아래, 8 = 왼쪽이 묶음 가장자리. 안쪽 변은 널빤지가 이어진다 */

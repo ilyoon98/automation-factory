@@ -1256,6 +1256,17 @@ describe('연구', () => {
     expect(w.stockOf('iron-plate')).toBeGreaterThanOrEqual(100);
   });
 
+  it('시작 기어를 석탄 발전 연구에 다 써도 조립기를 지어 기어를 다시 만들 수 있다 (막다른 길 없음)', () => {
+    const w = generateWorld(1);
+    expect(w.research('automation')).toBe(true);
+    w.stock.set('iron-plate', 200);
+    expect(w.research('power')).toBe(true);
+    expect(w.stockOf('gear')).toBe(0);
+    // 조립기는 철판만 든다
+    expect(BUILDINGS.assembler.cost.some((c) => c.item === 'gear')).toBe(false);
+    expect(w.canPlace('assembler', 20, 20).ok).toBe(true);
+  });
+
   describe('끝없는 연구', () => {
     const rich = () => {
       const w = generateWorld(1);
@@ -1410,7 +1421,8 @@ describe('복사/붙여넣기', () => {
     expect(pasteBlueprint(w, bp, 20, 20)).toEqual({ placed: 2, skipped: 0 });
     expect(w.buildingAt(20, 20)!.dir).toBe(2);
     expect(w.buildingAt(21, 20)!.recipe).toBe('gear');
-    expect(w.stockOf('iron-plate')).toBe(plates - 1 - 10);
+    // 컨베이어 1 + 조립기 20
+    expect(w.stockOf('iron-plate')).toBe(plates - 1 - 20);
 
     // 같은 자리에 또 붙이면 겹쳐서 모두 건너뛴다
     expect(pasteBlueprint(w, bp, 20, 20)).toEqual({ placed: 0, skipped: 2 });

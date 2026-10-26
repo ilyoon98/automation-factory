@@ -171,10 +171,8 @@ export const BUILDINGS: Record<BuildingType, BuildingDef> = {
     type: 'assembler',
     name: '조립기',
     size: 2,
-    cost: [
-      { item: 'iron-plate', count: 10 },
-      { item: 'gear', count: 6 },
-    ],
+    // 기어 없이 철판만: 기어를 다 써도 조립기를 지어 기어를 다시 만들 수 있게 (기어 ↔ 조립기 막다른 길 막기)
+    cost: [{ item: 'iron-plate', count: 20 }],
     power: 75,
     color: '#3f7fa5',
     description: '부품을 조립한다. 클릭해서 레시피를 고른다. 출구(노란 화살표)를 뺀 나머지 면으로 재료를 받는다.',

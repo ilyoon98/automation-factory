@@ -15,6 +15,15 @@ import {
   isRecipeMachine,
   type BuildingType,
 } from '../data/buildings';
+import {
+  ACHIEVEMENTS,
+  ACHIEVEMENT_GROUPS,
+  TIER_ICONS,
+  TIER_NAMES,
+  achievementValue,
+  checkAchievements,
+  fmtAchievement,
+} from '../data/achievements';
 import { ITEMS, ITEM_IDS, type ItemId, type ItemStack } from '../data/items';
 import { RECIPES, recipesFor, type MachineKind } from '../data/recipes';
 import { ENDLESS_BY_ID, ENDLESS_REQUIRES, ENDLESS_TECHS, TECHS, TECH_BY_ID, TECH_CATEGORIES, endlessCost, type TechCategory } from '../data/tech';
@@ -156,6 +165,9 @@ export class UI {
   private toastTimer = 0;
   /** 목표 달성 소리를 낼지 가리려고 지난번에 본 공장 */
   private guideWorld: World | null = null;
+  /** 업적 알림을 낼지 가리려고 지난번에 본 공장, 업적 창을 마지막으로 그린 시각 */
+  private achWorld: World | null = null;
+  private achAt = 0;
   /** 방금 복사해서 저장한 묶음 → 저장한 이름 */
   private savedPastes = new WeakMap<Blueprint, string>();
   /** 지금 목표가 가리키는 것 */
@@ -209,6 +221,7 @@ export class UI {
     );
     $('btn-research').addEventListener('click', () => this.toggleModal('research'));
     $('btn-stats').addEventListener('click', () => this.toggleModal('stats'));
+    $('btn-achievements').addEventListener('click', () => this.toggleModal('achievements'));
     $('btn-map').addEventListener('click', () => game.toggleMap());
     $('btn-help').addEventListener('click', () => this.toggleModal('help'));
     $('btn-rates').addEventListener('click', () => this.toggleRates());
@@ -282,11 +295,13 @@ export class UI {
       if (k === 'i') this.toggleRates();
       if (k === 'g') this.codex.toggle();
       if (k === 'p' && !e.ctrlKey && !e.metaKey) this.toggleModal('stats');
+      if (k === 'j' && !e.ctrlKey && !e.metaKey) this.toggleModal('achievements');
       if (k === 'm' && !e.ctrlKey && !e.metaKey) game.toggleMap();
       if (k === 'escape') {
         $('research').hidden = true;
         $('help').hidden = true;
         $('stats').hidden = true;
+        $('achievements').hidden = true;
         this.codex.close();
       }
     });
@@ -620,11 +635,12 @@ export class UI {
     this.toast(input.showRates ? '생산량 표시 켬 (기계 위 숫자 = 분당 생산, 색 = 가동률)' : '생산량 표시 끔');
   }
 
-  private toggleModal(id: 'research' | 'help' | 'stats'): void {
+  private toggleModal(id: 'research' | 'help' | 'stats' | 'achievements'): void {
     const el = $(id);
     el.hidden = !el.hidden;
     if (id === 'research') this.researchKey = '';
     if (id === 'stats') this.statsAt = 0;
+    if (id === 'achievements') this.achAt = 0;
     this.update();
   }
 
@@ -675,6 +691,7 @@ export class UI {
     this.updateStock(w);
     this.updateOreAlerts(w);
     this.updateGuide(w);
+    this.updateAchievements(w);
     this.updateInfo(w);
     if (!$('research').hidden) this.updateResearch(w);
     this.sampleStock(w);
@@ -854,6 +871,58 @@ export class UI {
     $('guide').innerHTML = `${head}
       <div class="now"><b>${now.title}</b><p>${hint}</p></div>
       <ul class="steps">${steps}</ul>`;
+  }
+
+  /** 업적: 새로 오른 단계를 남기고 알린 뒤, 창이 열려 있으면 1초마다 다시 그린다 */
+  private updateAchievements(w: World): void {
+    const up = checkAchievements(w);
+    // 같은 공장에서 새로 오른 단계만 알린다 (불러오거나 방에 들어가 한꺼번에 채워질 때는 조용히)
+    if (up.length && w === this.achWorld) {
+      const { def, tier } = up[0];
+      const more = up.length > 1 ? ` 외 ${up.length - 1}개` : '';
+      this.toast(`${TIER_ICONS[tier - 1]} 업적 ${TIER_NAMES[tier - 1]}: ${def.name} ${fmtAchievement(def, def.tiers[tier - 1])}${more} · 업적 창 J`, 4000);
+      sound.play('achieve');
+    }
+    this.achWorld = w;
+
+    if ($('achievements').hidden) return;
+    const now = performance.now();
+    if (now - this.achAt < 1000) return;
+    this.achAt = now;
+    let medals = 0;
+    for (const t of w.achieved.values()) medals += t;
+    const all = ACHIEVEMENTS.length * TIER_NAMES.length;
+    const groups = ACHIEVEMENT_GROUPS.map((g) => {
+      const rows = ACHIEVEMENTS.filter((a) => a.group === g.id)
+        .map((a) => {
+          const tier = w.achieved.get(a.id) ?? 0;
+          const value = achievementValue(w, a);
+          const next = a.tiers[tier] as number | undefined;
+          const pct = next === undefined ? 100 : Math.min(100, (value / next) * 100);
+          const icon = a.item ? itemLink(a.item, false) : `<span class="ach-emoji">${a.icon}</span>`;
+          const marks = TIER_ICONS.map(
+            (m, i) => `<span class="${i < tier ? 'on' : ''}" title="${TIER_NAMES[i]}: ${fmtAchievement(a, a.tiers[i])}">${m}</span>`,
+          ).join('');
+          const sub =
+            next === undefined
+              ? `다 이뤘어요 · 지금 ${fmtAchievement(a, value)}`
+              : `${a.kind === 'made' || a.kind === 'planted' ? '' : '지금 '}${fmtAchievement(a, value)} / ${fmtAchievement(a, next)} <span class="muted">(다음: ${TIER_NAMES[tier]})</span>`;
+          return `<div class="ach${next === undefined ? ' max' : ''}">${icon}
+            <div class="ach-body"><div class="ach-top"><b>${a.name}</b><span class="medals">${marks}</span></div>
+            <div class="gbar"><i style="width:${pct}%"></i></div><small>${sub}</small></div></div>`;
+        })
+        .join('');
+      return `<h3>${g.name}</h3>${g.note ? `<p class="muted">${g.note}</p>` : ''}<div class="ach-list">${rows}</div>`;
+    }).join('');
+    // 창 틀은 한 번만 만들고 안쪽만 바꾼다 (통째로 바꾸면 1초마다 스크롤이 맨 위로 돌아간다)
+    const el = $('achievements');
+    if (!el.querySelector('.ach-panel')) {
+      el.innerHTML = `<div class="panel ach-panel"><header><h2>업적 <small></small></h2><button class="x" data-act="close-modal">×</button></header>
+        <p class="muted">이 공장이 지금까지 쌓아 온 기록이에요. 업적마다 🥉 동 · 🥈 은 · 🥇 금 · 💎 다이아 4단계. 한 번 오른 단계는 내려가지 않아요.</p>
+        <div class="ach-groups"></div></div>`;
+    }
+    el.querySelector('h2 small')!.textContent = `${medals}/${all}`;
+    el.querySelector('.ach-groups')!.innerHTML = groups;
   }
 
   /**

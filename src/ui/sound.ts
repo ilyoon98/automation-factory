@@ -11,6 +11,7 @@ export type SoundName =
   | 'error'
   | 'research'
   | 'goal'
+  | 'achieve'
   | 'truck'
   | 'undo'
   | 'chat'
@@ -63,6 +64,7 @@ const GAP: Partial<Record<SoundName, number>> = {
   ping: 0.3,
   power: 2,
   ore: 1,
+  achieve: 0.5,
 };
 /** 소리마다 대략 울리는 길이 (초). 동시에 울리는 수를 셀 때 쓴다 */
 const LENGTH: Record<SoundName, number> = {
@@ -72,6 +74,7 @@ const LENGTH: Record<SoundName, number> = {
   error: 0.27,
   research: 0.38,
   goal: 0.87,
+  achieve: 1.1,
   truck: 0.26,
   undo: 0.08,
   chat: 0.08,
@@ -294,6 +297,11 @@ class Sound {
       case 'goal':
         // 목표 달성: 맑은 종 4음
         [659, 784, 988, 1319].forEach((f, i) => this.bell(out, f, t + i * 0.09, 0.6, 0.22));
+        break;
+      case 'achieve':
+        // 업적: 짧은 팡파르 (솔-도-미 화음을 한 번 더 높게)
+        [784, 1047, 1319].forEach((f, i) => this.tone(out, 'triangle', f, f, t + i * 0.07, 0.18, 0.24));
+        [1047, 1319, 1568].forEach((f) => this.bell(out, f, t + 0.3, 0.8, 0.14));
         break;
       case 'truck':
         // 빵빵

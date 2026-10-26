@@ -1090,6 +1090,73 @@ h3 small {
   margin: 0;
 }
 
+/* 업적 */
+.ach-panel h2 small {
+  font: 12px var(--font-s);
+  color: var(--muted);
+}
+.ach-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: 6px;
+  margin-top: 6px;
+}
+.ach {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  background: var(--paper-2);
+  border: 1px solid var(--lo);
+}
+.ach.max {
+  border-color: var(--accent);
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+.ach .icon,
+.ach-emoji {
+  width: 24px;
+  height: 24px;
+  font-size: 20px;
+  line-height: 24px;
+  text-align: center;
+  flex: none;
+}
+.ach-body {
+  flex: 1;
+  min-width: 0;
+}
+.ach-top {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.ach-top b {
+  flex: 1;
+}
+.ach .medals span {
+  filter: grayscale(1);
+  opacity: 0.25;
+}
+.ach .medals span.on {
+  filter: none;
+  opacity: 1;
+}
+.ach .gbar {
+  height: 6px;
+  margin: 3px 0 2px;
+  background: rgba(59, 39, 22, 0.12);
+  border: 1px solid var(--ink);
+}
+.ach .gbar i {
+  display: block;
+  height: 100%;
+  background: var(--good);
+}
+.ach small {
+  font: 11px var(--font-s);
+}
+
 /* 공장 통계 */
 .stats-panel {
   width: min(900px, calc((100vw / var(--uiz)) - 32px));

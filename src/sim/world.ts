@@ -257,6 +257,14 @@ export class World {
   levels = new Map<string, number>();
   /** 이룬 목표(가이드)의 제목. 한 번 이루면 저장에 남아 다시 앞 목표로 돌아가지 않는다 */
   guideDone = new Set<string>();
+  /** 이룬 업적: 업적 id → 단계 (1 = 동 … 4 = 다이아). 목표처럼 화면 쪽에서 채우고 저장에 남긴다 */
+  achieved = new Map<string, number>();
+  /** 지금까지 기계가 만든(캔·벤) 아이템 총량 (업적용) */
+  madeTotal = new Map<ItemId, number>();
+  /** 식목기가 심은 나무 총수 (업적용) */
+  planted = 0;
+  /** 1초마다 남긴 madeTotal, 최근 1분 (분당 생산 업적용. 저장하지 않음) */
+  private madeLog: { sec: number; made: Map<ItemId, number> }[] = [];
   /** 빈 땅에서 흙을 캘 수 있는지 ("흙 정제" 연구) */
   dirtMining = false;
   power: PowerState = { demand: 0, capacity: HUB_BASE_POWER, supply: 0, satisfaction: 1, charge: 0 };
@@ -1474,6 +1482,10 @@ export class World {
       this.incomeSecond = sec;
       this.incomeBuckets[sec % 60].clear();
     }
+    if (sec !== this.madeLog[this.madeLog.length - 1]?.sec) {
+      this.madeLog.push({ sec, made: new Map(this.madeTotal) });
+      if (this.madeLog.length > 61) this.madeLog.shift();
+    }
 
     this.growTrees();
     for (const b of this.buildings.values()) if (isCrafter(b)) this.tryStart(b);
@@ -1599,6 +1611,23 @@ export class World {
     b.crafting = true;
   }
 
+  /**
+   * 최근 1분 동안 기계가 실제로 만든 개수. 기록이 1분이 안 됐으면 (막 켰거나 불러왔으면) 0.
+   * 기계 평균(factoryFlows)과 달리 정말 나온 개수라 업적에 쓴다.
+   */
+  madePerMinute(item: ItemId): number {
+    const old = this.madeLog[0];
+    const cur = this.madeLog[this.madeLog.length - 1];
+    if (!old || cur.sec - old.sec < 60) return 0;
+    return (this.madeTotal.get(item) ?? 0) - (old.made.get(item) ?? 0);
+  }
+
+  /** 기계가 만든 것을 출력 칸에 넣고 총량에 센다 */
+  private make(b: Building, item: ItemId, n: number): void {
+    addTo(b.outBuf, item, n);
+    addTo(this.madeTotal, item, n);
+  }
+
   private updatePower(): void {
     let demand = 0;
     let solar = 0;
@@ -1695,20 +1724,21 @@ export class World {
       const i = b.mineTiles.find((t) => this.tree[t] >= 1);
       if (i === undefined) return;
       this.clearTree(i);
-      addTo(b.outBuf, 'log', FOREST.logs);
-      addTo(b.outBuf, 'sapling', 1);
+      this.make(b, 'log', FOREST.logs);
+      this.make(b, 'sapling', 1);
       return;
     }
     if (b.type === 'planter') {
       const i = b.mineTiles.find((t) => this.canPlant(t));
       if (i === undefined || countOf(b.inBuf, 'sapling') <= 0) return;
       addTo(b.inBuf, 'sapling', -1);
+      this.planted++;
       // 아주 조금 자란 상태로 심는다 (0은 "나무 없음")
       this.setTree(i % this.width, Math.floor(i / this.width), 0.001);
       return;
     }
     if (b.mineDirt) {
-      addTo(b.outBuf, 'dirt', 1);
+      this.make(b, 'dirt', 1);
       return;
     }
     if (isMinerType(b.type) && b.type !== 'pump') {
@@ -1718,7 +1748,7 @@ export class World {
         const p = this.patches.get(b.minePatches[(b.mineIdx + k) % n]);
         const item = p ? this.takeFromPatch(p) : null;
         if (!item) continue;
-        addTo(b.outBuf, item, 1);
+        this.make(b, item, 1);
         b.mineIdx = (b.mineIdx + k + 1) % n;
         return;
       }
@@ -1736,7 +1766,7 @@ export class World {
           this.resAmount[i] = 0;
           this.resItem[i] = null;
         }
-        addTo(b.outBuf, item, 1);
+        this.make(b, item, 1);
         b.mineIdx = (b.mineIdx + k + 1) % n;
         return;
       }
@@ -1746,11 +1776,11 @@ export class World {
     if (!r) return;
     if (r.pattern) {
       // 분리기: 정해진 순서대로 하나씩
-      addTo(b.outBuf, r.pattern[b.cycle % r.pattern.length], 1);
+      this.make(b, r.pattern[b.cycle % r.pattern.length], 1);
       b.cycle = (b.cycle + 1) % r.pattern.length;
       return;
     }
-    for (const o of r.outputs) addTo(b.outBuf, o.item, o.count);
+    for (const o of r.outputs) this.make(b, o.item, o.count);
   }
 
   private pushOutputs(b: Building): void {
@@ -2782,6 +2812,9 @@ export class World {
       ...(this.levels.size ? { levels: [...this.levels] } : {}),
       trees: this.treeList(),
       guide: [...this.guideDone],
+      ...(this.achieved.size ? { achievements: [...this.achieved] } : {}),
+      ...(this.madeTotal.size ? { made: [...this.madeTotal] } : {}),
+      ...(this.planted ? { planted: this.planted } : {}),
       buildings: [...this.buildings.values()].map((b) => ({
         id: b.id,
         type: b.type,
@@ -2858,6 +2891,9 @@ export class World {
     for (const id of data.researched) w.applyTech(id);
     w.levels = new Map(data.levels ?? []);
     w.guideDone = new Set(data.guide ?? []);
+    w.achieved = new Map(data.achievements ?? []);
+    w.madeTotal = new Map(data.made ?? []);
+    w.planted = data.planted ?? 0;
     for (const s of data.buildings) {
       const b = new Building(s.id, s.type, s.x, s.y, s.dir);
       b.recipe = s.recipe;
@@ -2994,6 +3030,8 @@ export class World {
     for (const [id, n] of this.levels) h.str(id).num(n);
     for (let i = 0; i < this.resAmount.length; i++) if (this.resItem[i]) h.num(i).num(this.resAmount[i]);
     for (let i = 0; i < this.tree.length; i++) if (this.tree[i] > 0) h.num(i).num(this.tree[i]);
+    for (const [item, n] of this.madeTotal) h.str(item).num(n);
+    h.num(this.planted);
     for (const b of this.buildings.values()) {
       h.num(b.id).str(b.type).num(b.x).num(b.y).num(b.dir).str(b.recipe ?? '').str(b.filter ?? '');
       h.num(b.progress).num(b.crafting ? 1 : 0).num(b.outRR).num(b.mineIdx).num(b.fuel).num(b.energy);
@@ -3117,6 +3155,12 @@ export interface SaveData {
   trees?: [number, number][];
   /** 이룬 목표 제목들 */
   guide?: string[];
+  /** 이룬 업적 [업적 id, 단계] */
+  achievements?: [string, number][];
+  /** 기계가 만든 아이템 총량 (업적용) */
+  made?: [ItemId, number][];
+  /** 식목기가 심은 나무 총수 (업적용) */
+  planted?: number;
   buildings: SavedBuilding[];
   nextStationNo?: number;
   vehicles?: SavedVehicle[];

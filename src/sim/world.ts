@@ -7,7 +7,6 @@ import {
   HUB_BASE_POWER,
   HYDRO_POWER,
   SOLAR_POWER,
-  SOLAR_WEATHER,
   STATION_CAPACITY,
   STORAGE_CAPACITY,
   STORAGE_GROUP_MAX,
@@ -15,7 +14,6 @@ import {
   UNDERGROUND_MAX_GAP,
   UNLOADER_INTERVAL,
   WATER_ENERGY,
-  WIND_POWER,
   isBeltType,
   isForestType,
   isMinerType,
@@ -28,7 +26,8 @@ import { RECIPES, type MachineKind, type Recipe } from '../data/recipes';
 import { ENDLESS_BY_ID, ENDLESS_REQUIRES, INITIAL_BUILDINGS, INITIAL_RECIPES, TECH_BY_ID, endlessCost } from '../data/tech';
 import { Building, addTo, countOf, type BeltItem, type StationMode } from './building';
 import { DX, DY, opposite, rotateCW, type Dir } from './dir';
-import { darkness, weatherMix } from './sky';
+import { WEATHER, type WeatherDef } from '../data/weather';
+import { darkness, localWeather, weatherMix } from './sky';
 import { ROUTE_MIN, Vehicle, type RouteStop, type VehicleState } from './vehicle';
 
 export const TICK_RATE = 60;
@@ -883,7 +882,9 @@ export class World {
 
   /** 지금 하는 작업 1회에 걸리는 시간 (초) */
   craftTime(b: Building): number {
-    if (isMinerType(b.type)) return 1 / ((b.def.speed ?? 1) * this.boost('endless-mining'));
+    // 양수기는 비·폭풍에 빨라진다
+    const rain = b.type === 'pump' ? this.skyFactors(this.groundIndexOf(b)).pump : 1;
+    if (isMinerType(b.type)) return 1 / ((b.def.speed ?? 1) * this.boost('endless-mining') * rain);
     if (b.type === 'lumberjack') return FOREST.cut / this.boost('endless-mining');
     if (b.type === 'planter') return FOREST.plant;
     return (this.recipeOf(b)?.time ?? 1) / this.boost('endless-crafting');
@@ -1109,7 +1110,7 @@ export class World {
     const step = (DT * this.treeGrowth()) / FOREST.grow;
     let keep = 0;
     for (const i of this.growing) {
-      const g = Math.min(1, this.tree[i] + step * GROUNDS[this.ground[i]].treeGrow);
+      const g = Math.min(1, this.tree[i] + step * this.skyFactors(this.ground[i]).tree);
       this.tree[i] = g;
       if (g >= 1) this.treesGrown++;
       else this.growing[keep++] = i;
@@ -1639,13 +1640,11 @@ export class World {
     let solar = 0;
     const gens: Building[] = [];
     const hydros: Building[] = [];
-    const sun = this.solarOutput();
-    const wind = this.windOutput();
     for (const b of this.buildings.values()) {
       if (b.crafting && b.def.power > 0) demand += b.def.power;
       if (b.type === 'solar' || b.type === 'wind') {
-        const g = this.groundOf(b);
-        b.load = b.type === 'solar' ? sun * g.solar : wind * g.wind;
+        const f = this.skyFactors(this.groundIndexOf(b));
+        b.load = b.type === 'solar' ? f.solar : f.wind;
         solar += b.load;
         b.status = b.load > 0 ? 'working' : 'idle';
       } else if (b.type === 'generator' || b.type === 'hydro') {
@@ -1676,21 +1675,49 @@ export class World {
     this.power = { demand, capacity, supply, satisfaction, charge };
   }
 
-  /** 건물이 선 땅 (가운데 칸) */
-  groundOf(b: { x: number; y: number; size: number }): GroundDef {
+  /** 건물이 선 땅의 번호 (가운데 칸). 맵 밖(가장자리에 걸친 미리보기)은 초원 */
+  groundIndexOf(b: { x: number; y: number; size: number }): number {
     const h = Math.floor(b.size / 2);
-    // 맵 밖(가장자리에 걸친 미리보기)은 초원으로
-    return this.inBounds(b.x + h, b.y + h) ? GROUNDS[this.ground[this.idx(b.x + h, b.y + h)]] : GROUNDS[0];
+    return this.inBounds(b.x + h, b.y + h) ? this.ground[this.idx(b.x + h, b.y + h)] : 0;
   }
 
-  /** 지금 태양광 패널 한 대의 출력 (kW): 해가 있는 만큼 × 날씨 (초원 기준, 땅 배율은 따로) */
-  solarOutput(): number {
-    return SOLAR_POWER * (1 - darkness(this.time)) * weatherMix(this.seed, this.time, (k) => SOLAR_WEATHER[k]);
+  /** 건물이 선 땅 */
+  groundOf(b: { x: number; y: number; size: number }): GroundDef {
+    return GROUNDS[this.groundIndexOf(b)];
   }
 
-  /** 지금 풍력 발전기 한 대의 출력 (kW): 날씨만 따른다 */
-  windOutput(): number {
-    return weatherMix(this.seed, this.time, (k) => WIND_POWER[k]);
+  /**
+   * 지금 하늘(낮·밤과 날씨)이 땅 종류마다 주는 값. 같은 시각이면 다시 계산하지 않는다.
+   * 날씨는 맵 전체가 같지만 비가 눈밭에선 눈, 사막에선 모래 바람이라 땅마다 다르다.
+   * solar·wind는 한 대 출력(kW, 땅 배율까지), tree는 땅 배율까지, truck·pump는 날씨 배율.
+   */
+  skyFactors(ground: number): SkyFactors {
+    const c = this.skyCache;
+    if (c && c.time === this.time && c.seed === this.seed) return c.by[ground];
+    const sun = SOLAR_POWER * (1 - darkness(this.time));
+    const by = GROUNDS.map((g, k): SkyFactors => {
+      const mix = (pick: (w: WeatherDef) => number) => weatherMix(this.seed, this.time, (kind) => pick(WEATHER[localWeather(kind, k)]));
+      return {
+        solar: sun * mix((w) => w.solar) * g.solar,
+        wind: mix((w) => w.wind) * g.wind,
+        tree: mix((w) => w.tree) * g.treeGrow,
+        truck: mix((w) => w.truck),
+        pump: mix((w) => w.pump),
+      };
+    });
+    this.skyCache = { time: this.time, seed: this.seed, by };
+    return by[ground];
+  }
+  private skyCache: { time: number; seed: number; by: SkyFactors[] } | null = null;
+
+  /** 지금 태양광 패널 한 대의 출력 (kW): 해가 있는 만큼 × 날씨 × 땅 (기본은 초원) */
+  solarOutput(ground = 0): number {
+    return this.skyFactors(ground).solar;
+  }
+
+  /** 지금 풍력 발전기 한 대의 출력 (kW): 날씨 × 땅 (기본은 초원) */
+  windOutput(ground = 0): number {
+    return this.skyFactors(ground).wind;
   }
 
   /**
@@ -2573,7 +2600,8 @@ export class World {
       }
     }
     const empty = v.battery <= 0;
-    const full = this.truckSpeed() * DT * (empty ? TRUCK.emptySpeed : 1);
+    // 안개·눈·모래 바람·폭풍에는 느리게 (트럭이 선 칸의 땅에 내리는 날씨)
+    const full = this.truckSpeed() * this.skyFactors(this.ground[v.tile]).truck * DT * (empty ? TRUCK.emptySpeed : 1);
     const [arrived, left] = this.move(v, st, full);
     // 한 칸에 drive / speed kJ (기본 속도 기준: 빨라져도 칸당 드는 전기는 같다)
     v.battery = Math.max(0, v.battery - ((full - left) * TRUCK.drive) / TRUCK.speed);
@@ -3374,4 +3402,16 @@ function groundRuns(ground: Uint8Array): number[] {
     i = j;
   }
   return out;
+}
+
+/** 하늘이 땅 종류 하나에 주는 값 (World.skyFactors) */
+export interface SkyFactors {
+  /** 태양광 한 대 출력 (kW) */
+  solar: number;
+  /** 풍력 한 대 출력 (kW) */
+  wind: number;
+  /** 나무 자라는 빠르기 배율 (땅 배율 포함) */
+  tree: number;
+  truck: number;
+  pump: number;
 }

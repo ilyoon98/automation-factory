@@ -19,6 +19,7 @@ import { BELT_SPEED, World, isLineType, patchAlert, storageBounds } from '../sim
 import { ambientEnabled, darkness, sunset, weatherAt } from './ambient';
 import type { Camera } from './camera';
 import { roundRect } from './draw-item';
+import { DESERT, SNOW } from '../data/ground';
 import { GROUND_LOOK, NUM_ADVANCE, ORE_GROUND, PAL, TILE, TREE_LEAF, hash, loadSpriteOverrides, sprite, spriteHalf, tone } from './pixel';
 import { MACHINE } from './pixel-buildings';
 
@@ -192,6 +193,8 @@ export class Renderer {
   /** 빗줄기 (화면 좌표, 0~1) */
   private drops: { x: number; y: number; s: number }[] = [];
   private lastRainAt = 0;
+  /** 번개 밝기 (1에서 0으로 빠르게 사라진다) */
+  private flash = 0;
 
   constructor(private canvas: HTMLCanvasElement) {
     this.ctx = canvas.getContext('2d')!;
@@ -1335,10 +1338,29 @@ export class Renderer {
       ctx.fillStyle = `rgba(255,140,70,${(0.13 * glow).toFixed(3)})`;
       ctx.fillRect(0, 0, W, H);
     }
-    // 흐림·비: 잿빛
+    // 흐림·비·폭풍: 잿빛 (폭풍은 더 어둡게)
     if (sky.cloud > 0) {
-      ctx.fillStyle = `rgba(70,80,95,${(0.16 * sky.cloud + 0.08 * sky.rain).toFixed(3)})`;
+      ctx.fillStyle = `rgba(70,80,95,${(0.16 * sky.cloud + 0.08 * sky.rain + 0.1 * sky.storm).toFixed(3)})`;
       ctx.fillRect(0, 0, W, H);
+    }
+    // 안개: 뿌연 흰빛
+    if (sky.fog > 0) {
+      ctx.fillStyle = `rgba(232,234,232,${(0.38 * sky.fog * (1 - 0.4 * dark)).toFixed(3)})`;
+      ctx.fillRect(0, 0, W, H);
+    }
+    // 비가 오면 사막에는 모래 바람: 보이는 사막 칸을 누렇게
+    if (sky.rain > 0) {
+      const [wx0, wy0] = cam.screenToWorld(0, 0);
+      const [wx1, wy1] = cam.screenToWorld(cam.viewW, cam.viewH);
+      const size = cam.zoom * dpr;
+      ctx.fillStyle = `rgba(214,160,80,${(0.32 * sky.rain).toFixed(3)})`;
+      for (let y = Math.max(0, Math.floor(wy0)); y <= Math.min(world.height - 1, Math.floor(wy1)); y++) {
+        for (let x = Math.max(0, Math.floor(wx0)); x <= Math.min(world.width - 1, Math.floor(wx1)); x++) {
+          if (world.ground[world.idx(x, y)] !== DESERT) continue;
+          const [sx, sy] = cam.worldToScreen(x, y);
+          ctx.fillRect(Math.floor(sx * dpr), Math.floor(sy * dpr), Math.ceil(size) + 1, Math.ceil(size) + 1);
+        }
+      }
     }
 
     // 밤: 어둠을 따로 칠하고 불빛 자리를 도려내 덮는다
@@ -1393,17 +1415,25 @@ export class Renderer {
     const now = performance.now() / 1000;
     const dt = Math.min(0.1, now - this.lastRainAt);
     this.lastRainAt = now;
-    const want = Math.round(220 * sky.rain);
+    // 폭풍이면 빗줄기가 더 많다
+    const want = Math.round((220 + 160 * sky.storm) * sky.rain);
     while (this.drops.length < want) this.drops.push({ x: Math.random(), y: Math.random(), s: 0.7 + Math.random() * 0.6 });
     if (this.drops.length > want) this.drops.length = want;
     if (this.drops.length) {
-      // 밝은 모래 위에서도 보이게 진한 푸른 회색 (밤에는 조금 밝게)
-      ctx.strokeStyle = dark > 0.5 ? 'rgba(170,190,225,0.5)' : 'rgba(70,95,140,0.5)';
-      ctx.lineWidth = Math.max(1.5, 1.5 * dpr);
-      ctx.beginPath();
+      // 떨어지는 자리의 땅에 따라: 초원은 빗줄기, 눈밭은 눈송이, 사막은 옆으로 날리는 모래
+      const rain = new Path2D();
+      const snow = new Path2D();
+      const sand = new Path2D();
+      const lw = Math.max(1.5, 1.5 * dpr);
       for (const d of this.drops) {
-        d.y += dt * 1.6 * d.s;
-        d.x -= dt * 0.25 * d.s;
+        const [wx, wy] = cam.screenToWorld((d.x * W) / dpr, (d.y * H) / dpr);
+        const gx = Math.floor(wx);
+        const gy = Math.floor(wy);
+        const g = world.inBounds(gx, gy) ? world.ground[world.idx(gx, gy)] : 0;
+        const fall = g === SNOW ? 0.25 : g === DESERT ? 0.5 : 1.6;
+        const side = g === DESERT ? 1.4 : g === SNOW ? 0.05 * Math.sin(now * 2 + d.s * 9) : 0.25;
+        d.y += dt * fall * d.s;
+        d.x -= dt * side * d.s;
         if (d.y > 1) {
           d.y -= 1.05;
           d.x = Math.random() * 1.1;
@@ -1411,11 +1441,36 @@ export class Renderer {
         if (d.x < -0.05) d.x += 1.1;
         const x = d.x * W;
         const y = d.y * H;
-        const len = 14 * d.s * dpr;
-        ctx.moveTo(x, y);
-        ctx.lineTo(x + len * 0.25, y - len);
+        if (g === SNOW) {
+          const r = Math.max(3, 4 * d.s) * dpr;
+          snow.rect(x - r / 2, y - r / 2, r, r);
+        } else if (g === DESERT) {
+          // 모래알 줄 두 개 (빗줄기보다 굵고 길게, 옆으로 날린다)
+          const len = 18 * d.s * dpr;
+          sand.rect(x, y, len, lw * 1.5);
+          sand.rect(x + len * 0.4, y + 5 * dpr, len * 0.6, lw);
+        } else {
+          const len = 14 * d.s * dpr;
+          rain.moveTo(x, y);
+          rain.lineTo(x + len * 0.25, y - len);
+        }
       }
-      ctx.stroke();
+      // 밝은 모래 위에서도 보이게 진한 푸른 회색 (밤에는 조금 밝게)
+      ctx.strokeStyle = dark > 0.5 ? 'rgba(170,190,225,0.5)' : 'rgba(70,95,140,0.5)';
+      ctx.lineWidth = lw;
+      ctx.stroke(rain);
+      // 흰 눈밭 위에서도 보이게 푸른 잿빛 눈송이
+      ctx.fillStyle = dark > 0.5 ? 'rgba(235,242,250,0.9)' : 'rgba(100,125,160,0.9)';
+      ctx.fill(snow);
+      ctx.fillStyle = 'rgba(125,78,28,0.7)';
+      ctx.fill(sand);
+    }
+    // 폭풍: 가끔 번개가 번쩍
+    if (sky.storm > 0.6 && Math.random() < dt * 0.15) this.flash = 1;
+    if (this.flash > 0) {
+      ctx.fillStyle = `rgba(255,255,245,${(0.35 * this.flash).toFixed(3)})`;
+      ctx.fillRect(0, 0, W, H);
+      this.flash = Math.max(0, this.flash - dt * 6);
     }
     ctx.restore();
   }

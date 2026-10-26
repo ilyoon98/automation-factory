@@ -25,11 +25,12 @@ import {
   fmtAchievement,
 } from '../data/achievements';
 import { groundEffects } from '../data/ground';
+import { WEATHER, weatherEffects } from '../data/weather';
 import { ITEMS, ITEM_IDS, type ItemId, type ItemStack } from '../data/items';
 import { RECIPES, recipesFor, type MachineKind } from '../data/recipes';
 import { ENDLESS_BY_ID, ENDLESS_REQUIRES, ENDLESS_TECHS, TECHS, TECH_BY_ID, TECH_CATEGORIES, endlessCost, type TechCategory } from '../data/tech';
 import type { Input } from '../input/input';
-import { DAY_SEC, ambientEnabled, setAmbientEnabled, skyLabel } from '../render/ambient';
+import { DAY_SEC, WEATHER_SEC, ambientEnabled, forecast, setAmbientEnabled, skyLabel, weatherAt } from '../render/ambient';
 import { lanRoomCheck, type Session } from '../net/session';
 import { VERSION } from '../version';
 import { STATUS_LABEL, countOf, type Building, type StationMode, type Status } from '../sim/building';
@@ -670,8 +671,23 @@ export class UI {
     const time = `${Math.floor(t / 60)}:${String(t % 60).padStart(2, '0')}`;
     // 하늘 아이콘 (낮·해 질 녘·밤·흐림·비). 태양광·풍력 출력이 하늘을 따르니 화면 효과를 꺼도 보인다
     const sky = skyLabel(w.seed, w.time);
-    $('clock').textContent = `${sky.icon} ${time}`;
-    $('clock').title = `${sky.text} · 게임 시간 ${time} (하루 ${DAY_SEC / 60}분) · 태양광 ${Math.round(w.solarOutput())}kW · 풍력 ${Math.round(w.windOutput())}kW (한 대)`;
+    // 날씨 예보: 다음에 바뀌는 날씨 (기상 관측 연구 뒤에는 9분 앞까지)
+    const watch = w.researched.has('weather-watch');
+    const next = forecast(w.seed, w.time, watch ? 9 * 60 : WEATHER_SEC);
+    const left = (at: number) => {
+      const s = Math.max(0, Math.ceil(at - w.time));
+      return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+    };
+    $('clock').textContent = `${sky.icon} ${time}${next.length ? ` · ${WEATHER[next[0].kind].icon} ${left(next[0].at)}` : ''}`;
+    const now = WEATHER[weatherAt(w.seed, w.time).kind];
+    const ahead = next.length
+      ? next.map((f) => `${left(f.at)} 뒤 ${WEATHER[f.kind].icon} ${WEATHER[f.kind].name}`).join(', ')
+      : `${watch ? 9 : WEATHER_SEC / 60}분 안에는 그대로`;
+    $('clock').title =
+      `${sky.text} · 게임 시간 ${time} (하루 ${DAY_SEC / 60}분)\n` +
+      `지금 ${now.name}: ${weatherEffects(now)}\n` +
+      `예보: ${ahead}${watch ? '' : ' (연구 "기상 관측"으로 9분 앞까지)'}\n` +
+      `초원 기준 한 대: 태양광 ${Math.round(w.solarOutput())}kW · 풍력 ${Math.round(w.windOutput())}kW`;
     document.querySelectorAll<HTMLButtonElement>('#topbar [data-speed]').forEach((btn) => {
       btn.classList.toggle('active', Number(btn.dataset.speed) === this.game.speed);
     });
@@ -1270,7 +1286,7 @@ export class UI {
         lines.push(`<div class="row"><span>출력</span><b>${Math.round(b.load)} / ${Math.round(SOLAR_POWER * g.solar)} kW</b></div>`);
         lines.push(`<div class="row"><span>땅</span><b>${g.icon} ${g.name}${g.solar !== 1 ? ` · 태양광 ${g.solar}배` : ''}</b></div>`);
         lines.push(
-          `<p class="muted">해가 있는 동안만 돌아요. 초원의 맑은 낮 ${SOLAR_POWER}kW, 흐리면 절반, 비가 오면 4분의 1, 밤에는 0이에요. 사막에 지으면 1.5배, 눈밭은 0.75배예요.</p>`,
+          `<p class="muted">해가 있는 동안만 돌아요. 초원의 맑은 낮 ${SOLAR_POWER}kW, 흐리면 절반, 안개 0.6배, 비·눈 4분의 1, 모래 바람·폭풍 0.1배, 밤에는 0이에요. 사막에 지으면 1.5배, 눈밭은 0.75배예요.</p>`,
         );
         break;
       }
@@ -1279,7 +1295,7 @@ export class UI {
         lines.push(`<div class="row"><span>출력</span><b>${Math.round(b.load)} kW</b></div>`);
         lines.push(`<div class="row"><span>땅</span><b>${g.icon} ${g.name}${g.wind !== 1 ? ` · 풍력 ${g.wind}배` : ''}</b></div>`);
         lines.push(
-          `<p class="muted">밤낮없이 돌아요. 바람은 날씨를 따라 맑으면 ${WIND_POWER.clear}kW, 흐리면 ${WIND_POWER.cloudy}kW, 비가 오면 ${WIND_POWER.rain}kW예요. 눈밭에 지으면 1.3배예요.</p>`,
+          `<p class="muted">밤낮없이 돌아요. 바람은 날씨를 따라 맑음·안개 ${WIND_POWER.clear}kW, 흐림 ${WIND_POWER.cloudy}kW, 비·눈·모래 바람 ${WIND_POWER.rain}kW, 폭풍 ${WIND_POWER.storm}kW예요. 눈밭에 지으면 1.3배예요.</p>`,
         );
         break;
       }
@@ -1438,7 +1454,7 @@ export class UI {
       el.innerHTML = `<header><img class="swatch" src="${truckIconUrl()}" alt=""><h3>트럭 ${v.id}</h3>
           <button class="x" data-act="close">×</button></header>
         <p class="muted">노선의 정류장을 차례대로 돌아요. 싣는 곳에서는 가득 차거나 ${TRUCK.wait}초 동안 새 짐이 없으면,
-          내리는 곳에서는 다 내리면 다음 정류장으로 가요. 한 번에 ${TRUCK.capacity}개, 초당 ${fmtNum(w.truckSpeed())}칸.</p>
+          내리는 곳에서는 다 내리면 다음 정류장으로 가요. 한 번에 ${TRUCK.capacity}개, 초당 ${fmtNum(w.truckSpeed())}칸 (안개·눈·모래 바람·폭풍에는 느려요).</p>
         <div class="route">
           <div class="route-head"><span>노선</span><span class="muted">위에서 아래로, 끝나면 처음으로</span></div>
           ${v.stops

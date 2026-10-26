@@ -42,9 +42,12 @@ export function sunset(time: number): number {
   return Math.max(bump(DUSK - 0.03, NIGHT), bump(DAWN, 1));
 }
 
-export type WeatherKind = 'clear' | 'cloudy' | 'rain';
+/** 맵 전체 날씨 */
+export type WeatherKind = 'clear' | 'cloudy' | 'fog' | 'rain' | 'storm';
+/** 땅에 따라 달라 보이는 날씨: 비가 눈밭에서는 눈, 사막에서는 모래 바람 */
+export type LocalWeather = WeatherKind | 'snow' | 'sandstorm';
 
-/** 날씨 칸(slot)마다 정해진 날씨: 맑음 60% · 흐림 25% · 비 15% */
+/** 날씨 칸(slot)마다 정해진 날씨: 맑음 50% · 흐림 20% · 안개 10% · 비 15% · 폭풍 5% */
 export function weatherOf(seed: number, slot: number): WeatherKind {
   let h = (seed ^ Math.imul(slot + 1, 0x9e3779b1)) >>> 0;
   h = Math.imul(h ^ (h >>> 16), 0x85ebca6b) >>> 0;
@@ -52,7 +55,27 @@ export function weatherOf(seed: number, slot: number): WeatherKind {
   const r = ((h ^ (h >>> 16)) >>> 0) / 4294967296;
   // 맨 처음(새 게임 첫 3분)은 늘 맑게
   if (slot === 0) return 'clear';
-  return r < 0.6 ? 'clear' : r < 0.85 ? 'cloudy' : 'rain';
+  return r < 0.5 ? 'clear' : r < 0.7 ? 'cloudy' : r < 0.8 ? 'fog' : r < 0.95 ? 'rain' : 'storm';
+}
+
+/** 땅(GROUNDS 번호: 1 사막 · 2 눈밭)에서 보이는 날씨 */
+export function localWeather(kind: WeatherKind, ground: number): LocalWeather {
+  if (kind !== 'rain') return kind;
+  return ground === 2 ? 'snow' : ground === 1 ? 'sandstorm' : 'rain';
+}
+
+/** 지금 뒤로 날씨가 바뀌는 때들 (시각이 가까운 순, horizon초 안). 같이 하는 사람끼리 같다 */
+export function forecast(seed: number, time: number, horizon: number): { kind: WeatherKind; at: number }[] {
+  const t = Math.max(0, time);
+  const slot = Math.floor(t / WEATHER_SEC);
+  const out: { kind: WeatherKind; at: number }[] = [];
+  let prev = weatherOf(seed, slot);
+  for (let s = slot + 1; s * WEATHER_SEC <= t + horizon; s++) {
+    const k = weatherOf(seed, s);
+    if (k !== prev) out.push({ kind: k, at: s * WEATHER_SEC });
+    prev = k;
+  }
+  return out;
 }
 
 /** 날씨마다 정한 값(of)을, 날씨가 바뀔 때는 앞 날씨에서 서서히 넘어가게 */
@@ -64,11 +87,19 @@ export function weatherMix(seed: number, time: number, of: (w: WeatherKind) => n
   return prev + (cur - prev) * smooth(into / WEATHER_FADE);
 }
 
-/** 지금 날씨와 세기 (cloud: 흐린 정도 0~1, rain: 비 0~1). 날씨가 바뀔 때 서서히 */
-export function weatherAt(seed: number, time: number): { kind: WeatherKind; cloud: number; rain: number } {
+/**
+ * 지금 날씨와 세기 (모두 0~1, 날씨가 바뀔 때 서서히).
+ * cloud: 흐린 정도 · rain: 비(눈밭은 눈, 사막은 모래 바람, 폭풍 포함) · fog: 안개 · storm: 폭풍
+ */
+export function weatherAt(
+  seed: number,
+  time: number,
+): { kind: WeatherKind; cloud: number; rain: number; fog: number; storm: number } {
   return {
     kind: weatherOf(seed, Math.floor(Math.max(0, time) / WEATHER_SEC)),
-    cloud: weatherMix(seed, time, (w) => (w === 'clear' ? 0 : w === 'cloudy' ? 0.6 : 1)),
-    rain: weatherMix(seed, time, (w) => (w === 'rain' ? 1 : 0)),
+    cloud: weatherMix(seed, time, (w) => (w === 'clear' ? 0 : w === 'cloudy' ? 0.6 : w === 'fog' ? 0.3 : 1)),
+    rain: weatherMix(seed, time, (w) => (w === 'rain' || w === 'storm' ? 1 : 0)),
+    fog: weatherMix(seed, time, (w) => (w === 'fog' ? 1 : 0)),
+    storm: weatherMix(seed, time, (w) => (w === 'storm' ? 1 : 0)),
   };
 }

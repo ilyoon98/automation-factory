@@ -1,6 +1,6 @@
 import { isBeltType } from './buildings';
 import type { ItemId } from './items';
-import { darkness } from '../sim/sky';
+import { darkness, weatherAt } from '../sim/sky';
 import type { World } from '../sim/world';
 
 /**
@@ -18,6 +18,8 @@ export type AchievementKind =
   | 'power'
   /** 한밤에 쓰는 전력 (kW) */
   | 'night-power'
+  /** 폭풍 속에서 쓰는 전력 (kW) */
+  | 'storm-power'
   /** 컨베이어를 뺀 건물 수 (허브 빼고) */
   | 'buildings'
   | 'trucks'
@@ -95,6 +97,7 @@ export const ACHIEVEMENTS: AchievementDef[] = [
 
   { id: 'power', name: '전력 쓰기', kind: 'power', group: 'factory', tiers: [1_000, 5_000, 20_000, 50_000], icon: '⚡' },
   { id: 'night-power', name: '한밤에 전력 쓰기', kind: 'night-power', group: 'factory', tiers: [500, 2_000, 10_000, 30_000], icon: '🌙' },
+  { id: 'storm-power', name: '폭풍 속 전력 쓰기', kind: 'storm-power', group: 'factory', tiers: [500, 2_000, 10_000, 30_000], icon: '⛈️' },
   { id: 'buildings', name: '건물 짓기 (컨베이어 빼고)', kind: 'buildings', group: 'factory', tiers: [50, 200, 1_000, 3_000], icon: '🏭' },
   { id: 'trucks', name: '트럭 굴리기', kind: 'trucks', group: 'factory', tiers: [5, 20, 50, 100], icon: '🚚' },
   { id: 'planted', name: '나무 심기', kind: 'planted', group: 'factory', tiers: [100, 1_000, 10_000, 100_000], icon: '🌱' },
@@ -112,6 +115,8 @@ export function achievementValue(w: World, a: AchievementDef): number {
       return w.power.supply;
     case 'night-power':
       return darkness(w.time) >= 1 ? w.power.supply : 0;
+    case 'storm-power':
+      return weatherAt(w.seed, w.time).kind === 'storm' ? w.power.supply : 0;
     case 'buildings': {
       let n = 0;
       for (const b of w.buildings.values()) if (b.type !== 'hub' && !isBeltType(b.type) && b.type !== 'underground') n++;
@@ -169,6 +174,7 @@ export function fmtAchievement(a: AchievementDef, n: number): string {
       return `분당 ${fmtCount(n)}`;
     case 'power':
     case 'night-power':
+    case 'storm-power':
       return n >= 1_000 ? `${(Math.floor(n / 100) / 10).toLocaleString('ko-KR')}MW` : `${Math.floor(n)}kW`;
     case 'buildings':
       return `${fmtCount(n)}개`;

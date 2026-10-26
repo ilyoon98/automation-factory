@@ -17,7 +17,7 @@ describe('낮·밤과 날씨', () => {
     expect(weatherOf(7, 0)).toBe('clear');
     for (let slot = 1; slot < 50; slot++) expect(weatherOf(7, slot)).toBe(weatherOf(7, slot));
     const kinds = new Set(Array.from({ length: 200 }, (_, s) => weatherOf(123, s + 1)));
-    expect(kinds).toEqual(new Set(['clear', 'cloudy', 'rain']));
+    expect(kinds).toEqual(new Set(['clear', 'cloudy', 'fog', 'rain', 'storm']));
     // 바뀌는 순간은 서서히
     const slot = Array.from({ length: 200 }, (_, s) => s + 1).find((s) => weatherOf(5, s) === 'rain' && weatherOf(5, s - 1) === 'clear')!;
     const at = (dt: number) => weatherAt(5, slot * WEATHER_SEC + dt).rain;

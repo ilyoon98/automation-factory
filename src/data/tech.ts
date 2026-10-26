@@ -105,6 +105,18 @@ export const TECHS: Tech[] = [
     unlockBuildings: ['wind'],
   },
   {
+    id: 'weather-watch',
+    icon: '📡',
+    category: 'power',
+    name: '기상 관측',
+    description: '날씨 예보를 3분 앞에서 9분 앞까지 본다 (궂은 날에 대비해 풍력·석탄을 늘려 두기)',
+    cost: [
+      { item: 'circuit', count: 50 },
+      { item: 'copper-wire', count: 100 },
+    ],
+    requires: ['wind', 'electronics'],
+  },
+  {
     id: 'steel',
     icon: '🔩',
     category: 'production',

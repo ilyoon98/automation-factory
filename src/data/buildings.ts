@@ -1,4 +1,5 @@
-import type { WeatherKind } from '../sim/sky';
+import type { LocalWeather } from '../sim/sky';
+import { WEATHER, type WeatherDef } from './weather';
 import type { ItemStack } from './items';
 
 export type BuildingType =
@@ -558,10 +559,14 @@ export const COAL_ENERGY = 4000;
 export const CHARCOAL_ENERGY = 2500;
 /** 태양광 패널 한 대가 맑은 낮에 내는 전력. 밤에는 0, 해 질 녘·해 뜰 녘에는 서서히 */
 export const SOLAR_POWER = 150;
-/** 날씨에 따라 태양광이 내는 비율 */
-export const SOLAR_WEATHER: Record<WeatherKind, number> = { clear: 1, cloudy: 0.5, rain: 0.25 };
-/** 풍력 발전기 한 대가 날씨마다 내는 전력 (밤낮 상관없이) */
-export const WIND_POWER: Record<WeatherKind, number> = { clear: 60, cloudy: 100, rain: 150 };
+/** 날씨에 따라 태양광이 내는 비율 (data/weather.ts) */
+export const SOLAR_WEATHER = byWeather((w) => w.solar);
+/** 풍력 발전기 한 대가 날씨마다 내는 전력 (밤낮 상관없이, data/weather.ts) */
+export const WIND_POWER = byWeather((w) => w.wind);
 /** 수력 발전기 한 대 최대 출력과 물 1개의 에너지 (kJ). 최대로 돌면 초당 물 2개 = 양수기 1대 */
 export const HYDRO_POWER = 600;
 export const WATER_ENERGY = 300;
+
+function byWeather(pick: (w: WeatherDef) => number): Record<LocalWeather, number> {
+  return Object.fromEntries(Object.entries(WEATHER).map(([k, w]) => [k, pick(w)])) as Record<LocalWeather, number>;
+}

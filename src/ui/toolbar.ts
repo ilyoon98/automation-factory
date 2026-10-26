@@ -34,7 +34,7 @@ const categoryOf = (type: BuildingType): Category | null =>
 
 /**
  * 하단 툴바: 카테고리 탭 + 그 탭의 건물 목록.
- * - Z X C V B 또는 Tab / Shift+Tab 으로 탭을 바꾸고, 숫자 1~9로 그 탭의 N번째 건물을 고른다.
+ * - Z X C V B 또는 Tab / Shift+Tab 으로 탭을 바꾸고, 숫자 1~9 (0 = 10번째)로 그 탭의 N번째 건물을 고른다.
  * - 다른 방법(Q로 집기 등)으로 다른 탭의 건물을 들면 그 탭으로 넘어간다.
  */
 export class Toolbar {
@@ -232,7 +232,7 @@ export class Toolbar {
       btn.className = 'pal';
       btn.dataset.codexBuilding = type; // 우클릭: 도감
       btn.innerHTML = `
-        <span class="key">${i + 1}</span>
+        <span class="key">${(i + 1) % 10}</span>
         <img src="${buildingIconUrl(type)}" alt="">
         <span class="name">${def.name}</span>
         <span class="cost">${def.cost.map((c) => `${itemIcon(c.item)}${c.count}`).join(' ')}</span>

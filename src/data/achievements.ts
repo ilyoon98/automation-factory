@@ -87,6 +87,10 @@ export const ACHIEVEMENTS: AchievementDef[] = [
   made('log', '통나무 베기', MID),
   made('wood', '목재 만들기', MID),
   made('paper', '종이 만들기', SMALL),
+  made('tin-ore', '주석광석 캐기', MID),
+  made('bauxite', '보크사이트 캐기', MID),
+  made('bronze', '청동 만들기', SMALL),
+  made('aluminum', '알루미늄판 만들기', SMALL),
 
   rate('iron-plate', '철판 분당', [60, 300, 1_200, 3_000]),
   rate('copper-plate', '구리판 분당', [60, 300, 1_200, 3_000]),

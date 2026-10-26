@@ -147,6 +147,7 @@ const HAS_STATUS: BuildingType[] = [
   'washer',
   'separator',
   'electric-furnace',
+  'electrolyzer',
   'generator',
   'hydro',
   'unloader',
@@ -1227,6 +1228,7 @@ export class UI {
       case 'washer':
       case 'separator':
       case 'electric-furnace':
+      case 'electrolyzer':
       case 'sawmill':
         lines.push(`<div class="row"><span>입력</span><b>${buf(b.inBuf)}</b></div>`);
         lines.push(`<div class="row"><span>출력 대기</span><b>${buf(b.outBuf)}</b></div>`);

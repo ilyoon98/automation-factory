@@ -1,7 +1,7 @@
 import type { ItemId, ItemStack } from './items';
 
 /** 레시피를 쓰는 기계 */
-export type MachineKind = 'smelter' | 'assembler' | 'crusher' | 'washer' | 'separator' | 'electric-furnace' | 'sawmill';
+export type MachineKind = 'smelter' | 'assembler' | 'crusher' | 'washer' | 'separator' | 'electric-furnace' | 'sawmill' | 'electrolyzer';
 
 export interface Recipe {
   id: string;
@@ -183,6 +183,38 @@ export const RECIPES: Record<string, Recipe> = {
     time: 5,
     inputs: [{ item: 'iron-plate', count: 2 }],
     outputs: [{ item: 'steel', count: 1 }],
+  },
+
+  // ───── 금속: 주석·알루미늄 ─────
+  'tin-plate': {
+    id: 'tin-plate',
+    name: '주석판',
+    machine: 'smelter',
+    time: 2,
+    inputs: [{ item: 'tin-ore', count: 1 }],
+    outputs: [{ item: 'tin-plate', count: 1 }],
+  },
+  bronze: {
+    id: 'bronze',
+    name: '청동',
+    machine: 'smelter',
+    time: 4,
+    inputs: [
+      { item: 'copper-plate', count: 3 },
+      { item: 'tin-plate', count: 1 },
+    ],
+    outputs: [{ item: 'bronze', count: 4 }],
+  },
+  aluminum: {
+    id: 'aluminum',
+    name: '알루미늄판',
+    machine: 'electrolyzer',
+    time: 3,
+    inputs: [
+      { item: 'bauxite', count: 2 },
+      { item: 'water', count: 1 },
+    ],
+    outputs: [{ item: 'aluminum', count: 1 }],
   },
 
   // ───── 숲·나무 ─────

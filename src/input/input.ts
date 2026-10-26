@@ -41,6 +41,7 @@ const ROTATABLE: BuildingType[] = [
   'pump',
   'station',
   'electric-furnace',
+  'electrolyzer',
   'lumberjack',
   'sawmill',
 ];
@@ -350,8 +351,9 @@ export class Input implements ViewState {
       return;
     }
     this.keys.add(k);
-    if (/^[1-9]$/.test(e.key)) {
-      const type = this.cb.paletteSlot(Number(e.key) - 1);
+    // 1~9, 0 = 10번째
+    if (/^[0-9]$/.test(e.key)) {
+      const type = this.cb.paletteSlot((Number(e.key) + 9) % 10);
       if (type) this.setTool(type);
       return;
     }

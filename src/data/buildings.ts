@@ -31,7 +31,8 @@ export type BuildingType =
   | 'solar'
   | 'hydro'
   | 'wind'
-  | 'electric-furnace';
+  | 'electric-furnace'
+  | 'electrolyzer';
 
 export type Category = 'logistics' | 'production' | 'power' | 'storage' | 'transport' | 'forest';
 
@@ -50,7 +51,7 @@ export const CATEGORIES: { id: Category; name: string; key: string; items: Build
     id: 'production',
     name: '생산',
     key: 'x',
-    items: ['miner', 'smelter', 'assembler', 'miner-2', 'crusher', 'washer', 'separator', 'pump', 'electric-furnace'],
+    items: ['miner', 'smelter', 'assembler', 'miner-2', 'crusher', 'washer', 'separator', 'pump', 'electric-furnace', 'electrolyzer'],
   },
   { id: 'power', name: '전력', key: 'c', items: ['generator', 'solar', 'hydro', 'wind'] },
   { id: 'storage', name: '보관', key: 'v', items: ['storage', 'unloader'] },
@@ -478,6 +479,21 @@ export const BUILDINGS: Record<BuildingType, BuildingDef> = {
       '석탄 없이 전기만으로 철판을 강철로 만든다 (철판 2 → 강철 1). 대신 전력을 많이 쓴다. 출구(노란 화살표)를 뺀 나머지 면으로 받는다.',
     placeable: true,
   },
+  electrolyzer: {
+    type: 'electrolyzer',
+    name: '전해로',
+    size: 2,
+    cost: [
+      { item: 'steel', count: 20 },
+      { item: 'bronze', count: 20 },
+      { item: 'circuit', count: 10 },
+    ],
+    power: 500,
+    color: '#7a9bb5',
+    description:
+      '보크사이트 2 + 물 1을 전기로 녹여 알루미늄판 1을 만든다 (3초). 전력을 아주 많이 쓴다. 출구(노란 화살표)를 뺀 나머지 면으로 받는다.',
+    placeable: true,
+  },
 };
 
 /** 정류장 하나에 쌓아 두는 아이템 수 */
@@ -528,7 +544,7 @@ export const crossesRoad = (tool: BuildingType, there: BuildingType) =>
 /** 땅(광맥·흙·물)에서 뽑아내는 건물 */
 export const isMinerType = (t: BuildingType) => t === 'miner' || t === 'miner-2' || t === 'pump';
 /** 레시피로 재료를 결과물로 바꾸는 건물 */
-export const RECIPE_MACHINES: BuildingType[] = ['smelter', 'assembler', 'crusher', 'washer', 'separator', 'electric-furnace', 'sawmill'];
+export const RECIPE_MACHINES: BuildingType[] = ['smelter', 'assembler', 'crusher', 'washer', 'separator', 'electric-furnace', 'sawmill', 'electrolyzer'];
 export const isRecipeMachine = (t: BuildingType) => RECIPE_MACHINES.includes(t);
 /** 둘레의 나무를 다루는 건물 (벌목기·식목기) */
 export const isForestType = (t: BuildingType) => t === 'lumberjack' || t === 'planter';

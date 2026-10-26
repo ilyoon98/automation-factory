@@ -48,6 +48,7 @@ export function generateWorld(seed: number, size = MAP_SIZE): World {
     blob(w, c + Math.cos(a) * dist, c + Math.sin(a) * dist, radius, item, amount, rng);
   }
 
+  addMetals(w, seed);
   addLakes(w, seed);
   w.createHub(c - 1, c - 1);
   addForests(w, seed);
@@ -108,6 +109,71 @@ export function addLakes(w: World, seed: number): void {
         // 사막에는 호수가 없다
         if (w.resItem[i] || w.occ[i] || w.ground[i] === DESERT) continue;
         w.setResource(x, y, 'water', Infinity);
+      }
+    }
+  }
+}
+
+/** 금속 광맥 수 (종류마다) */
+const METAL_PATCHES = 5;
+
+/**
+ * 주석·보크사이트 광맥 (0.7.0). 주석은 눈밭 안쪽, 보크사이트는 초원과 사막이 만나는 곳.
+ * 허브에서 26칸 넘게 떨어진 곳에만, 서로 14칸 넘게 띄운다. 멀수록 크고 풍부하다.
+ * 빈 땅(광맥·다 캔 광맥·물·건물·나무가 없는 칸)에만 놓아서 예전 저장에 더할 때도 쓴다.
+ */
+export function addMetals(w: World, seed: number): void {
+  const rng = createRng((seed ^ 0x6a09e667) >>> 0);
+  const c = Math.floor(w.width / 2);
+  const free = (i: number) => !w.resItem[i] && !w.occ[i] && !w.patchOf[i] && w.tree[i] === 0;
+  /** (x, y) 둘레 반지름 3칸에서 땅 kind인 칸의 비율 */
+  const share = (x: number, y: number, kind: number) => {
+    let n = 0;
+    let k = 0;
+    for (let dy = -3; dy <= 3; dy++)
+      for (let dx = -3; dx <= 3; dx++) {
+        if (!w.inBounds(x + dx, y + dy) || dx * dx + dy * dy > 9) continue;
+        n++;
+        if (w.ground[w.idx(x + dx, y + dy)] === kind) k++;
+      }
+    return n ? k / n : 0;
+  };
+  const kinds: { item: ItemId; where: (x: number, y: number) => boolean; on: (g: number) => boolean }[] = [
+    { item: 'tin-ore', where: (x, y) => share(x, y, SNOW) >= 0.8, on: (g) => g === SNOW },
+    {
+      item: 'bauxite',
+      where: (x, y) => {
+        const d = share(x, y, DESERT);
+        return d >= 0.3 && d <= 0.7 && share(x, y, GRASS) >= 0.3;
+      },
+      on: (g) => g !== SNOW,
+    },
+  ];
+  const placed: [number, number][] = [];
+  for (const k of kinds) {
+    let n = 0;
+    for (let tries = 0; tries < 3000 && n < METAL_PATCHES; tries++) {
+      const x = 4 + Math.floor(rng() * (w.width - 8));
+      const y = 4 + Math.floor(rng() * (w.height - 8));
+      const dist = Math.hypot(x - c, y - c);
+      if (dist < 26 || !k.where(x, y) || !free(w.idx(x, y))) continue;
+      if (placed.some(([px, py]) => Math.hypot(px - x, py - y) < 14)) continue;
+      placed.push([x, y]);
+      n++;
+      const r = 3 + rng() * 1.5 + dist / 30;
+      const amount = 300 + dist * 8;
+      const R = Math.ceil(r + 1);
+      for (let dy = -R; dy <= R; dy++) {
+        for (let dx = -R; dx <= R; dx++) {
+          const tx = x + dx;
+          const ty = y + dy;
+          if (!w.inBounds(tx, ty)) continue;
+          const i = w.idx(tx, ty);
+          const d = Math.hypot(dx, dy);
+          if (d > r * (0.8 + rng() * 0.35) || !free(i) || !k.on(w.ground[i])) continue;
+          const rich = 1 - (d / (r + 1)) * 0.6;
+          w.setResource(tx, ty, k.item, Math.round(amount * rich * (0.8 + rng() * 0.4)));
+        }
       }
     }
   }

@@ -9,9 +9,9 @@ import { STARTING_STOCK, generateWorld } from './mapgen';
 import { DAY_SEC, WEATHER_SEC, darkness, weatherOf, type WeatherKind } from './sky';
 import { BELT_SPACING, TICK_RATE, World, describeEdit, patchAlert } from './world';
 
-/** 모든 건물·레시피 해금 */
+/** 모든 건물·레시피 해금 ("가벼운 차체"는 빼서 트럭은 기본 속도) */
 function unlockAll(w: World) {
-  for (const t of TECHS) w.applyTech(t.id);
+  for (const t of TECHS) if (t.id !== 'light-trucks') w.applyTech(t.id);
 }
 
 /** 30×30 빈 맵. 허브는 (0,9)~(2,11). 모든 연구 완료, 재고 넉넉. */

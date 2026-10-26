@@ -27,7 +27,13 @@ export type ItemId =
   | 'wood'
   | 'sawdust'
   | 'charcoal'
-  | 'paper';
+  | 'paper'
+  // 금속: 주석·알루미늄 (0.7.0)
+  | 'tin-ore'
+  | 'bauxite'
+  | 'tin-plate'
+  | 'bronze'
+  | 'aluminum';
 
 /** 아이템을 그릴 때 쓰는 모양 */
 export type ItemShape = 'ore' | 'plate' | 'gear' | 'wire' | 'ingot' | 'chip' | 'powder' | 'drop' | 'sapling' | 'log' | 'plank' | 'sheet';
@@ -73,6 +79,11 @@ export const ITEMS: Record<ItemId, ItemDef> = {
   sawdust: { id: 'sawdust', name: '톱밥', color: '#d9b98a', shape: 'powder' },
   charcoal: { id: 'charcoal', name: '숯', color: '#3a3230', shape: 'ore' },
   paper: { id: 'paper', name: '종이', color: '#e9dfc6', shape: 'sheet' },
+  'tin-ore': { id: 'tin-ore', name: '주석광석', color: '#c3ccd6', shape: 'ore' },
+  bauxite: { id: 'bauxite', name: '보크사이트', color: '#c8645c', shape: 'ore' },
+  'tin-plate': { id: 'tin-plate', name: '주석판', color: '#d8d6cc', shape: 'plate' },
+  bronze: { id: 'bronze', name: '청동', color: '#c4893c', shape: 'ingot' },
+  aluminum: { id: 'aluminum', name: '알루미늄판', color: '#c9def2', shape: 'plate' },
 };
 
 export const ITEM_IDS = Object.keys(ITEMS) as ItemId[];

@@ -67,8 +67,10 @@ export interface PowerState {
   charge: number;
 }
 
-/** 저장 파일의 콘텐츠 개정. 1: 먼 광맥을 줄였다 */
-const CONTENT_REV = 1;
+/** 저장 파일의 콘텐츠 개정. 1: 먼 광맥을 줄였다, 2: 주석·보크사이트 광맥 */
+const CONTENT_REV = 2;
+/** 연구 "가벼운 차체" 트럭 속도 배율 */
+export const LIGHT_TRUCK = 1.3;
 
 /** 가동 기록을 평균 내는 시간 (초). 이만큼 지난 일은 점점 잊는다. */
 export const STATS_TAU = 15;
@@ -222,6 +224,8 @@ export class World {
   readonly ground: Uint8Array;
   /** 불러온 저장에 땅 종류가 있었는지 (땅 종류가 생기기 전 저장이면 false → 씨앗으로 만든다) */
   groundLoaded = true;
+  /** 불러온 저장에 주석·보크사이트 광맥이 있었는지 (생기기 전 저장이면 false → 빈 땅에 더한다) */
+  metalsLoaded = true;
   /** 자라는 중인 나무 칸들 */
   private growing: number[] = [];
   /** 불러온 저장에 나무 층이 있었는지 (숲이 생기기 전 저장이면 false → 자연 숲을 더한다) */
@@ -1957,6 +1961,7 @@ export class World {
       case 'washer':
       case 'separator':
       case 'electric-furnace':
+      case 'electrolyzer':
       case 'sawmill':
         return this.machineAccept(n, item);
       case 'planter':
@@ -2556,9 +2561,9 @@ export class World {
   }
   private chargerCache: { ver: number; tiles: Set<number> } | null = null;
 
-  /** 트럭 속도 (칸/초). 끝없는 연구 "트럭 성능"으로 빨라진다 */
+  /** 트럭 속도 (칸/초). 연구 "가벼운 차체"와 끝없는 연구 "트럭 성능"으로 빨라진다 (날씨는 따로) */
   truckSpeed(): number {
-    return TRUCK.speed * this.boost('endless-truck');
+    return TRUCK.speed * (this.researched.has('light-trucks') ? LIGHT_TRUCK : 1) * this.boost('endless-truck');
   }
 
   /** 배터리가 다 찼는지 (더하고 나눌 때 생기는 아주 작은 오차는 봐준다) */
@@ -2937,6 +2942,7 @@ export class World {
     }
     // 광맥을 줄이기 전(rev 0) 맵: 먼 광맥을 1/4로
     if ((data.rev ?? 0) < 1) w.scaleFarOre(0.25);
+    if ((data.rev ?? 0) < 2) w.metalsLoaded = false;
     w.patchesDirty = true;
     w.stock = new Map(data.stock);
     for (const id of data.researched) w.applyTech(id);
@@ -3296,6 +3302,7 @@ export function acceptsFrom(n: Building, fromSide: Dir): boolean {
     case 'washer':
     case 'separator':
     case 'electric-furnace':
+    case 'electrolyzer':
     case 'sawmill':
     case 'merger':
       return fromSide !== n.dir;

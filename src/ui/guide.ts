@@ -3,7 +3,7 @@ import { ITEM_IDS, type ItemId } from '../data/items';
 import type { World } from '../sim/world';
 
 /** 맵에서 가리킬 곳의 종류 */
-export type GuideTarget = 'iron-ore' | 'copper-ore' | 'coal' | 'water' | 'hub' | 'tree' | 'spent';
+export type GuideTarget = 'iron-ore' | 'copper-ore' | 'coal' | 'water' | 'hub' | 'tree' | 'spent' | 'tin-ore' | 'bauxite';
 
 /** 목표가 지금 가리키는 것: 들어야 할 건물(툴바), 연구(연구 창), 놓을 곳(맵) */
 export interface GuideFocus {
@@ -51,6 +51,8 @@ const TARGET_NAME: Record<GuideTarget, string> = {
   hub: '허브',
   tree: '다 자란 나무',
   spent: '다 캔 광맥 땅',
+  'tin-ore': '주석광맥',
+  bauxite: '보크사이트 광맥',
 };
 
 /** 허브에서 가장 가까운 그 종류의 빈 칸 (가운데 좌표와 이름). 없으면 null */
@@ -242,6 +244,18 @@ export const GUIDE: GuideStep[] = [
     hint: '전기 제강을 연구하세요. 전기로(X 9)가 석탄 없이 철판 2개로 강철 1개를 만들어요.',
     done: (w) => [...w.buildings.values()].some((b) => b.type === 'electric-furnace' && b.recipe === 'steel-e'),
     focus: (w) => after(w, ['electric-steel'], { build: 'electric-furnace' }),
+  },
+  {
+    title: '청동 만들기',
+    hint: '주석 · 청동을 연구하세요 (강철 100, 회로 50). 눈밭의 주석광맥을 캐서 제련로로 주석판을 만들고, 다른 제련로에 구리판 3 + 주석판 1을 넣으면 청동 4가 나와요.',
+    done: (w) => (w.madeTotal.get('bronze') ?? 0) > 0,
+    focus: (w) => after(w, ['tin-working'], { build: 'miner', target: 'tin-ore' }),
+  },
+  {
+    title: '알루미늄 만들기',
+    hint: '알루미늄을 연구하세요 (청동 150, 회로 100). 초원과 사막 사이의 보크사이트를 캐서 전해로(X 0)에 물과 함께 넣으면 알루미늄판이 나와요. 전기를 500kW나 써요.',
+    done: (w) => (w.madeTotal.get('aluminum') ?? 0) > 0,
+    focus: (w) => after(w, ['aluminum'], { build: 'miner', target: 'bauxite' }),
   },
   {
     title: '연구: 광맥 독립 (최종 목표)',

@@ -564,6 +564,27 @@ define('electric-furnace', 32, 32, 5, (p, f) => {
   mouth(p, 16, 20, 12, 5, f, glow);
 });
 
+define('electrolyzer', 32, 32, 5, (p, f) => {
+  machine(p, PAL.metal, ramp('#7a9bb5'));
+  // 전해조: 물 통 위에 전극 두 개. 일하면 거품이 오르고 전극 사이에 불꽃
+  p.rect(4, 4, 24, 12, PAL.ink);
+  p.rect(5, 5, 22, 10, PAL.water.lo);
+  p.rect(5, 5, 22, 2, PAL.water.mid);
+  for (const x of [10, 21]) {
+    p.rect(x - 1, 2, 3, 10, PAL.ink);
+    p.rect(x, 2, 1, 9, x < 16 ? PAL.brass.mid : '#c8645c');
+  }
+  if (f) {
+    for (let k = 0; k < 3; k++) p.px(12 + ((f * 3 + k * 4) % 8), 13 - ((f + k * 2) % 6), PAL.water.hi);
+    p.px(15 + (f % 2), 7, '#fff6b0');
+    p.px(16 - (f % 2), 8, '#ffe066');
+  }
+  for (const [x, y] of [[3, 18], [27, 18]]) bolt(p, x, y, IRON);
+  // 앞면: 알루미늄판이 나오는 틀
+  p.rect(11, 20, 10, 4, PAL.ink);
+  p.rect(12, 21, 8, 2, f ? '#c9def2' : PAL.metal.lo);
+});
+
 define('pump', 32, 32, 5, (p, f) => {
   machine(p, PAL.metal, ramp('#4f7fae'));
   // 우물: 일하면 물결이 퍼진다

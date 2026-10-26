@@ -3,7 +3,7 @@ import { Input } from './input/input';
 import { PING_SEC, Session } from './net/session';
 import { Camera } from './render/camera';
 import { Renderer, type OtherPlayer, type PingMark } from './render/renderer';
-import { addForests, addGround, addLakes, generateWorld } from './sim/mapgen';
+import { addForests, addGround, addLakes, addMetals, generateWorld } from './sim/mapgen';
 import type { Command, PlaceResult, ResultOf } from './sim/commands';
 import { DT, World } from './sim/world';
 import { Chat } from './ui/chat';
@@ -23,6 +23,8 @@ function loadWorld(): World | null {
     const w = World.deserialize(JSON.parse(raw));
     // 땅 종류가 생기기 전 저장이면 씨앗으로 땅을 만든다 (호수·숲보다 먼저: 사막에는 호수·숲이 없다)
     if (!w.groundLoaded) addGround(w, w.seed);
+    // 주석·보크사이트가 생기기 전 저장이면 빈 땅에 금속 광맥을 더한다 (땅 종류를 보고 놓는다)
+    if (!w.metalsLoaded) addMetals(w, w.seed);
     // 호수가 생기기 전에 만든 맵이면 빈 땅에 호수를 더한다.
     // 저장 버전만 보면, 코드가 바뀌는 도중에 저장된 맵(버전은 새것, 호수는 없음)을 놓친다.
     if (!w.resItem.includes('water')) addLakes(w, w.seed);
@@ -253,6 +255,8 @@ function backupWorld(): void {
 function replaceWorld(w: World): void {
   // 땅 종류가 생기기 전 저장이면 씨앗으로 땅을 만든다 (호수·숲보다 먼저: 사막에는 호수·숲이 없다)
   if (!w.groundLoaded) addGround(w, w.seed);
+  // 주석·보크사이트가 생기기 전 저장이면 빈 땅에 금속 광맥을 더한다 (땅 종류를 보고 놓는다)
+  if (!w.metalsLoaded) addMetals(w, w.seed);
   if (!w.resItem.includes('water')) addLakes(w, w.seed);
   if (!w.forestsLoaded) addForests(w, w.seed);
   world = w;

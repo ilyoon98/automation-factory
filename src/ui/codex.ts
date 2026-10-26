@@ -7,7 +7,7 @@ import type { World } from '../sim/world';
 import { buildingIconUrl, depositIconUrl, groundIconUrl, itemIconUrl, itemLink } from './icons';
 
 /** 광맥·지형. 나오는 아이템으로 구분한다 */
-export type DepositId = 'iron-ore' | 'copper-ore' | 'coal' | 'stone' | 'water' | 'dirt';
+export type DepositId = 'iron-ore' | 'copper-ore' | 'coal' | 'stone' | 'tin-ore' | 'bauxite' | 'water' | 'dirt';
 
 /** 도감 한 페이지: 아이템, 건물, 광맥·지형, 또는 전체 목록(null) */
 export type CodexPage = { item: ItemId } | { building: BuildingType } | { deposit: DepositId } | null;
@@ -40,6 +40,20 @@ const DEPOSITS: Record<DepositId, { name: string; finite: boolean; desc: string;
     desc: '돌이 드러난 땅이에요. 아무리 캐도 줄지 않아요. 제련로·창고를 지을 때 쓰고, 분쇄기로 자갈을 만들 수 있어요.',
     amount: '무한',
     where: '허브 근처에 하나, 맵 바깥쪽에 몇 개',
+  },
+  'tin-ore': {
+    name: '주석광맥',
+    finite: true,
+    desc: '주석광석이 묻힌 땅이에요. 눈밭 안쪽에만 있어요. 제련로에서 주석판이 되고, 구리판과 섞으면 청동이 돼요.',
+    amount: '칸당 약 300~800개. 멀리 있는 광맥일수록 넓어요',
+    where: '눈밭 안쪽, 허브에서 26칸 넘게 떨어진 곳에 몇 개',
+  },
+  bauxite: {
+    name: '보크사이트 광맥',
+    finite: true,
+    desc: '알루미늄 원석이 묻힌 붉은 땅이에요. 전해로에서 물과 함께 녹이면 알루미늄판이 돼요.',
+    amount: '칸당 약 300~800개. 멀리 있는 광맥일수록 넓어요',
+    where: '초원과 사막이 만나는 곳, 허브에서 26칸 넘게 떨어진 곳에 몇 개',
   },
   water: {
     name: '호수',
@@ -82,6 +96,8 @@ const SOURCES: { item: DepositId; building: BuildingType; note: string; dirt?: b
   { item: 'copper-ore', building: 'miner', note: '캐면 줄어요' },
   { item: 'coal', building: 'miner', note: '캐면 줄어요' },
   { item: 'stone', building: 'miner', note: '무한' },
+  { item: 'tin-ore', building: 'miner', note: '캐면 줄어요' },
+  { item: 'bauxite', building: 'miner', note: '캐면 줄어요' },
   { item: 'dirt', building: 'miner', note: '무한', dirt: true },
   { item: 'water', building: 'pump', note: '무한' },
 ];
@@ -145,6 +161,7 @@ const ITEM_GROUPS: { name: string; items: ItemId[] }[] = [
   { name: '흙 정제', items: ['gravel', 'sand', 'mineral-dust', 'iron-concentrate', 'copper-concentrate'] },
   { name: '부산물 · 건설 재료', items: ['mud', 'slag', 'brick', 'concrete'] },
   { name: '숲', items: ['sapling', 'log', 'wood', 'sawdust', 'charcoal', 'paper'] },
+  { name: '금속: 주석 · 알루미늄', items: ['tin-ore', 'bauxite', 'tin-plate', 'bronze', 'aluminum'] },
 ];
 
 const fmt = (n: number) => {

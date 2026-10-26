@@ -71,6 +71,7 @@ const HAS_PORTS: BuildingType[] = [
   'unloader',
   'station',
   'electric-furnace',
+  'electrolyzer',
   'lumberjack',
   'sawmill',
 ];
@@ -93,7 +94,7 @@ const STATUS_BADGE: Partial<Record<Status, string>> = {
 const ORE_LOW_BADGE = 'low';
 
 /** 광맥 그림이 있는 자원 */
-const ORE_TILES: ItemId[] = ['iron-ore', 'copper-ore', 'coal', 'stone'];
+const ORE_TILES: ItemId[] = ['iron-ore', 'copper-ore', 'coal', 'stone', 'tin-ore', 'bauxite'];
 /** 바닥은 이만큼(칸)씩 묶어 한 장으로 구워 둔다 */
 const CHUNK = 16;
 /** 그림 1픽셀이 화면 픽셀 이만큼보다 작아지면(멀리서 보면) 바닥을 칸마다 단색으로 */
@@ -944,6 +945,7 @@ export class Renderer {
       case 'washer':
       case 'separator':
       case 'electric-furnace':
+      case 'electrolyzer':
         this.blit(b.type, anim(working), sx, sy);
         plate(world.recipeOf(b)?.outputs[0].item);
         break;

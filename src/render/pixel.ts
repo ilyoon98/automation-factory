@@ -479,9 +479,11 @@ export const ORE_GROUND: Partial<Record<ItemId, string>> = {
   'copper-ore': '#d6a27a',
   coal: '#8a847b',
   stone: '#cdc6b6',
+  'tin-ore': '#d4d9e0',
+  bauxite: '#d7a08a',
 };
 
-const ORE_TILES: ItemId[] = ['iron-ore', 'copper-ore', 'coal', 'stone'];
+const ORE_TILES: ItemId[] = ['iron-ore', 'copper-ore', 'coal', 'stone', 'tin-ore', 'bauxite'];
 for (const item of ORE_TILES) {
   for (let rich = 1; rich <= 3; rich++) {
     for (let v = 0; v < 4; v++) {

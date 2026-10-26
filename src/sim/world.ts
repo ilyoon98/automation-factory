@@ -22,6 +22,7 @@ import {
   isRecipeMachine,
   type BuildingType,
 } from '../data/buildings';
+import { GROUNDS, type GroundDef } from '../data/ground';
 import { ITEM_IDS, type ItemId, type ItemStack } from '../data/items';
 import { RECIPES, type MachineKind, type Recipe } from '../data/recipes';
 import { ENDLESS_BY_ID, ENDLESS_REQUIRES, INITIAL_BUILDINGS, INITIAL_RECIPES, TECH_BY_ID, endlessCost } from '../data/tech';
@@ -218,6 +219,10 @@ export class World {
   readonly patchOf: Int32Array;
   /** 칸마다 나무 자람 정도 (0 = 없음, 0~1 = 자라는 중, 1 = 다 자람). 광맥·물·건물 칸에는 없다 */
   readonly tree: Float64Array;
+  /** 칸마다 땅 종류 (GROUNDS 번호: 0 초원 · 1 사막 · 2 눈밭). 맵을 만들 때 정하고 바뀌지 않는다 */
+  readonly ground: Uint8Array;
+  /** 불러온 저장에 땅 종류가 있었는지 (땅 종류가 생기기 전 저장이면 false → 씨앗으로 만든다) */
+  groundLoaded = true;
   /** 자라는 중인 나무 칸들 */
   private growing: number[] = [];
   /** 불러온 저장에 나무 층이 있었는지 (숲이 생기기 전 저장이면 false → 자연 숲을 더한다) */
@@ -290,6 +295,7 @@ export class World {
     this.occ = new Int32Array(n);
     this.patchOf = new Int32Array(n);
     this.tree = new Float64Array(n);
+    this.ground = new Uint8Array(n);
   }
 
   // ───────────────────────── 조회 ─────────────────────────
@@ -1069,7 +1075,7 @@ export class World {
 
   /** 나무를 심을 수 있는 칸: 광맥·물·건물·나무가 없는 땅 (다 캔 광맥 자리 포함) */
   canPlant(i: number): boolean {
-    return !this.resItem[i] && !this.occ[i] && this.tree[i] === 0;
+    return !this.resItem[i] && !this.occ[i] && this.tree[i] === 0 && GROUNDS[this.ground[i]].plant;
   }
 
   /** (x, y)에 나무를 놓는다. growth 1 = 다 자란 나무 (맵 만들 때), 그보다 작으면 거기서부터 자란다 */
@@ -1103,7 +1109,7 @@ export class World {
     const step = (DT * this.treeGrowth()) / FOREST.grow;
     let keep = 0;
     for (const i of this.growing) {
-      const g = Math.min(1, this.tree[i] + step);
+      const g = Math.min(1, this.tree[i] + step * GROUNDS[this.ground[i]].treeGrow);
       this.tree[i] = g;
       if (g >= 1) this.treesGrown++;
       else this.growing[keep++] = i;
@@ -1638,7 +1644,8 @@ export class World {
     for (const b of this.buildings.values()) {
       if (b.crafting && b.def.power > 0) demand += b.def.power;
       if (b.type === 'solar' || b.type === 'wind') {
-        b.load = b.type === 'solar' ? sun : wind;
+        const g = this.groundOf(b);
+        b.load = b.type === 'solar' ? sun * g.solar : wind * g.wind;
         solar += b.load;
         b.status = b.load > 0 ? 'working' : 'idle';
       } else if (b.type === 'generator' || b.type === 'hydro') {
@@ -1669,7 +1676,14 @@ export class World {
     this.power = { demand, capacity, supply, satisfaction, charge };
   }
 
-  /** 지금 태양광 패널 한 대의 출력 (kW): 해가 있는 만큼 × 날씨 */
+  /** 건물이 선 땅 (가운데 칸) */
+  groundOf(b: { x: number; y: number; size: number }): GroundDef {
+    const h = Math.floor(b.size / 2);
+    // 맵 밖(가장자리에 걸친 미리보기)은 초원으로
+    return this.inBounds(b.x + h, b.y + h) ? GROUNDS[this.ground[this.idx(b.x + h, b.y + h)]] : GROUNDS[0];
+  }
+
+  /** 지금 태양광 패널 한 대의 출력 (kW): 해가 있는 만큼 × 날씨 (초원 기준, 땅 배율은 따로) */
   solarOutput(): number {
     return SOLAR_POWER * (1 - darkness(this.time)) * weatherMix(this.seed, this.time, (k) => SOLAR_WEATHER[k]);
   }
@@ -2811,6 +2825,7 @@ export class World {
       researched: [...this.researched],
       ...(this.levels.size ? { levels: [...this.levels] } : {}),
       trees: this.treeList(),
+      ground: groundRuns(this.ground),
       guide: [...this.guideDone],
       ...(this.achieved.size ? { achievements: [...this.achieved] } : {}),
       ...(this.madeTotal.size ? { made: [...this.madeTotal] } : {}),
@@ -2876,6 +2891,14 @@ export class World {
     // 나무 (숲이 생기기 전 저장에는 없다 → 불러오는 쪽에서 자연 숲을 더한다)
     if (data.trees) for (const [i, g] of data.trees) w.setTree(i % w.width, Math.floor(i / w.width), g);
     else w.forestsLoaded = false;
+    // 땅 종류 (생기기 전 저장에는 없다 → 불러오는 쪽에서 씨앗으로 만든다)
+    if (data.ground) {
+      let i = 0;
+      for (let k = 0; k < data.ground.length; k += 2) {
+        w.ground.fill(data.ground[k], i, i + data.ground[k + 1]);
+        i += data.ground[k + 1];
+      }
+    } else w.groundLoaded = false;
     // 광맥 번호 (없으면 지금 칸들로 다시 묶는다)
     for (const [i, p] of data.patches ?? []) w.patchOf[i] = p;
     // 광맥 번호가 저장돼 있을 때만 (번호를 새로 매기면 다른 광맥과 짝이 맞지 않는다)
@@ -3153,6 +3176,8 @@ export interface SaveData {
   levels?: [string, number][];
   /** 나무 [칸 번호, 자람 정도] (없으면 숲이 생기기 전 저장) */
   trees?: [number, number][];
+  /** 땅 종류를 칸 번호 차례로 [종류, 이어지는 칸 수, 종류, 칸 수, …] (없으면 땅 종류가 생기기 전 저장) */
+  ground?: number[];
   /** 이룬 목표 제목들 */
   guide?: string[];
   /** 이룬 업적 [업적 id, 단계] */
@@ -3335,6 +3360,18 @@ function edgeNeighbors(b: Building): [number, number, Dir][] {
     out.push([b.x + s, b.y + i, 1]);
     out.push([b.x + i, b.y + s, 2]);
     out.push([b.x - 1, b.y + i, 3]);
+  }
+  return out;
+}
+
+/** 땅 종류를 저장용으로 줄인다: 같은 종류가 이어지는 칸을 [종류, 칸 수]로 */
+function groundRuns(ground: Uint8Array): number[] {
+  const out: number[] = [];
+  for (let i = 0; i < ground.length; ) {
+    let j = i + 1;
+    while (j < ground.length && ground[j] === ground[i]) j++;
+    out.push(ground[i], j - i);
+    i = j;
   }
   return out;
 }

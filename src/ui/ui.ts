@@ -24,6 +24,7 @@ import {
   checkAchievements,
   fmtAchievement,
 } from '../data/achievements';
+import { groundEffects } from '../data/ground';
 import { ITEMS, ITEM_IDS, type ItemId, type ItemStack } from '../data/items';
 import { RECIPES, recipesFor, type MachineKind } from '../data/recipes';
 import { ENDLESS_BY_ID, ENDLESS_REQUIRES, ENDLESS_TECHS, TECHS, TECH_BY_ID, TECH_CATEGORIES, endlessCost, type TechCategory } from '../data/tech';
@@ -1238,9 +1239,11 @@ export class UI {
           lines.push(`<div class="row"><span>심을 빈 땅</span><b>${room}칸</b></div>`);
           if (spent) lines.push(`<div class="row"><span>다 캔 광맥 땅</span><b>${spent}칸 · 다 자란 나무 ${revived}</b></div>`);
           lines.push(`<div class="row"><span>묘목</span><b>${itemIcon('sapling')} ${countOf(b.inBuf, 'sapling')} / ${FOREST.planterCap}</b></div>`);
-          const sec = Math.round(FOREST.grow / w.treeGrowth());
+          const g = w.groundOf(b);
+          const sec = Math.round(FOREST.grow / (w.treeGrowth() * g.treeGrow));
           const growText = sec % 60 ? `${sec}초면` : `${sec / 60}분이면`;
           lines.push(`<p class="muted">점선 안 빈 땅에 ${FOREST.plant}초에 하나씩 심어요. 나무는 ${growText} 다 자라요. 다 캔 광맥 자리에도 심어요.</p>`);
+          if (!g.plant || g.treeGrow !== 1) lines.push(`<p class="muted">${g.icon} ${g.name}: ${groundEffects(g)}. 사막 칸에는 심지 않아요.</p>`);
         } else {
           lines.push(`<div class="row"><span>출력 대기</span><b>${buf(b.outBuf)}</b></div>`);
           lines.push(`<p class="muted">점선 안의 다 자란 나무를 ${FOREST.cut}초에 한 그루 베어 통나무 ${FOREST.logs} + 묘목 1을 앞으로 내보내요. 묘목은 식목기로 보내 다시 심어 주세요.</p>`);
@@ -1262,18 +1265,24 @@ export class UI {
         lines.push(`<div class="row"><span>출력</span><b>${Math.round(b.load)} / ${HYDRO_POWER} kW</b></div>`);
         lines.push(`<p class="muted">허브·태양광·풍력으로 모자란 만큼만 물을 써요 (석탄 발전기보다 먼저). 최대로 돌면 초당 물 2개 = 양수기 1대.</p>`);
         break;
-      case 'solar':
-        lines.push(`<div class="row"><span>출력</span><b>${Math.round(b.load)} / ${SOLAR_POWER} kW</b></div>`);
+      case 'solar': {
+        const g = w.groundOf(b);
+        lines.push(`<div class="row"><span>출력</span><b>${Math.round(b.load)} / ${Math.round(SOLAR_POWER * g.solar)} kW</b></div>`);
+        lines.push(`<div class="row"><span>땅</span><b>${g.icon} ${g.name}${g.solar !== 1 ? ` · 태양광 ${g.solar}배` : ''}</b></div>`);
         lines.push(
-          `<p class="muted">해가 있는 동안만 돌아요. 맑은 낮 ${SOLAR_POWER}kW, 흐리면 절반, 비가 오면 4분의 1, 밤에는 0이에요. 밤에는 풍력·수력·석탄이 메워 줘야 해요.</p>`,
+          `<p class="muted">해가 있는 동안만 돌아요. 초원의 맑은 낮 ${SOLAR_POWER}kW, 흐리면 절반, 비가 오면 4분의 1, 밤에는 0이에요. 사막에 지으면 1.5배, 눈밭은 0.75배예요.</p>`,
         );
         break;
-      case 'wind':
+      }
+      case 'wind': {
+        const g = w.groundOf(b);
         lines.push(`<div class="row"><span>출력</span><b>${Math.round(b.load)} kW</b></div>`);
+        lines.push(`<div class="row"><span>땅</span><b>${g.icon} ${g.name}${g.wind !== 1 ? ` · 풍력 ${g.wind}배` : ''}</b></div>`);
         lines.push(
-          `<p class="muted">밤낮없이 돌아요. 바람은 날씨를 따라 맑으면 ${WIND_POWER.clear}kW, 흐리면 ${WIND_POWER.cloudy}kW, 비가 오면 ${WIND_POWER.rain}kW예요.</p>`,
+          `<p class="muted">밤낮없이 돌아요. 바람은 날씨를 따라 맑으면 ${WIND_POWER.clear}kW, 흐리면 ${WIND_POWER.cloudy}kW, 비가 오면 ${WIND_POWER.rain}kW예요. 눈밭에 지으면 1.3배예요.</p>`,
         );
         break;
+      }
       case 'charger': {
         // 이 충전기 옆 도로 칸과, 거기 서서 충전하는 트럭
         const near = [
@@ -1837,6 +1846,12 @@ export class UI {
             ? `<b>출구</b>가 돼요 · ${Math.abs(plan.partner.x - ox) + Math.abs(plan.partner.y - oy) - 1}칸 건너 입구와 연결`
             : `<b>입구</b>가 돼요 · 같은 방향으로 최대 4칸 건너(점) 하나 더 놓으면 출구`,
         );
+      }
+      // 땅을 타는 건물: 놓을 자리의 땅과 효과
+      if (tool === 'solar' || tool === 'wind' || tool === 'planter' || tool === 'lumberjack') {
+        const g = w.groundOf({ x: ox, y: oy, size: BUILDINGS[tool].size });
+        const fx = groundEffects(g);
+        lines.push(`${g.icon} ${g.name}${fx ? ` · ${fx}` : ''}`);
       }
       const replaced = !replace || isBeltType(tool) ? 0 : w.beltsUnder(tool, ox, oy).length;
       if (check.ok && replaced) lines.push(`<span class="muted">컨베이어 ${replaced}칸을 지우고 라인에 끼워 넣어요</span>`);

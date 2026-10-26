@@ -1739,4 +1739,11 @@ h3 small {
 }
 .pal.confirm-del .share {
   display: none;
+}/* 도감: 땅 종류 카드는 누를 곳이 없다 */
+.codex-card.ground-card {
+  cursor: default;
+  text-align: center;
+}
+.codex-card.ground-card:hover {
+  background: var(--paper-2);
 }

@@ -410,7 +410,50 @@ function groundBase(p: Pen, v: number): void {
   }
 }
 
-for (let v = 0; v < 8; v++) define(`ground:${v}`, 16, 16, 1, (p) => groundBase(p, v));
+/** 초원 풀 포기 (작은 "v" 모양) */
+function grassTuft(p: Pen, x: number, y: number, c: string): void {
+  p.px(x, y, c);
+  p.px(x + 2, y, c);
+  p.px(x + 1, y + 1, c);
+}
+
+for (let v = 0; v < 8; v++) {
+  define(`ground:${v}`, 16, 16, 1, (p) => {
+    groundBase(p, v);
+    // 초원: 칸마다 풀 포기 1~2개
+    const h = hash(v * 6151 + 29);
+    grassTuft(p, 1 + (h & 7), 2 + ((h >>> 3) & 3), '#a8b26f');
+    if (v & 1) grassTuft(p, 3 + ((h >>> 6) & 7), 9 + ((h >>> 9) & 3), '#b9bf82');
+  });
+}
+
+/** 땅 종류마다 바닥 (GROUNDS 번호 차례: 초원 · 사막 · 눈밭). base는 멀리서 볼 때·지도의 칸 색 */
+export const GROUND_LOOK = [
+  { sprite: 'ground', base: '#dcd8a8' },
+  { sprite: 'sand', base: '#f0c47c' },
+  { sprite: 'snow', base: '#f2f5f3' },
+];
+
+const SAND = ['#f0c47c', '#eec078', '#f2c982', '#ecbd73'];
+const SNOW = ['#f2f5f3', '#eff3f1', '#f5f7f5', '#edf1ef'];
+
+for (let v = 0; v < 8; v++) {
+  // 사막: 따뜻한 모래 + 바람 자국 한 줄
+  define(`sand:${v}`, 16, 16, 1, (p) => {
+    p.rect(0, 0, 16, 16, SAND[v % 4]);
+    const h = hash(v * 104729 + 7);
+    for (let k = 0; k < 5; k++) p.px((h >>> (k * 6)) & 15, (hash(h + k) >>> 3) & 15, k === 0 ? '#f8dfae' : '#d6a65e');
+    const y = 3 + ((h >>> 9) % 10);
+    const x = (h >>> 13) % 9;
+    p.rect(x, y, 4 + (v % 3), 1, '#dfb06a');
+  });
+  // 눈밭: 흰 눈 + 푸른 그늘 알갱이
+  define(`snow:${v}`, 16, 16, 1, (p) => {
+    p.rect(0, 0, 16, 16, SNOW[v % 4]);
+    const h = hash(v * 15485863 + 3);
+    for (let k = 0; k < 5; k++) p.px((h >>> (k * 6)) & 15, (hash(h + k) >>> 3) & 15, k === 0 ? '#ffffff' : '#d3e0e8');
+  });
+}
 
 /** 광맥 칸: 바닥 위 돌덩이 (rich = 3 큰 돌, 2, 1). 돌 광맥은 회색 바위 */
 function oreRock(p: Pen, x: number, y: number, c: { hi: string; mid: string; lo: string }, big: boolean): void {

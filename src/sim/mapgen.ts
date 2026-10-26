@@ -1,3 +1,4 @@
+import { DESERT, GRASS, GROUNDS, SNOW } from '../data/ground';
 import type { ItemId, ItemStack } from '../data/items';
 import { createRng } from './rng';
 import { World } from './world';
@@ -16,6 +17,7 @@ export function generateWorld(seed: number, size = MAP_SIZE): World {
   w.seed = seed;
   const rng = createRng(seed);
   const c = Math.floor(size / 2);
+  addGround(w, seed);
 
   // 시작 광맥: 허브 주변 네 방향에 하나씩 (순서는 시드로 섞는다)
   const starters: [ItemId, number, number, number][] = [
@@ -103,10 +105,72 @@ export function addLakes(w: World, seed: number): void {
         if (!w.inBounds(x, y)) continue;
         if (Math.hypot(dx, dy) > r * (0.85 + rng() * 0.3)) continue;
         const i = w.idx(x, y);
-        if (w.resItem[i] || w.occ[i]) continue;
+        // 사막에는 호수가 없다
+        if (w.resItem[i] || w.occ[i] || w.ground[i] === DESERT) continue;
         w.setResource(x, y, 'water', Infinity);
       }
     }
+  }
+}
+
+/** 허브에서 이만큼(칸)은 늘 초원, 그 뒤 HUB_BLEND칸에 걸쳐 서서히 다른 땅이 나온다 */
+const HUB_GRASS = 20;
+const HUB_BLEND = 14;
+
+/**
+ * 땅 종류(초원·사막·눈밭)를 정한다. 부드러운 잡음으로 "기온"을 만들어 높으면 사막, 낮으면 눈밭.
+ * 기온이 이어져 있어서 사막과 눈밭 사이에는 늘 초원이 끼고, 허브 둘레는 가운데 기온(초원)으로 누른다.
+ * 비율은 기온 순위로 끊어서 맵마다 GROUNDS의 share대로 나온다.
+ * 예전 저장에 땅을 더할 때도 쓴다 (씨앗만으로 정해서 어디서든 같은 땅).
+ */
+export function addGround(w: World, seed: number): void {
+  const rng = createRng((seed ^ 0x3c6ef372) >>> 0);
+  // 큰 덩어리 + 작은 굴곡
+  const layers = [
+    { cell: 24, amp: 1 },
+    { cell: 9, amp: 0.3 },
+  ].map((l) => {
+    const cols = Math.ceil(w.width / l.cell) + 2;
+    const rows = Math.ceil(w.height / l.cell) + 2;
+    return { ...l, cols, v: Array.from({ length: cols * rows }, () => rng()) };
+  });
+  const ease = (t: number) => t * t * (3 - 2 * t);
+  const c = Math.floor(w.width / 2);
+  const n = w.width * w.height;
+  const temp = new Float64Array(n);
+  for (let y = 0; y < w.height; y++) {
+    for (let x = 0; x < w.width; x++) {
+      let t = 0;
+      let sum = 0;
+      for (const l of layers) {
+        const fx = x / l.cell;
+        const fy = y / l.cell;
+        const ix = Math.floor(fx);
+        const iy = Math.floor(fy);
+        const sx = ease(fx - ix);
+        const sy = ease(fy - iy);
+        const at = (a: number, b: number) => l.v[(iy + b) * l.cols + ix + a];
+        const top = at(0, 0) + (at(1, 0) - at(0, 0)) * sx;
+        const bottom = at(0, 1) + (at(1, 1) - at(0, 1)) * sx;
+        t += (top + (bottom - top) * sy) * l.amp;
+        sum += l.amp;
+      }
+      t /= sum;
+      // 경계가 자로 그은 듯 매끈하지 않게 칸마다 조금 흔든다
+      t += (rng() - 0.5) * 0.02;
+      const d = Math.hypot(x - c, y - c);
+      const k = ease(Math.min(1, Math.max(0, (d - HUB_GRASS) / HUB_BLEND)));
+      temp[y * w.width + x] = 0.5 + (t - 0.5) * k;
+    }
+  }
+  const sorted = Float64Array.from(temp).sort();
+  const cold = sorted[Math.floor(n * GROUNDS[SNOW].share)];
+  const hot = sorted[Math.floor(n * (1 - GROUNDS[DESERT].share))];
+  for (let i = 0; i < n; i++) {
+    const x = i % w.width;
+    const y = Math.floor(i / w.width);
+    const t = temp[i];
+    w.ground[i] = Math.hypot(x - c, y - c) <= HUB_GRASS ? GRASS : t < cold ? SNOW : t >= hot ? DESERT : GRASS;
   }
 }
 

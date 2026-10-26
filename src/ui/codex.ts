@@ -1,9 +1,10 @@
 import { BUILDINGS, CATEGORIES, FOREST, TRUCK, isMinerType, isRecipeMachine, type BuildingType } from '../data/buildings';
+import { GROUNDS, groundEffects } from '../data/ground';
 import { ITEMS, type ItemId } from '../data/items';
 import { RECIPES, recipesFor, type MachineKind, type Recipe } from '../data/recipes';
 import { ENDLESS_GROWTH, ENDLESS_TECHS, TECHS } from '../data/tech';
 import type { World } from '../sim/world';
-import { buildingIconUrl, depositIconUrl, itemIconUrl, itemLink } from './icons';
+import { buildingIconUrl, depositIconUrl, groundIconUrl, itemIconUrl, itemLink } from './icons';
 
 /** 광맥·지형. 나오는 아이템으로 구분한다 */
 export type DepositId = 'iron-ore' | 'copper-ore' | 'coal' | 'stone' | 'water' | 'dirt';
@@ -284,7 +285,17 @@ export class Codex {
         <img src="${depositIconUrl(d)}" alt=""><b>${DEPOSITS[d].name}</b><span class="muted">${DEPOSITS[d].finite ? '유한' : '무한'}</span>
       </div>`,
     ).join('')}</div>`;
-    return deposits + items + buildings;
+    // 땅 종류: 페이지 없이 카드에 효과까지 (지금 맵에서 차지하는 비율)
+    const w = this.getWorld();
+    const count = [0, 0, 0];
+    for (const g of w.ground) count[g]++;
+    const grounds = `<h3>땅 종류</h3><div class="codex-grid">${GROUNDS.map(
+      (g, k) => `<div class="codex-card ground-card" title="${g.desc}">
+        <img src="${groundIconUrl(k)}" alt=""><b>${g.icon} ${g.name}</b>
+        <span class="muted">${groundEffects(g) || '보통'} · 맵의 ${Math.round((count[k] / w.ground.length) * 100)}%</span>
+      </div>`,
+    ).join('')}</div>`;
+    return deposits + grounds + items + buildings;
   }
 
   private depositPage(w: World, id: DepositId): string {

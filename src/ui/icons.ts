@@ -78,6 +78,12 @@ export function depositIconUrl(id: ItemId): string {
   return spriteUrl(`deposit:${id}`, `item:${id}`, 16);
 }
 
+/** 땅 종류 그림 (GROUND_LOOK의 칸 하나, 16×16) */
+export function groundIconUrl(kind: number): string {
+  const name = ['ground', 'sand', 'snow'][kind] ?? 'ground';
+  return spriteUrl(`ground-kind:${name}`, `${name}:1`, 16);
+}
+
 /** 건물 그림 이름 (종류마다 대표 모양 하나) */
 const BUILDING_SPRITE: Partial<Record<BuildingType, string>> = {
   underground: 'underground-in',

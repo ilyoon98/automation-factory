@@ -1,11 +1,11 @@
 import { BUILDINGS, isBeltType, type BuildingType } from '../data/buildings';
 import { ITEMS } from '../data/items';
 import type { Camera } from '../render/camera';
-import { ORE_GROUND, TREE_LEAF } from '../render/pixel';
+import { GROUND_LOOK, ORE_GROUND, TREE_LEAF } from '../render/pixel';
 import { patchAlert, type World } from '../sim/world';
 
-/** 픽셀 맵과 같은 따뜻한 공방 색 */
-const GROUND = '#e6d6af';
+/** 픽셀 맵과 같은 따뜻한 공방 색 (땅 종류마다: 초원 · 사막 · 눈밭) */
+const GROUND = GROUND_LOOK.map((g) => g.base);
 const WATER = '#4f96cf';
 /** 지도에서 건물 색. 맵 색 그대로면 바닥과 구분이 안 되는 것만 따로 */
 const BUILDING_COLOR: Partial<Record<BuildingType, string>> = {
@@ -133,9 +133,9 @@ export class Minimap {
   private paint(w: World): ImageData {
     const img = this.ctx.createImageData(w.width, w.height);
     const d = img.data;
-    const ground = rgb(GROUND);
+    const ground = GROUND.map(rgb);
     for (let i = 0; i < w.width * w.height; i++) {
-      let c = ground;
+      let c = ground[w.ground[i]];
       const item = w.resItem[i];
       if (item === 'water') c = rgb(WATER);
       else if (item) {

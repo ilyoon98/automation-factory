@@ -19,7 +19,7 @@ import { BELT_SPEED, World, isLineType, patchAlert, storageBounds } from '../sim
 import { ambientEnabled, darkness, sunset, weatherAt } from './ambient';
 import type { Camera } from './camera';
 import { roundRect } from './draw-item';
-import { NUM_ADVANCE, ORE_GROUND, PAL, TILE, TREE_LEAF, hash, loadSpriteOverrides, sprite, spriteHalf, tone } from './pixel';
+import { GROUND_LOOK, NUM_ADVANCE, ORE_GROUND, PAL, TILE, TREE_LEAF, hash, loadSpriteOverrides, sprite, spriteHalf, tone } from './pixel';
 import { MACHINE } from './pixel-buildings';
 
 /** 목표 표시 색 (진분홍: 모래·광맥·숲·호수 어디에도 없는 색이라 눈에 띈다. style.css .guide-pulse와 같게) */
@@ -1643,7 +1643,7 @@ function groundSprite(world: World, i: number): string {
   const item = world.resItem[i];
   const h = hash(i);
   if (item && ORE_TILES.includes(item)) return `ore:${item}:${richness(world.resAmount[i])}:${(h >>> 3) & 3}`;
-  return `ground:${h & 7}`;
+  return `${GROUND_LOOK[world.ground[i]].sprite}:${h & 7}`;
 }
 
 /** 나무 그림 단계: 0 새싹, 1 어린 나무, 2 다 자란 나무 */
@@ -1657,7 +1657,8 @@ function groundCode(world: World, i: number): number {
   if (item === 'water') return 99;
   if (world.tree[i] > 0) return 200 + treeStage(world.tree[i]);
   const k = item ? ORE_TILES.indexOf(item) : -1;
-  return k < 0 ? 0 : 1 + k * 4 + richness(world.resAmount[i]);
+  // 빈 땅은 땅 종류마다 (초원 0)
+  return k < 0 ? (world.ground[i] ? 300 + world.ground[i] : 0) : 1 + k * 4 + richness(world.resAmount[i]);
 }
 
 /** 멀리서 볼 때 칸 색: 땅, 물, 광맥 바닥색 (매장량이 많으면 진하게, 적으면 옅게) */
@@ -1667,7 +1668,7 @@ function lodColor(world: World, i: number): string {
   const g = world.tree[i];
   if (g > 0) return treeStage(g) === 2 ? TREE_LEAF.lo : TREE_LEAF.hi;
   const base = item ? ORE_GROUND[item] : undefined;
-  if (!base) return PAL.ground[0];
+  if (!base) return GROUND_LOOK[world.ground[i]].base;
   const rich = richness(world.resAmount[i]);
   return rich === 3 ? tone(base, -0.12) : rich === 2 ? base : tone(base, 0.25);
 }

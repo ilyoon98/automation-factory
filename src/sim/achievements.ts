@@ -1,20 +1,23 @@
-import type { ItemId } from '../data/items';
+import { ITEMS, type ItemId } from '../data/items';
 import { TERRAIN_IDS, type TerrainKind } from '../data/terrain';
 import type { World } from './world';
 
 /**
- * 업적 (docs/업적-확장기획서.md). 1차로 최초 42 · 심화 27(D24 탐사 제외) · 숨은 16을 켠다. 기록 30종은 기준값을 정한 뒤.
+ * 업적 (docs/업적-확장기획서.md). 최초 42 · 심화 27(D24 탐사 제외) · 숨은 16 · 기록 30 (docs/업적-기록30종-구현기준.md).
  * 시뮬레이션이 1초마다 판정하고 공장 저장에 남긴다 (화면을 열지 않아도, 같이 하는 모두에게 같은 결과).
  * 보상은 기록·알림·완료 도장뿐이다 (생산 보너스 없음).
  */
 
-export type AchKind = 'first' | 'deep' | 'hidden';
+export type AchKind = 'first' | 'deep' | 'hidden' | 'record';
 /** 필요한 기능: K 기본, B 지형·특화 자원, R 신규 생산, P 지역 전력, W 확장 날씨, L 계획 운송 */
 export type AchNeed = 'K' | 'B' | 'R' | 'P' | 'W' | 'L';
 export type AchArea = '생산' | '물류' | '전력' | '지역' | '숲';
 
 export interface AchDef {
+  /** 저장 id (기록은 record-v1/… 고정 키) */
   id: string;
+  /** 화면에 보일 번호 (기록 REC01 등). 없으면 id */
+  code?: string;
   kind: AchKind;
   name: string;
   /** 조건 설명 (숨은 업적은 달성 뒤에만 보인다) */
@@ -23,7 +26,7 @@ export interface AchDef {
   hint?: string;
   area: AchArea;
   needs: AchNeed[];
-  /** 심화: 네 메달 기준, 단위, 지금 값 (여러 항목은 가장 낮은 것) */
+  /** 심화·기록: 네 메달 기준(이상), 단위, 지금 값 (여러 항목은 가장 낮은 것, 기록은 지금까지의 최고) */
   tiers?: number[];
   unit?: string;
   /** 심화: 조건 충족을 이만큼(초) 누적해야 메달 */
@@ -36,6 +39,9 @@ export interface AchDef {
 /** 5초 단위 칸 60개 = 최근 300초 */
 const BUCKET = 5;
 const SLOTS = 60;
+
+/** 기록 REC18~23: 최근 60초에 실제로 완성한 수량을 재는 품목 */
+export const Q60_ITEMS: ItemId[] = ['iron-plate', 'copper-plate', 'gear', 'copper-wire', 'steel', 'circuit'];
 
 /** 업적 판정 상태 (공장 저장 단위) */
 export class AchState {
@@ -58,6 +64,66 @@ export class AchState {
   flags = new Set<string>();
   /** 글자 값 (트럭마다 지금 배송 구간, 실을 때 날씨 등) */
   text = new Map<string, string>();
+  /**
+   * 기록 1초 창 (record-v1): 집계 시작 초, 지금 열린 초, 품목별 지금 초 수량·닫힌 1초 칸 60개·최근 60초·최고,
+   * 허브 밖 발전이 작업에 준 전기의 지금 초 kJ·마지막으로 닫힌 초 kJ(= 평균 kW)·최고
+   */
+  recStart = -1;
+  recSec = -1;
+  q60Cur = Q60_ITEMS.map(() => 0);
+  q60Ring = Q60_ITEMS.map(() => new Array<number>(60).fill(0));
+  q60Now = Q60_ITEMS.map(() => 0);
+  q60Best = Q60_ITEMS.map(() => 0);
+  workCur = 0;
+  workLast = 0;
+  workBest = 0;
+
+  /** 게임 시각 t까지 끝난 1초 칸을 닫는다 (정확히 t초의 사건은 다음 칸). 60초를 다 잰 뒤부터 Q60을 판정한다 */
+  recRoll(t: number): void {
+    const sec = Math.floor(t + 1e-9);
+    if (this.recStart < 0) {
+      this.recStart = sec;
+      this.recSec = sec;
+      return;
+    }
+    while (this.recSec < sec) {
+      const slot = this.recSec % 60;
+      for (let i = 0; i < Q60_ITEMS.length; i++) {
+        this.q60Ring[i][slot] = this.q60Cur[i];
+        this.q60Cur[i] = 0;
+      }
+      this.workLast = this.workCur;
+      this.workBest = Math.max(this.workBest, this.workCur);
+      this.workCur = 0;
+      this.recSec++;
+      if (this.recSec - this.recStart >= 60) {
+        for (let i = 0; i < Q60_ITEMS.length; i++) {
+          this.q60Now[i] = this.q60Ring[i].reduce((a, b) => a + b, 0);
+          this.q60Best[i] = Math.max(this.q60Best[i], this.q60Now[i]);
+        }
+      }
+    }
+  }
+
+  /** 기계가 실제로 산출한 n개 (Q60 품목이면 지금 초 칸에) */
+  recProduce(item: ItemId, n: number, t: number): void {
+    const i = Q60_ITEMS.indexOf(item);
+    if (i < 0) return;
+    this.recRoll(t);
+    this.q60Cur[i] += n;
+  }
+
+  /** 허브 밖 발전이 실제 작업에 직접 준 전기 kJ (REC24 1초 평균) */
+  recWork(kj: number, t: number): void {
+    if (kj <= 0) return;
+    this.recRoll(t);
+    this.workCur += kj;
+  }
+
+  /** Q60 측정이 끝난 초 수 (60이면 판정 중) */
+  q60Measured(): number {
+    return this.recStart < 0 ? 0 : Math.min(60, this.recSec - this.recStart);
+  }
 
   add(key: string, n: number): void {
     this.num.set(key, (this.num.get(key) ?? 0) + n);
@@ -108,6 +174,15 @@ export class AchState {
       lastOre: [...this.lastOre],
       flags: [...this.flags],
       text: [...this.text],
+      rec: {
+        start: this.recStart,
+        sec: this.recSec,
+        cur: [...this.q60Cur],
+        ring: this.q60Ring.map((r) => [...r]),
+        now: [...this.q60Now],
+        best: [...this.q60Best],
+        work: [this.workCur, this.workLast, this.workBest],
+      },
     };
   }
 
@@ -124,6 +199,16 @@ export class AchState {
     s.lastOre = new Set(d.lastOre ?? []);
     s.flags = new Set(d.flags ?? []);
     s.text = new Map(d.text ?? []);
+    // 기록 창이 없는 이전 저장은 지금부터 새로 잰다 (과거 속도를 재고로 추정하지 않는다)
+    if (d.rec) {
+      s.recStart = d.rec.start;
+      s.recSec = d.rec.sec;
+      s.q60Cur = Q60_ITEMS.map((_, i) => d.rec!.cur[i] ?? 0);
+      s.q60Ring = Q60_ITEMS.map((_, i) => (d.rec!.ring[i] ? [...d.rec!.ring[i]] : new Array<number>(60).fill(0)));
+      s.q60Now = Q60_ITEMS.map((_, i) => d.rec!.now[i] ?? 0);
+      s.q60Best = Q60_ITEMS.map((_, i) => d.rec!.best[i] ?? 0);
+      [s.workCur, s.workLast, s.workBest] = d.rec.work;
+    }
     return s;
   }
 
@@ -138,6 +223,8 @@ export class AchState {
     // 저장은 0뿐인 창을 빼므로 해시도 빼고 센다
     for (const [, a] of sorted(this.win)) if (a.some((x) => x)) for (const x of a) h = (h * 31 + Math.round(x * 1000)) | 0;
     for (const v of this.text.values()) h = (h * 31 + v.length) | 0;
+    h = (h * 31 + this.recStart * 7 + this.recSec) | 0;
+    for (const arr of [this.q60Cur, this.q60Now, this.q60Best, [this.workCur, this.workLast, this.workBest], ...this.q60Ring]) for (const x of arr) h = (h * 31 + Math.round(x * 1000)) | 0;
     return h + this.trees.size * 3 + this.lastOre.size + this.text.size * 5;
   }
 }
@@ -185,6 +272,67 @@ const deep = (
   value: (w: World) => number,
   sustain?: number,
 ): AchDef => ({ id, kind: 'deep', name, desc, area, needs, tiers, unit, value, sustain });
+
+/** 기록: 저장 id는 record-v1/… 고정 키, 화면에는 REC 번호 */
+const record = (code: string, id: string, name: string, desc: string, area: AchArea, needs: AchNeed[], tiers: number[], unit: string, value: (w: World) => number): AchDef => ({
+  id,
+  code,
+  kind: 'record',
+  name,
+  desc,
+  area,
+  needs,
+  tiers,
+  unit,
+  value,
+});
+
+const produced = (code: string, item: ItemId, name: string, tiers: number[], needs: AchNeed[] = ['K']) =>
+  record(code, `record-v1/produced/${item}`, name, `${ITEMS[item].name} 누적 생산 (기계가 실제로 산출한 개수)`, '생산', needs, tiers, '개', (w) => made(w, item));
+
+const speed = (code: string, item: ItemId, name: string, tiers: number[]) =>
+  record(code, `record-v1/q60/${item}`, name, `최근 게임 시간 60초에 실제로 완성한 ${ITEMS[item].name} (한 번 넘으면 지급)`, '생산', ['K'], tiers, '개', (w) => w.ach.q60Best[Q60_ITEMS.indexOf(item)]);
+
+/** REC27에서 세지 않는 건물 (벨트·도로·전봇대 같은 연결 설비와 허브) */
+export const RECORD_SKIP = new Set<string>(['hub', 'belt', 'fast-belt', 'underground', 'splitter', 'overflow', 'sorter', 'merger', 'road', 'pole']);
+
+/** 기록 30종 (docs/업적-기록30종-구현기준.md): 누적 17 · 속도 6 · 공장 7 */
+const RECORDS: AchDef[] = [
+  produced('REC01', 'iron-ore', '철을 캐는 공장', [500, 2500, 10000, 25000]),
+  produced('REC02', 'copper-ore', '구리를 캐는 공장', [500, 2500, 10000, 25000]),
+  produced('REC03', 'coal', '불을 위한 광산', [500, 2000, 7500, 20000]),
+  produced('REC04', 'stone', '돌부터 시작해서', [500, 2500, 10000, 25000]),
+  produced('REC05', 'iron-plate', '공장의 바탕', [250, 1500, 7500, 30000]),
+  produced('REC06', 'copper-plate', '구릿빛 판재', [250, 1500, 7500, 30000]),
+  produced('REC07', 'gear', '맞물리는 수천 개', [100, 750, 3000, 10000]),
+  produced('REC08', 'copper-wire', '가늘고 긴 연결', [500, 2500, 10000, 40000]),
+  produced('REC09', 'steel', '단단해진 공장', [100, 500, 2500, 10000]),
+  produced('REC10', 'circuit', '생각하는 부품', [100, 500, 2500, 10000]),
+  produced('REC11', 'log', '숲에서 온 기둥', [250, 1500, 7500, 25000]),
+  produced('REC12', 'wood', '나무를 다듬는 일', [250, 1500, 7500, 25000]),
+  produced('REC13', 'charcoal', '다시 쓰는 불씨', [100, 500, 2500, 10000]),
+  produced('REC14', 'paper', '쌓이는 종이', [100, 500, 2500, 10000]),
+  produced('REC15', 'tin-plate', '눈밭의 금속', [100, 500, 2000, 5000], ['B', 'R']),
+  produced('REC16', 'bronze', '합금의 시대', [250, 1000, 5000, 20000], ['B', 'R']),
+  produced('REC17', 'aluminum-plate', '가벼워진 산업', [50, 250, 1000, 5000], ['B', 'R']),
+  speed('REC18', 'iron-plate', '철판이 흐르는 속도', [30, 60, 180, 600]),
+  speed('REC19', 'copper-plate', '구리판이 흐르는 속도', [30, 60, 180, 600]),
+  speed('REC20', 'gear', '기어가 맞물리는 속도', [10, 30, 90, 240]),
+  speed('REC21', 'copper-wire', '이어지는 구리선', [60, 120, 360, 1200]),
+  speed('REC22', 'steel', '강철이 완성되는 속도', [5, 15, 45, 120]),
+  speed('REC23', 'circuit', '회로가 완성되는 속도', [5, 15, 45, 120]),
+  record('REC24', 'record-v1/factory/work-power', '공장을 움직인 전기', '허브 밖 발전이 실제 작업에 직접 준 전기의 1초 평균 (축전 방전·충전 제외)', '전력', ['K'], [500, 2000, 8000, 20000], 'kW', (w) => w.ach.workBest),
+  record('REC25', 'record-v1/factory/night-energy', '밤에도 켜진 공장', '한밤 중 허브 밖 발전이 실제 작업에 직접 준 전기 누적', '전력', ['K'], [10, 100, 500, 2500], 'MJ', (w) => w.ach.get('r:night') / 1000),
+  record('REC26', 'record-v1/factory/storm-wind-energy', '폭풍을 쓰는 공장', '안정된 현지 폭풍 속 풍력이 실제 작업에 직접 준 전기 누적', '전력', ['W'], [5, 25, 100, 500], 'MJ', (w) => w.ach.get('r:storm') / 1000),
+  record('REC27', 'record-v1/factory/buildings', '커지는 공장', '지금 있는 설비 수 (허브·벨트류·도로·전봇대 제외)', '생산', ['K'], [10, 30, 75, 150], '대', (w) => {
+    let n = 0;
+    for (const b of w.buildings.values()) if (!RECORD_SKIP.has(b.type)) n++;
+    return n;
+  }),
+  record('REC28', 'record-v1/factory/trucks', '바퀴가 늘어나는 공장', '지금 있는 트럭 수 (기본·고급 모두)', '물류', ['K'], [1, 4, 12, 24], '대', (w) => w.vehicles.size),
+  record('REC29', 'record-v1/factory/planted-trees', '직접 심은 숲', '식목기가 실제로 심은 나무 누적', '숲', ['K'], [25, 100, 500, 2000], '그루', (w) => w.ach.get('planted')),
+  record('REC30', 'record-v1/factory/endless-levels', '한 걸음 더 연구', '끝없는 연구 5종을 재료를 내고 실제로 올린 단계 합계', '생산', ['K'], [1, 5, 10, 20], '단계', (w) => w.ach.get('r:endless')),
+];
 
 const hidden = (id: string, name: string, hint: string, desc: string, area: AchArea, needs: AchNeed[], check: (w: World) => boolean): AchDef => ({
   id,
@@ -327,6 +475,8 @@ export const ACHIEVEMENTS: AchDef[] = [
   ),
 ];
 
+ACHIEVEMENTS.push(...RECORDS);
+
 export const ACH_BY_ID: Record<string, AchDef> = Object.fromEntries(ACHIEVEMENTS.map((a) => [a.id, a]));
 
 /** 이 세계에서 켜진 업적 (예전 세계는 기본 기능 K만) */
@@ -341,7 +491,7 @@ export function evaluateAchievements(w: World): string[] {
   const s = w.ach;
   const got: string[] = [];
   for (const a of activeAchievements(w)) {
-    if (a.kind !== 'deep') {
+    if (a.kind === 'first' || a.kind === 'hidden') {
       if (s.done.has(a.id) || !a.check!(w)) continue;
       s.done.set(a.id, w.time);
       got.push(a.id);

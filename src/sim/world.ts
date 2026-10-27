@@ -2138,6 +2138,8 @@ export class World {
       const level = this.endlessLevel(id) + 1;
       for (const c of endlessCost(e, level)) addTo(this.stock, c.item, -c.count);
       this.levels.set(id, level);
+      // 기록 REC30: 재료를 내고 실제로 올린 단계 (불러오기·무료 해금은 세지 않는다)
+      this.ach.add('r:endless', 1);
       return true;
     }
     for (const c of this.tech(id)!.cost) addTo(this.stock, c.item, -c.count);
@@ -2839,6 +2841,14 @@ export class World {
       const work = s.demand * satisfaction * DT;
       const frac = (k: string) => (served > 0 ? (src.get(k) ?? 0) / served : 0);
       this.stats.genWork += work * (1 - frac('hub'));
+      // 기록 REC24~26: 허브·축전 방전을 뺀 발전원이 최종 작업에 준 몫 (망의 실제 출력 비율로 한 번만)
+      let storm = 0;
+      for (const b of s.ren) {
+        if (b.type !== 'wind' || b.load <= 0) continue;
+        const lw = this.localWeather(this.terrainAt(this.refTile(b)));
+        if (lw.kind === 'storm' && lw.strength >= 1) storm += b.load;
+      }
+      this.recordWork(work * (1 - frac('hub') - frac('storage')), served > 0 && s.free > 0 ? (work * ((freeUsed * storm) / s.free)) / served : 0);
       this.stats.formalWork += s.formal * satisfaction * DT;
       if (work > 0) {
         this.stats.geoWork += work * frac('geo');
@@ -3447,6 +3457,18 @@ export class World {
     const ren = [...hydros];
     for (const b of this.buildings.values()) if (b.type === 'solar' || b.type === 'wind') ren.push(b);
     this.achSolarWind(src, demand > 0 ? (demand - charge) / demand : 0, windAll, 0, ren);
+    let served = 0;
+    for (const v of src.values()) served += v;
+    const work = (demand - charge) * satisfaction * DT;
+    this.recordWork(served > 0 ? work * (1 - (src.get('hub') ?? 0) / served) : 0, 0);
+  }
+
+  /** 기록 REC24~26: 허브 밖 발전이 작업에 직접 준 전기 kJ (이번 틱), 그중 안정된 폭풍 속 풍력 몫 */
+  private recordWork(kj: number, stormKj: number): void {
+    if (kj <= 0) return;
+    this.ach.recWork(kj, this.time);
+    if (this.isNight()) this.ach.add('r:night', kj);
+    if (stormKj > 0) this.ach.add('r:storm', stormKj);
   }
 
   /** 지금 태양광 패널 한 대의 출력 (kW): 해가 있는 만큼 × 날씨 */
@@ -3510,6 +3532,7 @@ export class World {
     addTo(b.outBuf, item, n);
     addTo(this.stats.made, item, n);
     this.ach.addWin(`m:${item}`, n, this.time);
+    this.ach.recProduce(item, n, this.time);
     const z = this.siteId(b);
     if (z) {
       this.stats.zoneMade.set(z, (this.stats.zoneMade.get(z) ?? 0) + n);
@@ -3623,6 +3646,8 @@ export class World {
   /** 업적의 1초 단위 처리: 날씨·밤 기록, 광석 안 쓴 시간(H15), 지하 건널목(H01), 화산 태양광(H08), 정리, 그리고 판정 */
   private achTick(): void {
     const a = this.ach;
+    // 기록: 끝난 1초 칸을 닫는다 (사건이 없던 초도)
+    a.recRoll(this.time);
     const day = Math.floor(this.time / DAY_SEC);
     // H15: 광맥 독립 뒤 철광석·구리광석·석탄을 한 번도 쓰지 않은 1초 (작업 수요가 있을 때)
     const recipes = ['iron-plate-c', 'copper-plate-c', 'steel-e'];

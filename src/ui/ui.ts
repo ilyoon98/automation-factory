@@ -50,7 +50,7 @@ import { blueprintCode, blueprintPreview, defaultBlueprintName, saveBlueprint } 
 import { copyText } from './clipboard';
 import { GUIDE, findTarget, type GuideFocus } from './guide';
 import { CHALLENGES, CHALLENGE_BY_ID, MAIN_GOALS, PROJECT_GOAL, currentGoal } from '../sim/goals';
-import { ACH_BY_ID, achProgress, activeAchievements, sustainedSecs, type AchDef, type AchKind } from '../sim/achievements';
+import { ACH_BY_ID, Q60_ITEMS, achProgress, activeAchievements, sustainedSecs, type AchDef, type AchKind } from '../sim/achievements';
 import { Codex, depositName, type DepositId } from './codex';
 import { buildingIconUrl, depositIconUrl, itemIcon, itemLink, truckIconUrl, withBuildingIcons } from './icons';
 import { sound } from './sound';
@@ -150,7 +150,9 @@ const newRid = () => `${RID_PREFIX}-${++ridSeq}`;
 
 /** 심화 메달 네 단계 */
 const MEDAL = ['🥉', '🥈', '🥇', '💎'];
-const ACH_TAB: Record<AchKind, string> = { first: '최초', deep: '심화', hidden: '숨은' };
+const ACH_TAB: Record<AchKind, string> = { first: '최초', deep: '심화', record: '기록', hidden: '숨은' };
+/** 메달 네 단계로 세는 업적 (심화·기록) */
+const tiered = (a: AchDef) => a.kind === 'deep' || a.kind === 'record';
 
 const MODULE_STATE_LABEL = { none: '미설치', installed: '설치됨', next: '다음 제작부터 적용', detaching: '제작 완료 후 분리' } as const;
 
@@ -1347,7 +1349,7 @@ export class UI {
       return `<div class="tech locked"><h4><span class="ticon">❔</span>???</h4><p>${a.hint}</p></div>`;
     }
     let body = '';
-    if (a.kind === 'deep') {
+    if (tiered(a)) {
       const v = a.value!(w);
       const next = level < 4 ? a.tiers![level] : null;
       const medals = a.tiers!.map((t, i) => `<span title="${t.toLocaleString()}${a.unit}" style="opacity:${i < level ? 1 : 0.25}">${MEDAL[i]}</span>`).join('');
@@ -1357,17 +1359,29 @@ export class UI {
         const secs = sustainedSecs(w, a);
         body += `<small class="muted">조건 충족 누적 ${secs}/${a.sustain}초${v < next && secs > 0 ? ' · 잠시 멈춤 (누적은 그대로)' : ''}</small>`;
       }
+      body += this.recordNote(w, a);
     }
-    const state = a.kind === 'deep' ? (level >= 4 ? 'done' : level > 0 ? 'open' : 'locked') : done ? 'done' : 'open';
+    const state = tiered(a) ? (level >= 4 ? 'done' : level > 0 ? 'open' : 'locked') : done ? 'done' : 'open';
     const canTrack = a.kind !== 'hidden' && !(done || level >= 4);
     return `<div class="tech ${state}">
-      <h4><span class="ticon">${a.kind === 'hidden' ? '🌟' : done || level >= 4 ? '🏅' : '·'}</span>${a.name} <small class="muted">${a.id} · ${a.area}</small></h4>
+      <h4><span class="ticon">${a.kind === 'hidden' ? '🌟' : done || level >= 4 ? '🏅' : '·'}</span>${a.name} <small class="muted">${a.code ?? a.id} · ${a.area}</small></h4>
       <p>${a.desc}</p>${body}
       ${canTrack ? `<button data-achtrack="${a.id}">${tracked === a.id ? '추적 그만' : '추적'}</button>` : done ? '<div class="badge">완료</div>' : ''}
     </div>`;
   }
 
-  /** 업적 창: 최초 / 심화 / 숨은 탭, 분야·미달성 필터, 가까운 순 정렬, 공개 완료율과 숨은 발견 수 */
+  /** 기록의 지금 값 (속도는 최근 60초와 측정 중, 전력은 마지막 1초 평균). 메달 판정 값은 지금까지의 최고 */
+  private recordNote(w: World, a: AchDef): string {
+    const i = Q60_ITEMS.findIndex((item) => a.id === `record-v1/q60/${item}`);
+    if (i >= 0) {
+      const n = w.ach.q60Measured();
+      return `<small class="muted">${n < 60 ? `측정 중 ${n}/60초` : `최근 60초 ${w.ach.q60Now[i]}개`} · 최고 ${w.ach.q60Best[i]}개</small>`;
+    }
+    if (a.id === 'record-v1/factory/work-power') return `<small class="muted">마지막 1초 평균 ${Math.round(w.ach.workLast)}kW · 최고 ${Math.round(w.ach.workBest)}kW</small>`;
+    return '';
+  }
+
+  /** 업적 창: 최초 / 심화 / 기록 / 숨은 탭, 분야·미달성 필터, 가까운 순 정렬, 공개 완료율과 숨은 발견 수 */
   private updateAchPanel(w: World): void {
     const now = performance.now();
     const key = `${this.achTab}|${this.achTodo}|${this.achArea}|${this.achSort}|${w.ach.done.size}|${[...w.ach.medals.values()].join('')}`;
@@ -1379,12 +1393,12 @@ export class UI {
     const [have, total] = achProgress(w);
     const hiddenAll = all.filter((a) => a.kind === 'hidden');
     const hiddenGot = hiddenAll.filter((a) => w.ach.done.has(a.id)).length;
-    const tabs = (['first', 'deep', 'hidden'] as AchKind[])
+    const tabs = (['first', 'deep', 'record', 'hidden'] as AchKind[])
       .map((t) => `<button data-achtab="${t}" class="${t === this.achTab ? 'active' : ''}">${ACH_TAB[t]} <small>${all.filter((a) => a.kind === t).length}</small></button>`)
       .join('');
-    const isDone = (a: AchDef) => (a.kind === 'deep' ? (w.ach.medals.get(a.id) ?? 0) >= 4 : w.ach.done.has(a.id));
+    const isDone = (a: AchDef) => (tiered(a) ? (w.ach.medals.get(a.id) ?? 0) >= 4 : w.ach.done.has(a.id));
     const closeness = (a: AchDef) => {
-      if (a.kind !== 'deep') return w.ach.done.has(a.id) ? -1 : 0;
+      if (!tiered(a)) return w.ach.done.has(a.id) ? -1 : 0;
       const level = w.ach.medals.get(a.id) ?? 0;
       return level >= 4 ? -1 : a.value!(w) / a.tiers![level];
     };
@@ -1408,7 +1422,7 @@ export class UI {
     const id = this.trackedAch();
     const a = id ? ACH_BY_ID[id] : undefined;
     if (!a || !activeAchievements(w).includes(a)) return '';
-    if (a.kind === 'deep') {
+    if (tiered(a)) {
       const level = w.ach.medals.get(a.id) ?? 0;
       if (level >= 4) return '';
       const v = a.value!(w);

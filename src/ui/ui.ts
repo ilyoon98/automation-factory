@@ -50,6 +50,7 @@ import { blueprintCode, blueprintPreview, defaultBlueprintName, saveBlueprint } 
 import { copyText } from './clipboard';
 import { GUIDE, findTarget, type GuideFocus } from './guide';
 import { CHALLENGES, CHALLENGE_BY_ID, MAIN_GOALS, PROJECT_GOAL, currentGoal } from '../sim/goals';
+import { ACH_BY_ID, achProgress, activeAchievements, sustainedSecs, type AchDef, type AchKind } from '../sim/achievements';
 import { Codex, depositName, type DepositId } from './codex';
 import { buildingIconUrl, depositIconUrl, itemIcon, itemLink, truckIconUrl, withBuildingIcons } from './icons';
 import { sound } from './sound';
@@ -142,6 +143,10 @@ const RID_PREFIX = Math.random().toString(36).slice(2, 8);
 let ridSeq = 0;
 const newRid = () => `${RID_PREFIX}-${++ridSeq}`;
 
+/** 심화 메달 네 단계 */
+const MEDAL = ['🥉', '🥈', '🥇', '💎'];
+const ACH_TAB: Record<AchKind, string> = { first: '최초', deep: '심화', hidden: '숨은' };
+
 const MODULE_STATE_LABEL = { none: '미설치', installed: '설치됨', next: '다음 제작부터 적용', detaching: '제작 완료 후 분리' } as const;
 
 /** 트럭이 이 정류장에서 하는 일 (정류장 정보창 트럭 목록) */
@@ -203,6 +208,14 @@ export class UI {
   private savedPastes = new WeakMap<Blueprint, string>();
   /** 지금 목표가 가리키는 것 */
   private guideFocus: GuideFocus | null = null;
+  /** 업적 창: 탭, 미달성만, 분야, 가까운 순, 다시 그릴 때를 알 열쇠. 알림용 지난 상태 */
+  private achTab: AchKind = 'first';
+  private achTodo = false;
+  private achArea = '';
+  private achSort = false;
+  private achKey = '';
+  private achAt = 0;
+  private achSeen: { world: World | null; got: Set<string> } = { world: null, got: new Set() };
   /** 확장 세계: 지난번에 본 이룬 목표 수, 완성 알림을 보였는지 */
   private goalCount = 0;
   /** 회수 더미를 차례로 보여 줄 때 지금 차례 */
@@ -257,6 +270,33 @@ export class UI {
     );
     $('btn-research').addEventListener('click', () => this.toggleModal('research'));
     $('btn-stats').addEventListener('click', () => this.toggleModal('stats'));
+    $('btn-ach').addEventListener('click', () => this.toggleModal('ach'));
+    // 업적 창: 탭·필터·추적 (개인 설정)
+    $('ach').addEventListener('click', (e) => {
+      const t = e.target as HTMLElement;
+      const tab = t.closest<HTMLElement>('[data-achtab]')?.dataset.achtab;
+      if (tab) this.achTab = tab as AchKind;
+      const track = t.closest<HTMLElement>('[data-achtrack]')?.dataset.achtrack;
+      if (track !== undefined) {
+        try {
+          localStorage.setItem('automation-ach-track', track === this.trackedAch() ? '' : track);
+        } catch {
+          // 저장 공간이 없으면 이번 실행 동안만
+        }
+      }
+      if (tab || track !== undefined) {
+        this.achKey = '';
+        this.update();
+      }
+    });
+    $('ach').addEventListener('change', (e) => {
+      const el = e.target as HTMLInputElement | HTMLSelectElement;
+      if (el.dataset.achf === 'todo') this.achTodo = (el as HTMLInputElement).checked;
+      if (el.dataset.achf === 'area') this.achArea = el.value;
+      if (el.dataset.achf === 'sort') this.achSort = el.value === 'near';
+      this.achKey = '';
+      this.update();
+    });
     $('btn-map').addEventListener('click', () => game.toggleMap());
     $('layers').addEventListener('click', (e) => {
       const l = (e.target as HTMLElement).closest<HTMLElement>('[data-layer]')?.dataset.layer as MapLayer | undefined;
@@ -732,10 +772,11 @@ export class UI {
     this.toast(input.showRates ? '생산량 표시 켬 (기계 위 숫자 = 분당 생산, 색 = 가동률)' : '생산량 표시 끔');
   }
 
-  private toggleModal(id: 'research' | 'help' | 'stats'): void {
+  private toggleModal(id: 'research' | 'help' | 'stats' | 'ach'): void {
     const el = $(id);
     el.hidden = !el.hidden;
     if (id === 'research') this.researchKey = '';
+    if (id === 'ach') this.achKey = '';
     if (id === 'stats') this.statsAt = 0;
     this.update();
   }
@@ -794,6 +835,8 @@ export class UI {
     if (!$('research').hidden) this.updateResearch(w);
     this.sampleStock(w);
     if (!$('stats').hidden) this.updateStatsPanel(w);
+    if (!$('ach').hidden) this.updateAchPanel(w);
+    this.achNotify(w);
     this.updateTooltip(w);
     this.codex.refresh();
   }
@@ -1020,7 +1063,7 @@ export class UI {
       <div class="now"><small class="muted">${g.chapter} · ${g.id}</small><b>${g.title}</b><p>${withBuildingIcons(g.hint)}</p></div>
       <ul class="steps">${checks}</ul>
       ${opens.length ? `<p class="muted">이루면 지도에 열려요: ${opens.join(', ')}</p>` : ''}
-      ${this.challengeHtml(w)}`;
+      ${this.challengeHtml(w)}${this.trackedAchHtml(w)}`;
   }
 
   /** 선택 도전 하나를 골라 목표 카드 아래에 추적 (고른 것은 이 PC에만 기억, 이룬 기록은 공장에 저장) */
@@ -1046,6 +1089,111 @@ export class UI {
     } catch {
       return '';
     }
+  }
+
+  /** 추적 중인 업적 id (이 PC에만 기억) */
+  private trackedAch(): string {
+    try {
+      return localStorage.getItem('automation-ach-track') ?? '';
+    } catch {
+      return '';
+    }
+  }
+
+  /** 새로 얻은 업적을 한 알림으로 묶어 알린다 (불러오기·방 들어가기로 한꺼번에 채워질 때는 조용히) */
+  private achNotify(w: World): void {
+    const got = new Set<string>([...w.ach.done.keys(), ...[...w.ach.medals].map(([id, n]) => `${id}:${n}`)]);
+    if (this.achSeen.world === w) {
+      const fresh = [...got].filter((k) => !this.achSeen.got.has(k));
+      if (fresh.length) {
+        const names = fresh.map((k) => {
+          const [id, n] = k.split(':');
+          const a = ACH_BY_ID[id];
+          return a ? `${a.name}${n ? ` ${MEDAL[Number(n) - 1]}` : ''}` : k;
+        });
+        this.toast(`🏅 업적: ${names.slice(0, 3).join(', ')}${names.length > 3 ? ` 외 ${names.length - 3}개` : ''}`, 4000);
+        sound.play('goal');
+      }
+    }
+    this.achSeen = { world: w, got };
+  }
+
+  /** 업적 하나의 진행 막대·설명 (숨은 업적은 달성 전 힌트만) */
+  private achCard(w: World, a: AchDef, tracked: string): string {
+    const done = w.ach.done.has(a.id);
+    const level = w.ach.medals.get(a.id) ?? 0;
+    if (a.kind === 'hidden' && !done) {
+      return `<div class="tech locked"><h4><span class="ticon">❔</span>???</h4><p>${a.hint}</p></div>`;
+    }
+    let body = '';
+    if (a.kind === 'deep') {
+      const v = a.value!(w);
+      const next = level < 4 ? a.tiers![level] : null;
+      const medals = a.tiers!.map((t, i) => `<span title="${t.toLocaleString()}${a.unit}" style="opacity:${i < level ? 1 : 0.25}">${MEDAL[i]}</span>`).join('');
+      body = `<div class="row"><span>${medals}</span><b>${next !== null ? `${fmtNum(Math.min(v, next))} / ${next.toLocaleString()}${a.unit}` : '모두 얻음'}</b></div>`;
+      if (next !== null) body += `<div class="bar"><div style="width:${Math.min(100, (v / next) * 100)}%"></div></div>`;
+      if (a.sustain && next !== null) {
+        const secs = sustainedSecs(w, a);
+        body += `<small class="muted">조건 충족 누적 ${secs}/${a.sustain}초${v < next && secs > 0 ? ' · 잠시 멈춤 (누적은 그대로)' : ''}</small>`;
+      }
+    }
+    const state = a.kind === 'deep' ? (level >= 4 ? 'done' : level > 0 ? 'open' : 'locked') : done ? 'done' : 'open';
+    const canTrack = a.kind !== 'hidden' && !(done || level >= 4);
+    return `<div class="tech ${state}">
+      <h4><span class="ticon">${a.kind === 'hidden' ? '🌟' : done || level >= 4 ? '🏅' : '·'}</span>${a.name} <small class="muted">${a.id} · ${a.area}</small></h4>
+      <p>${a.desc}</p>${body}
+      ${canTrack ? `<button data-achtrack="${a.id}">${tracked === a.id ? '추적 그만' : '추적'}</button>` : done ? '<div class="badge">완료</div>' : ''}
+    </div>`;
+  }
+
+  /** 업적 창: 최초 / 심화 / 숨은 탭, 분야·미달성 필터, 가까운 순 정렬, 공개 완료율과 숨은 발견 수 */
+  private updateAchPanel(w: World): void {
+    const now = performance.now();
+    const key = `${this.achTab}|${this.achTodo}|${this.achArea}|${this.achSort}|${w.ach.done.size}|${[...w.ach.medals.values()].join('')}`;
+    if (key === this.achKey && now - this.achAt < 1000) return;
+    this.achKey = key;
+    this.achAt = now;
+    const all = activeAchievements(w);
+    const tracked = this.trackedAch();
+    const [have, total] = achProgress(w);
+    const hiddenAll = all.filter((a) => a.kind === 'hidden');
+    const hiddenGot = hiddenAll.filter((a) => w.ach.done.has(a.id)).length;
+    const tabs = (['first', 'deep', 'hidden'] as AchKind[])
+      .map((t) => `<button data-achtab="${t}" class="${t === this.achTab ? 'active' : ''}">${ACH_TAB[t]} <small>${all.filter((a) => a.kind === t).length}</small></button>`)
+      .join('');
+    const isDone = (a: AchDef) => (a.kind === 'deep' ? (w.ach.medals.get(a.id) ?? 0) >= 4 : w.ach.done.has(a.id));
+    const closeness = (a: AchDef) => {
+      if (a.kind !== 'deep') return w.ach.done.has(a.id) ? -1 : 0;
+      const level = w.ach.medals.get(a.id) ?? 0;
+      return level >= 4 ? -1 : a.value!(w) / a.tiers![level];
+    };
+    let list = all.filter((a) => a.kind === this.achTab && (!this.achArea || a.area === this.achArea) && (!this.achTodo || !isDone(a)));
+    if (this.achSort && this.achTab !== 'hidden') list = [...list].sort((x, y) => closeness(y) - closeness(x));
+    const areas = ['생산', '물류', '전력', '지역', '숲'].map((x) => `<option ${x === this.achArea ? 'selected' : ''}>${x}</option>`).join('');
+    $('ach').innerHTML = `<div class="panel"><header><h2>업적</h2><button class="x" data-act="close-modal">×</button></header>
+      <p class="muted">공개 업적 ${have}/${total} 기록 (${total ? Math.round((have / total) * 100) : 0}%) · 숨은 업적 발견 ${hiddenGot}/${hiddenAll.length}${w.regional ? '' : ' · 지역 생산망 확장 지도에서는 업적이 더 있어요'}.
+        보상은 기록과 메달뿐이에요 (생산 보너스 없음).</p>
+      <div class="rtabs">${tabs}</div>
+      <div class="line">
+        <label><input type="checkbox" data-achf="todo" ${this.achTodo ? 'checked' : ''}> 아직 못 얻은 것만</label>
+        <select data-achf="area"><option value="">모든 분야</option>${areas}</select>
+        ${this.achTab !== 'hidden' ? `<select data-achf="sort"><option value="">순서대로</option><option value="near" ${this.achSort ? 'selected' : ''}>다음 단계가 가까운 순</option></select>` : ''}
+      </div>
+      <div class="techs">${list.map((a) => this.achCard(w, a, tracked)).join('') || '<p class="muted">해당하는 업적이 없어요.</p>'}</div></div>`;
+  }
+
+  /** 목표 카드 아래: 추적 중인 업적 한 줄 */
+  private trackedAchHtml(w: World): string {
+    const id = this.trackedAch();
+    const a = id ? ACH_BY_ID[id] : undefined;
+    if (!a || !activeAchievements(w).includes(a)) return '';
+    if (a.kind === 'deep') {
+      const level = w.ach.medals.get(a.id) ?? 0;
+      if (level >= 4) return '';
+      const v = a.value!(w);
+      return `<p class="muted">🏅 추적: ${a.name} ${MEDAL[level]} ${fmtNum(Math.min(v, a.tiers![level]))}/${a.tiers![level].toLocaleString()}${a.unit}${a.sustain ? ` · 누적 ${sustainedSecs(w, a)}/${a.sustain}초` : ''}</p>`;
+    }
+    return w.ach.done.has(a.id) ? '' : `<p class="muted">🏅 추적: ${a.name} · ${a.desc}</p>`;
   }
 
   /** 최종 납품을 마쳤을 때 한 번: 공장망 요약과 계속 건설 */
@@ -1090,7 +1238,7 @@ export class UI {
       .join('');
     $('guide').innerHTML = `${head}
       <div class="now"><b>${now.title}</b><p>${hint}</p></div>
-      <ul class="steps">${steps}</ul>`;
+      <ul class="steps">${steps}</ul>${this.trackedAchHtml(w)}`;
   }
 
   /**

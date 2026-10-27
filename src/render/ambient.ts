@@ -37,7 +37,12 @@ export function skyLabel(seed: number, time: number): { icon: string; text: stri
   const night = d > 0.5;
   if (w === 'rain') return { icon: '🌧️', text: night ? '비 오는 밤' : '비' };
   if (w === 'cloudy') return { icon: night ? '☁️' : '⛅', text: night ? '흐린 밤' : '흐림' };
-  if (night) return { icon: '🌙', text: '밤' };
+  return dayLabel(time);
+}
+
+/** 날씨 없이 낮·밤만 (확장 지도는 날씨가 땅마다 따로라 공통 날씨를 섞지 않는다) */
+export function dayLabel(time: number): { icon: string; text: string } {
+  if (darkness(time) > 0.5) return { icon: '🌙', text: '밤' };
   if (sunset(time) > 0.3) return { icon: '🌇', text: dayPhase(time) > 0.5 ? '해 질 녘' : '해 뜰 녘' };
   return { icon: '☀️', text: '낮' };
 }

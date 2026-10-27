@@ -25,6 +25,17 @@ export const LOCAL_WEATHER_LABEL: Record<LocalWeather, string> = {
   storm: '폭풍',
 };
 
+/** 지역 날씨 아이콘 (맑음은 낮·밤 하늘로 바꿔 쓸 수 있다) */
+export const LOCAL_WEATHER_ICON: Record<LocalWeather, string> = {
+  clear: '☀️',
+  cloudy: '⛅',
+  fog: '🌫️',
+  rain: '🌧️',
+  snow: '🌨️',
+  sandstorm: '🌪️',
+  storm: '⛈️',
+};
+
 /** 종류마다 추첨 가중치와 기준 지속 시간 S (일) */
 const KINDS: { kind: Exclude<MajorWeather, 'calm'>; weight: number; days: number }[] = [
   { kind: 'precip', weight: 55, days: 1 },

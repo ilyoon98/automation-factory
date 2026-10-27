@@ -10,7 +10,7 @@ import {
   type BuildingType,
 } from '../data/buildings';
 import { ITEMS, type ItemId } from '../data/items';
-import { LOCAL_WEATHER_LABEL, type LocalWeather } from '../sim/weather-v1';
+import { LOCAL_WEATHER_ICON } from '../sim/weather-v1';
 import { TERRAIN, TERRAIN_IDS } from '../data/terrain';
 import { RECIPES } from '../data/recipes';
 import type { Presence } from '../net/session';
@@ -51,7 +51,7 @@ export interface ViewState {
   layer: MapLayer;
 }
 
-export type MapLayer = 'base' | 'power' | 'transport' | 'resource' | 'weather';
+export type MapLayer = 'base' | 'power' | 'transport' | 'resource';
 
 /** 월드 바깥 */
 const BG = '#2b2119';
@@ -1076,7 +1076,7 @@ export class Renderer {
     }
   }
 
-  /** 정보 보기 덧그림: 전력(미연결 건물), 운송(노선), 자원(남은 양), 날씨(지형별 지금 날씨) */
+  /** 정보 보기 덧그림: 전력(끊긴 곳·발전기 날씨), 운송(노선), 자원(남은 양) */
   private drawLayer(world: World, layer: MapLayer, x0: number, y0: number, x1: number, y1: number): void {
     const ctx = this.ctx;
     const cam = this.cam;
@@ -1113,6 +1113,15 @@ export class Renderer {
         this.text(node ? '공급원 없음' : '미연결', sx + (b.size * z) / 2, sy - 4, '#c0392b', 11);
       }
       ctx.setLineDash([]);
+      // 날씨를 타는 발전기: 그 땅의 지금 날씨와 출력 (태양광·풍력)
+      if (z >= 10) {
+        for (const b of world.buildings.values()) {
+          if ((b.type !== 'solar' && b.type !== 'wind') || b.x + b.size < x0 || b.y + b.size < y0 || b.x > x1 || b.y > y1) continue;
+          const lw = world.localWeather(world.terrainAt(world.refTile(b)));
+          const [sx, sy] = cam.worldToScreen(b.x + b.size / 2, b.y);
+          this.text(`${LOCAL_WEATHER_ICON[lw.kind]} ${Math.round(b.load)}kW`, sx, sy - 4, b.load > 0 ? '#2b2119' : '#7a7a7a', 11);
+        }
+      }
       return;
     }
     if (layer === 'transport') {
@@ -1168,28 +1177,6 @@ export class Renderer {
       }
       return;
     }
-    // 날씨: 칸마다 지형의 지금 날씨 색 (예보 없이 지금 것만)
-    const color: Record<LocalWeather, string> = {
-      clear: 'rgba(255,230,120,0.10)',
-      cloudy: 'rgba(120,130,150,0.22)',
-      fog: 'rgba(230,235,240,0.35)',
-      rain: 'rgba(70,110,190,0.28)',
-      snow: 'rgba(255,255,255,0.40)',
-      sandstorm: 'rgba(200,150,80,0.32)',
-      storm: 'rgba(60,50,110,0.38)',
-    };
-    const seen = new Map<string, [number, number, string]>();
-    for (let y = y0; y <= y1; y++) {
-      for (let x = x0; x <= x1; x++) {
-        const t = world.terrainAt(world.idx(x, y));
-        const lw = world.localWeather(t);
-        const [sx, sy] = cam.worldToScreen(x, y);
-        ctx.fillStyle = color[lw.kind];
-        ctx.fillRect(sx, sy, z, z);
-        if (!seen.has(t)) seen.set(t, [sx, sy, `${TERRAIN[t].name} · ${LOCAL_WEATHER_LABEL[lw.kind]} · 트럭 ×${lw.fx.truck.toFixed(2)} · 풍력 ${Math.round(lw.fx.wind * TERRAIN[t].wind)}kW`]);
-      }
-    }
-    for (const [, [sx, sy, label]] of seen) this.text(label, sx + 80, sy + 14, '#2b2119', 12);
   }
 
   /** 노드 사이 전선: 전봇대는 가로대에, 허브·발전기·변전소는 기준 칸 가운데에. 길이에 따라 살짝 처진다 */

@@ -23,10 +23,11 @@ import { ITEMS, ITEM_IDS, type ItemId, type ItemStack } from '../data/items';
 import { RECIPES, recipesFor, type MachineKind } from '../data/recipes';
 import { ENDLESS_BY_ID, ENDLESS_REQUIRES, ENDLESS_TECHS, TECH_CATEGORIES, endlessCost, type RuleProfile, type TechCategory } from '../data/tech';
 import type { Input } from '../input/input';
-import { DAY_SEC, ambientEnabled, dayPhase, setAmbientEnabled, skyLabel } from '../render/ambient';
+import { DAY_SEC, ambientEnabled, dayLabel, dayPhase, setAmbientEnabled, skyLabel } from '../render/ambient';
+import { darkness } from '../sim/sky';
 import type { MapLayer } from '../render/renderer';
-import { TERRAIN } from '../data/terrain';
-import { LOCAL_WEATHER_LABEL } from '../sim/weather-v1';
+import { TERRAIN, TERRAIN_IDS, type TerrainKind } from '../data/terrain';
+import { LOCAL_WEATHER_ICON, LOCAL_WEATHER_LABEL } from '../sim/weather-v1';
 import { lanRoomCheck, type Session } from '../net/session';
 import { VERSION } from '../version';
 import { STATUS_LABEL, countOf, type Building, type StationMode, type Status } from '../sim/building';
@@ -150,8 +151,8 @@ const newRid = () => `${RID_PREFIX}-${++ridSeq}`;
 
 /** 심화 메달 네 단계 */
 const MEDAL = ['🥉', '🥈', '🥇', '💎'];
-/** Shift + 1~5 정보 보기 */
-const LAYER_KEYS: MapLayer[] = ['base', 'power', 'transport', 'resource', 'weather'];
+/** Shift + 1~4 정보 보기 */
+const LAYER_KEYS: MapLayer[] = ['base', 'power', 'transport', 'resource'];
 const ACH_TAB: Record<AchKind, string> = { first: '최초', deep: '심화', record: '기록', hidden: '숨은' };
 /** 메달 네 단계로 세는 업적 (심화·기록) */
 const tiered = (a: AchDef) => a.kind === 'deep' || a.kind === 'record';
@@ -451,8 +452,8 @@ export class UI {
       if (k === 'o') this.toggleModal('goals');
       if (k === 'j') this.toggleModal('ach');
       if (k === 'm') game.toggleMap();
-      // Shift + 1~5: 정보 보기 (숫자만 누르면 건물 고르기라 Shift와 함께. 키 배열과 상관없이 e.code로)
-      const n = /^Digit([1-5])$/.exec(e.code);
+      // Shift + 1~4: 정보 보기 (숫자만 누르면 건물 고르기라 Shift와 함께. 키 배열과 상관없이 e.code로)
+      const n = /^Digit([1-4])$/.exec(e.code);
       if (e.shiftKey && n && game.getWorld().regional) {
         const l = LAYER_KEYS[Number(n[1]) - 1];
         game.input.layer = game.input.layer === l && l !== 'base' ? 'base' : l;
@@ -930,9 +931,12 @@ export class UI {
       <div class="row"><span>하루 길이</span><b>${DAY_SEC / 60}분</b></div>
       <div class="row"><span>날씨</span><b>${sky.icon}</b></div>
       <p class="muted">${sky.text}</p>
-      <div class="row"><span>태양광 한 대</span><b>${Math.round(w.solarOutput())}kW</b></div>
-      <div class="row"><span>풍력 한 대</span><b>${Math.round(w.windOutput())}kW</b></div>
-      ${w.regional ? '<p class="muted">날씨는 지금 화면 가운데 땅 기준이에요.</p>' : ''}`;
+      ${
+        w.regional
+          ? this.terrainWeatherTable(w)
+          : `<div class="row"><span>태양광 한 대</span><b>${Math.round(w.solarOutput())}kW</b></div>
+      <div class="row"><span>풍력 한 대</span><b>${Math.round(w.windOutput())}kW</b></div>`
+      }`;
     if ($('time-pop').innerHTML !== html) $('time-pop').innerHTML = html;
   }
 
@@ -1151,6 +1155,27 @@ export class UI {
       ${p.charge > 0 ? `<p class="muted power-src">사용 중 ${Math.round(p.charge)} kW는 트럭 충전</p>` : ''}`;
   }
 
+  /** regional-v1: 지도에 있는 땅마다 지금 날씨와 영향 (화면 가운데 땅을 굵게). 예보는 없다 */
+  private terrainWeatherTable(w: World): string {
+    if (this.terrainKinds.world !== w) this.terrainKinds = { world: w, kinds: [...new Set(w.terrain ? [...w.terrain] : [])].sort((a, b) => a - b).map((i) => TERRAIN_IDS[i]) };
+    const cam = this.game.center;
+    const here = w.terrainAt(w.idx(Math.max(0, Math.min(w.width - 1, Math.floor(cam.x))), Math.max(0, Math.min(w.height - 1, Math.floor(cam.y)))));
+    const sun = 1 - darkness(w.time);
+    const rows = this.terrainKinds.kinds
+      .map((t) => {
+        const lw = w.localWeather(t);
+        const fx = lw.fx;
+        const solar = Math.round(SOLAR_POWER * sun * TERRAIN[t].solar * fx.solar);
+        const wind = Math.round(fx.wind * TERRAIN[t].wind);
+        const cell = (s: string) => (t === here ? `<b>${s}</b>` : s);
+        return `<tr><td>${cell(TERRAIN[t].name)}</td><td>${LOCAL_WEATHER_ICON[lw.kind]} ${cell(LOCAL_WEATHER_LABEL[lw.kind])}</td><td>${solar}</td><td>${wind}</td><td>×${fx.truck.toFixed(2)}</td></tr>`;
+      })
+      .join('');
+    return `<table class="stats-table"><thead><tr><th>땅</th><th>날씨</th><th>태양광 kW</th><th>풍력 kW</th><th>트럭</th></tr></thead><tbody>${rows}</tbody></table>
+      <p class="muted">발전기 한 대 기준 지금 출력이에요. 굵은 줄이 화면 가운데 땅이고, 발전기별 날씨는 전력 보기(Shift+2)에서 보여요.</p>`;
+  }
+  private terrainKinds: { world: World | null; kinds: TerrainKind[] } = { world: null, kinds: [] };
+
   /** regional-v1: 화면 가운데 지형의 지금 날씨 (예보 없이 지금 영향만) */
   private regionalSky(w: World): { icon: string; text: string } {
     const cam = this.game.center;
@@ -1158,8 +1183,8 @@ export class UI {
     const y = Math.max(0, Math.min(w.height - 1, Math.floor(cam.y)));
     const t = w.terrainAt(w.idx(x, y));
     const lw = w.localWeather(t);
-    const base = skyLabel(w.seed, w.time);
-    const icon = { clear: base.icon, cloudy: '⛅', fog: '🌫️', rain: '🌧️', snow: '🌨️', sandstorm: '🌪️', storm: '⛈️' }[lw.kind];
+    const base = dayLabel(w.time);
+    const icon = lw.kind === 'clear' ? base.icon : LOCAL_WEATHER_ICON[lw.kind];
     const fx = lw.fx;
     return {
       icon,

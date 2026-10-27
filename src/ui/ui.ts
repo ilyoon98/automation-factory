@@ -1027,8 +1027,8 @@ export class UI {
   private challengeHtml(w: World): string {
     const id = this.trackedChallenge();
     const opts = CHALLENGES.map((c) => `<option value="${c.id}" ${c.id === id ? 'selected' : ''}>${w.challenges.has(c.id) ? '✓ ' : ''}${c.title}</option>`).join('');
-    let html = `<label class="recipe">선택 도전 <small>${w.challenges.size}/${CHALLENGES.length}</small>
-      <select data-act="challenge"><option value="">고르지 않음</option>${opts}</select></label>`;
+    let html = `<div class="row"><span>선택 도전</span><b>${w.challenges.size}/${CHALLENGES.length}</b></div>
+      <select data-act="challenge" style="width:100%"><option value="">고르지 않음</option>${opts}</select>`;
     const c = id ? CHALLENGE_BY_ID[id] : undefined;
     if (c) {
       const done = w.challenges.has(c.id);

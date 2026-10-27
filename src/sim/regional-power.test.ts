@@ -64,6 +64,26 @@ describe('전력 구역과 배전', () => {
     expect(lone.zone).toBe(0);
   });
 
+  it('전봇대는 짓는 순서와 상관없이 이어진다: A → (닿지 않는) C → 사이의 B를 지으면 C도 이어지고, B를 철거하면 다시 끊긴다', () => {
+    const w = makeWorld();
+    w.place('pole', 13, 10, 0)!;
+    const c = w.place('pole', 37, 10, 0)!;
+    const m = busySmelter(w, 38, 12);
+    expect(c.zone).toBe(0);
+    expect(w.zoneOf(m)).toBeNull();
+    const b = w.place('pole', 25, 10, 0)!;
+    expect(w.zoneOf(m)?.hub).toBe(true);
+    expect(c.zone).toBe(w.zoneOf(m)!.id);
+    expect(w.powerWires()).toHaveLength(3); // 허브 → A → B → C
+    const g = World.fromSnapshot(JSON.parse(JSON.stringify(w.snapshot())));
+    expect(g.checksum()).toBe(w.checksum());
+    w.remove(b);
+    expect(w.zoneOf(m)).toBeNull();
+    expect(c.zone).toBe(0);
+    expect(w.powerCover()[w.idx(38, 10)]).toBe(0);
+    expect(w.powerCover()[w.idx(13, 10)]).toBe(1);
+  });
+
   it('공급 범위 밖에 놓은 발전기는 새 구역을 만들고, 철거해도 구역 중심·id는 남는다', () => {
     const w = makeWorld();
     const g = w.place('generator', 80, 10, 0)!;

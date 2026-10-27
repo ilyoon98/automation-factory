@@ -153,6 +153,9 @@ interface TruckEdit {
  * 칸을 막지 않으며 벨트·트럭으로 넣을 수 없다. 하역기로만 꺼낸다
  */
 /** 지역 전력 구역. 중심(x, y)은 처음 만든 노드 자리이고, 그 발전기를 철거해도 바뀌지 않는다 */
+/** 전선 한 가닥: 이어 준 노드 x, y, 반경(전봇대면 GRID.pole.radius) → 전봇대 x, y */
+export type Wire = [number, number, number, number, number];
+
 export interface Zone {
   id: number;
   x: number;
@@ -1323,6 +1326,8 @@ export class World {
     }
     this.buildings.delete(b.id);
     this.layoutDirty = true;
+    // 전봇대를 뜯으면 다음 틱을 기다리지 않고 바로 끊긴 것을 보여 준다
+    this.gridDirty = true;
     return true;
   }
 
@@ -2335,7 +2340,7 @@ export class World {
    * 구역의 공급 노드: 허브(24칸)·구역을 만든 발전기(10칸)·변전소(18칸)와, 이들에서 12칸씩 이어진 전봇대(6칸).
    * 각 노드 [x, y, 반경]
    */
-  zoneNodes(z: Zone): [number, number, number][] {
+  zoneNodes(z: Zone, linked?: Set<number>, wires?: Wire[]): [number, number, number][] {
     const at = (b: Building): [number, number] => {
       const t = this.refTile(b);
       return [t % this.width, Math.floor(t / this.width)];
@@ -2348,14 +2353,23 @@ export class World {
     // 전봇대: 이미 이어진 노드에서 12칸 안이면 차례로 잇는다 (id 순으로 고정)
     const poles = [...this.buildings.values()].filter((b) => b.type === 'pole' && b.zone === z.id).sort((a, c) => a.id - c.id);
     let grew = true;
-    const linked = new Set<number>();
+    const done = new Set<number>();
     while (grew) {
       grew = false;
       for (const p of poles) {
-        if (linked.has(p.id)) continue;
+        if (done.has(p.id)) continue;
         const [px, py] = at(p);
-        if (nodes.some(([x, y]) => Math.max(Math.abs(x - px), Math.abs(y - py)) <= GRID.pole.link)) {
-          linked.add(p.id);
+        // 가장 가까운 이어진 노드에 전선을 건다 (그림용. 이어지는지는 12칸 안이면 된다)
+        let from: [number, number, number] | null = null;
+        let fd = Infinity;
+        for (const n of nodes) {
+          const d = Math.max(Math.abs(n[0] - px), Math.abs(n[1] - py));
+          if (d <= GRID.pole.link && d < fd) [from, fd] = [n, d];
+        }
+        if (from) {
+          done.add(p.id);
+          linked?.add(p.id);
+          wires?.push([from[0], from[1], from[2], px, py]);
           nodes.push([px, py, GRID.pole.radius]);
           grew = true;
         }
@@ -2423,9 +2437,37 @@ export class World {
 
   private rebuildGrid(): void {
     this.formalCache = null;
+    this.coverCache = null;
     this.gridDirty = false;
     this.nodeCache.clear();
-    for (const z of this.zones) this.nodeCache.set(z.id, this.zoneNodes(z));
+    const linked = new Set<number>();
+    for (const z of this.zones) this.nodeCache.set(z.id, this.zoneNodes(z, linked));
+    // 전봇대·변전소는 지은 순서와 상관없이 이어진다:
+    // 끊긴 전봇대는 구역에서 풀고, 아직 안 붙은 것은 더 붙을 곳이 없을 때까지 다시 붙인다 (id 순)
+    const zoneIds = new Set(this.zones.map((z) => z.id));
+    const loose: Building[] = [];
+    for (const b of this.buildings.values()) {
+      if (b.type !== 'pole' && b.type !== 'substation') continue;
+      if (b.zone && (!zoneIds.has(b.zone) || (b.type === 'pole' && !linked.has(b.id)))) b.zone = 0;
+      if (!b.zone) loose.push(b);
+    }
+    loose.sort((a, c) => a.id - c.id);
+    let grew = loose.length > 0;
+    while (grew) {
+      grew = false;
+      for (const b of loose) {
+        if (b.zone) continue;
+        const t = this.refTile(b);
+        const z = this.nodeZoneFor(t % this.width, Math.floor(t / this.width));
+        if (!z) continue;
+        b.zone = z.id;
+        if (b.type === 'substation') this.formalCache = null;
+        this.nodeCache.set(z.id, this.zoneNodes(z, linked));
+        grew = true;
+      }
+    }
+    this.wireCache = [];
+    for (const z of this.zones) this.zoneNodes(z, undefined, this.wireCache);
     this.zoneOfB.clear();
     for (const b of this.buildings.values()) {
       if (isLineType(b.type) || b.type === 'road') continue;
@@ -2434,6 +2476,32 @@ export class World {
       if (z) this.zoneOfB.set(b.id, z.id);
     }
   }
+
+  /** 전선 (그림용): 이어 준 노드 [x, y, 반경]에서 전봇대 칸 [x, y]로 */
+  powerWires(): readonly Wire[] {
+    if (this.gridDirty) this.rebuildGrid();
+    return this.wireCache;
+  }
+  private wireCache: Wire[] = [];
+
+  /** 전력 공급 칸 지도 (구역 노드 범위 ∩ 확장 한계). 배치가 바뀔 때만 다시 센다 */
+  powerCover(): Uint8Array {
+    if (this.gridDirty) this.rebuildGrid();
+    if (this.coverCache) return this.coverCache;
+    const m = new Uint8Array(this.width * this.height);
+    for (const z of this.zones) {
+      const lim = this.zoneLimit(z);
+      for (const [nx, ny, r] of this.nodeCache.get(z.id) ?? []) {
+        const xa = Math.max(0, nx - r, z.x - lim);
+        const xb = Math.min(this.width - 1, nx + r, z.x + lim);
+        const ya = Math.max(0, ny - r, z.y - lim);
+        const yb = Math.min(this.height - 1, ny + r, z.y + lim);
+        for (let y = ya; y <= yb; y++) m.fill(1, y * this.width + xa, y * this.width + xb + 1);
+      }
+    }
+    return (this.coverCache = m);
+  }
+  private coverCache: Uint8Array | null = null;
 
   /** 이 건물이 지금 받는 전력 비율 (0~1). 예전 세계는 공장 전체 하나 */
   satOf(b: Building): number {

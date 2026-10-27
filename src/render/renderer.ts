@@ -1,6 +1,7 @@
 import {
   BUILDINGS,
   FOREST,
+  GRID as POWER_GRID,
   STATION_CAPACITY,
   TRUCK,
   UNDERGROUND_MAX_GAP,
@@ -271,6 +272,7 @@ export class Renderer {
       }
     }
     for (const b of visible) if (!isLine(b) && b.type !== 'road') this.drawBuilding(world, b);
+    if (world.regional && z >= 6) this.drawWires(world, x0, y0, x1, y1);
     // 창고는 묶음마다 한 번 (묶음 일부만 화면에 보여도)
     if (!this.lod) {
       const storages = new Set(visible.filter((b) => b.type === 'storage').map((b) => world.storageGroup(b)[0]));
@@ -1081,15 +1083,34 @@ export class Renderer {
     const cam = this.cam;
     const z = cam.zoom;
     if (layer === 'power') {
-      // 전기가 필요한데 배전 범위 밖인 건물: 빨간 끊긴 테두리와 '미연결'
+      // 전기가 닿지 않는 땅은 회색으로 덮는다 (가로로 이어진 칸은 한 번에)
+      const cover = world.powerCover();
+      ctx.fillStyle = 'rgba(70,70,70,0.42)';
+      for (let y = y0; y <= y1; y++) {
+        let run = -1;
+        for (let x = x0; x <= x1 + 1; x++) {
+          const off = x <= x1 && !cover[y * world.width + x];
+          if (off && run < 0) run = x;
+          if (!off && run >= 0) {
+            const [sx, sy] = cam.worldToScreen(run, y);
+            ctx.fillRect(sx, sy, (x - run) * z, z);
+            run = -1;
+          }
+        }
+      }
+      // 전기가 필요한데 범위 밖인 건물, 어느 망에도 닿지 않은 전봇대·변전소: 더 짙은 회색과 빨간 끊긴 테두리
       ctx.setLineDash([4, 3]);
       ctx.strokeStyle = 'rgba(192,57,43,0.9)';
       ctx.lineWidth = 2;
       for (const b of world.buildings.values()) {
-        if (b.def.power <= 0 || world.zoneOf(b)) continue;
+        if (b.x + b.size < x0 || b.y + b.size < y0 || b.x > x1 || b.y > y1) continue;
+        const node = b.type === 'pole' || b.type === 'substation';
+        if (node ? b.zone : b.def.power <= 0 || world.zoneOf(b)) continue;
         const [sx, sy] = cam.worldToScreen(b.x, b.y);
+        ctx.fillStyle = 'rgba(60,60,60,0.55)';
+        ctx.fillRect(sx, sy, b.size * z, b.size * z);
         ctx.strokeRect(sx, sy, b.size * z, b.size * z);
-        this.text('미연결', sx + (b.size * z) / 2, sy - 4, '#c0392b', 11);
+        this.text(node ? '끊김' : '미연결', sx + (b.size * z) / 2, sy - 4, '#c0392b', 11);
       }
       ctx.setLineDash([]);
       return;
@@ -1169,6 +1190,28 @@ export class Renderer {
       }
     }
     for (const [, [sx, sy, label]] of seen) this.text(label, sx + 80, sy + 14, '#2b2119', 12);
+  }
+
+  /** 전봇대 사이 전선: 이어 준 노드에서 전봇대 꼭대기로, 길이에 따라 살짝 처진다 */
+  private drawWires(world: World, x0: number, y0: number, x1: number, y1: number): void {
+    const ctx = this.ctx;
+    const z = this.cam.zoom;
+    // 전봇대는 가로대(위쪽), 허브·발전기·변전소는 기준 칸 가운데
+    const end = (x: number, y: number, pole: boolean) => this.cam.worldToScreen(x + (pole ? 0.53 : 0.5), y + (pole ? 0.22 : 0.5));
+    ctx.save();
+    ctx.lineWidth = Math.max(1, z / 16);
+    for (const [ax, ay, r, bx, by] of world.powerWires()) {
+      if (Math.max(ax, bx) < x0 - 1 || Math.min(ax, bx) > x1 + 1 || Math.max(ay, by) < y0 - 1 || Math.min(ay, by) > y1 + 1) continue;
+      const [sx, sy] = end(ax, ay, r === POWER_GRID.pole.radius);
+      const [ex, ey] = end(bx, by, true);
+      const sag = Math.hypot(ex - sx, ey - sy) * 0.06;
+      ctx.strokeStyle = 'rgba(30,22,16,0.75)';
+      ctx.beginPath();
+      ctx.moveTo(sx, sy);
+      ctx.quadraticCurveTo((sx + ex) / 2, (sy + ey) / 2 + sag * 2, ex, ey);
+      ctx.stroke();
+    }
+    ctx.restore();
   }
 
   /** 배전 범위를 보여 줄 때: 전력 건물을 들었거나, 전력에 관련된 건물을 골랐을 때 */

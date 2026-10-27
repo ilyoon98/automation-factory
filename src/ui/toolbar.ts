@@ -151,7 +151,9 @@ export class Toolbar {
       if (s) this.input.startPaste(s.bp, s.name);
       return null;
     }
-    return CATEGORIES.find((c) => c.id === this.category)?.items[i] ?? null;
+    const type = CATEGORIES.find((c) => c.id === this.category)?.items[i] ?? null;
+    if (type) this.reveal(type);
+    return type;
   }
 
   /** 청사진을 저장·삭제했으면 목록을 다시 그린다 */
@@ -193,9 +195,24 @@ export class Toolbar {
       this.lastTool = tool;
       const cat = tool ? categoryOf(tool) : null;
       if (cat && cat !== this.category) this.setCategory(cat);
+      if (tool) this.reveal(tool);
     }
     this.world = w;
     this.paintCards(w);
+  }
+
+  /** 고른 건물 카드가 가로 목록에서 잘려 있으면 다 보이게 넘긴다 (숫자 키·클릭 모두) */
+  private reveal(type: BuildingType): void {
+    const btn = this.buttons.get(type);
+    const palette = document.getElementById('palette');
+    if (!btn || !palette) return;
+    const pad = 24; // 가장자리 흐림·넘기기 단추에 가리지 않게
+    const left = btn.getBoundingClientRect().left - palette.getBoundingClientRect().left + palette.scrollLeft;
+    const right = left + btn.offsetWidth;
+    let to = palette.scrollLeft;
+    if (left - pad < to) to = left - pad;
+    else if (right + pad > to + palette.clientWidth) to = right + pad - palette.clientWidth;
+    if (to !== palette.scrollLeft) palette.scrollTo({ left: Math.max(0, to), behavior: 'smooth' });
   }
 
   /** 마지막으로 본 공장 (탭을 바꿔 카드를 새로 그릴 때 상태 띠를 바로 채우려고) */
@@ -290,7 +307,10 @@ export class Toolbar {
         <span class="cost"></span>
         <span class="state"></span>`;
       btn.title = `${def.name} · ${def.size}×${def.size}${def.power ? ` · 전력 ${def.power}kW` : ''}\n${def.description}\n비용: ${def.cost.map((c) => `${ITEMS[c.item].name} ${c.count}`).join(', ')}\n우클릭: 도감`;
-      btn.addEventListener('click', () => this.input.setTool(type));
+      btn.addEventListener('click', () => {
+        this.input.setTool(type);
+        this.reveal(type);
+      });
       palette.appendChild(btn);
       this.buttons.set(type, btn);
     });

@@ -135,6 +135,7 @@ canvas.addEventListener('mousemove', (e) => {
 const ghost = params.get('ghost') as BuildingType | null;
 const view: ViewState = {
   tool: ghost,
+  layer: 'base',
   toolDir: 1,
   hover: ghost ? { x: ax + 30, y: ay + 6 } : null,
   selectedId: params.get('select') ? (showcase[2]?.id ?? null) : null,

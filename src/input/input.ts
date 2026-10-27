@@ -1,6 +1,6 @@
 import { BUILDINGS, isBeltType, type BuildingType } from '../data/buildings';
 import type { Camera } from '../render/camera';
-import type { ViewState } from '../render/renderer';
+import type { MapLayer, ViewState } from '../render/renderer';
 import { copyArea, type Blueprint } from '../sim/blueprint';
 import type { Exec, PlaceResult } from '../sim/commands';
 import { dirOf, rotateCW, type Dir } from '../sim/dir';
@@ -62,6 +62,8 @@ const ROTATABLE: BuildingType[] = [
  */
 export class Input implements ViewState {
   tool: BuildingType | null = null;
+  /** 확장 지도의 정보 보기 (기본 / 전력 / 운송 / 자원 / 날씨). 개인 설정이라 시뮬레이션과 무관 */
+  layer: MapLayer = 'base';
   toolDir: Dir = 1;
   hover: { x: number; y: number } | null = null;
   /** 마우스 위치 (칸 좌표, 소수점까지). 같이 하기에서 다른 사람에게 커서를 보여 주려고 */

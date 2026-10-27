@@ -10,6 +10,7 @@ import {
   type BuildingType,
 } from '../data/buildings';
 import { ITEMS, type ItemId } from '../data/items';
+import { LOCAL_WEATHER_LABEL, type LocalWeather } from '../sim/weather-v1';
 import { TERRAIN, TERRAIN_IDS } from '../data/terrain';
 import { RECIPES } from '../data/recipes';
 import type { Presence } from '../net/session';
@@ -46,7 +47,11 @@ export interface ViewState {
   toolSetting: string | null;
   /** 기계마다 분당 생산량 표시 (I 키) */
   showRates: boolean;
+  /** 확장 지도의 정보 보기 (지도·건물은 그대로, 한 주제만 강조) */
+  layer: MapLayer;
 }
+
+export type MapLayer = 'base' | 'power' | 'transport' | 'resource' | 'weather';
 
 /** 월드 바깥 */
 const BG = '#2b2119';
@@ -253,7 +258,7 @@ export class Renderer {
     // 컨베이어 무늬가 흐르는 위치 (칸 단위, 0~0.5. 종류마다 속도가 다르다)
     const phase = (b: Building) => (world.time * (b.def.speed ?? BELT_SPEED) * world.boost('endless-belt')) % 0.5;
     const isLine = (b: Building) => isLineType(b.type);
-    if (world.regional && this.showGrid(world, view)) this.drawGridCoverage(world);
+    if (world.regional && (view.layer === 'power' || (view.layer === 'base' && this.showGrid(world, view)))) this.drawGridCoverage(world);
     for (const b of visible) if (b.type === 'road') this.drawRoad(world, b);
     for (const b of visible) {
       if (isBeltType(b.type)) this.drawBelt(b, phase(b));
@@ -281,6 +286,7 @@ export class Renderer {
     }
     this.drawPuffs();
     this.drawSparkle(world);
+    if (world.regional && view.layer !== 'base') this.drawLayer(world, view.layer, x0, y0, x1, y1);
     // 낮·밤과 날씨: 땅·건물·트럭 위, 상태 표시·선택 같은 덧그림 아래
     if (ambientEnabled()) this.drawAmbient(world, visible, spots);
     if (this.n >= 1) {
@@ -1066,6 +1072,101 @@ export class Renderer {
       const p = Math.min(1, b.progress / world.craftTime(b));
       this.drawBar(sx, sy, p, b.status === 'low-power' ? '#e8c547' : PAL.green, b.size === 3 ? MACHINE3.bar : MACHINE.bar);
     }
+  }
+
+  /** 정보 보기 덧그림: 전력(미연결 건물), 운송(노선), 자원(남은 양), 날씨(지형별 지금 날씨) */
+  private drawLayer(world: World, layer: MapLayer, x0: number, y0: number, x1: number, y1: number): void {
+    const ctx = this.ctx;
+    const cam = this.cam;
+    const z = cam.zoom;
+    if (layer === 'power') {
+      // 전기가 필요한데 배전 범위 밖인 건물: 빨간 끊긴 테두리와 '미연결'
+      ctx.setLineDash([4, 3]);
+      ctx.strokeStyle = 'rgba(192,57,43,0.9)';
+      ctx.lineWidth = 2;
+      for (const b of world.buildings.values()) {
+        if (b.def.power <= 0 || world.zoneOf(b)) continue;
+        const [sx, sy] = cam.worldToScreen(b.x, b.y);
+        ctx.strokeRect(sx, sy, b.size * z, b.size * z);
+        this.text('미연결', sx + (b.size * z) / 2, sy - 4, '#c0392b', 11);
+      }
+      ctx.setLineDash([]);
+      return;
+    }
+    if (layer === 'transport') {
+      ctx.lineWidth = 3;
+      for (const v of world.vehicles.values()) {
+        if (!world.routeOk(v)) continue;
+        const hue = (v.id * 47) % 360;
+        ctx.strokeStyle = `hsla(${hue}, 65%, 45%, 0.7)`;
+        ctx.beginPath();
+        v.stops.forEach((s, i) => {
+          const st = world.buildings.get(s.id)!;
+          const [sx, sy] = cam.worldToScreen(st.x + st.size / 2, st.y + st.size / 2);
+          if (i === 0) ctx.moveTo(sx, sy);
+          else ctx.lineTo(sx, sy);
+        });
+        ctx.closePath();
+        ctx.stroke();
+      }
+      for (const st of world.stations()) {
+        const [sx, sy] = cam.worldToScreen(st.x + 1, st.y - 0.2);
+        const n = world.trucksOf(st).length;
+        if (n) this.text(`정류장 ${st.stationNo} · 트럭 ${n}`, sx, sy, '#3b2716', 11);
+      }
+      return;
+    }
+    if (layer === 'resource') {
+      ctx.fillStyle = 'rgba(40,30,20,0.35)';
+      const [ax, ay] = cam.worldToScreen(x0, y0);
+      ctx.fillRect(ax, ay, (x1 - x0 + 1) * z, (y1 - y0 + 1) * z);
+      for (let y = y0; y <= y1; y++) {
+        for (let x = x0; x <= x1; x++) {
+          const i = world.idx(x, y);
+          const item = world.resItem[i];
+          if (!item || item === 'water' || world.resAmount[i] <= 0) continue;
+          const [sx, sy] = cam.worldToScreen(x, y);
+          ctx.fillStyle = ORE_GROUND[item] ?? ITEMS[item].color;
+          ctx.fillRect(sx + 1, sy + 1, z - 2, z - 2);
+        }
+      }
+      for (const p of world.patchList()) {
+        if (p.x < x0 - 4 || p.y < y0 - 4 || p.x > x1 + 4 || p.y > y1 + 4 || p.item === 'water') continue;
+        const [sx, sy] = cam.worldToScreen(p.x + 0.5, p.y + 0.5);
+        const left = p.remaining === Infinity ? '무한' : `${Math.round(p.remaining).toLocaleString()}`;
+        this.text(`${ITEMS[p.item].name} ${left}`, sx, sy, '#fff7e8', 12);
+      }
+      for (const v of world.vents) {
+        const x = v % world.width;
+        const y = Math.floor(v / world.width);
+        if (x < x0 || y < y0 || x > x1 || y > y1) continue;
+        const [sx, sy] = cam.worldToScreen(x + 0.5, y + 0.5);
+        this.text('지열 분출구', sx, sy - z, '#ffd7b0', 11);
+      }
+      return;
+    }
+    // 날씨: 칸마다 지형의 지금 날씨 색 (예보 없이 지금 것만)
+    const color: Record<LocalWeather, string> = {
+      clear: 'rgba(255,230,120,0.10)',
+      cloudy: 'rgba(120,130,150,0.22)',
+      fog: 'rgba(230,235,240,0.35)',
+      rain: 'rgba(70,110,190,0.28)',
+      snow: 'rgba(255,255,255,0.40)',
+      sandstorm: 'rgba(200,150,80,0.32)',
+      storm: 'rgba(60,50,110,0.38)',
+    };
+    const seen = new Map<string, [number, number, string]>();
+    for (let y = y0; y <= y1; y++) {
+      for (let x = x0; x <= x1; x++) {
+        const t = world.terrainAt(world.idx(x, y));
+        const lw = world.localWeather(t);
+        const [sx, sy] = cam.worldToScreen(x, y);
+        ctx.fillStyle = color[lw.kind];
+        ctx.fillRect(sx, sy, z, z);
+        if (!seen.has(t)) seen.set(t, [sx, sy, `${TERRAIN[t].name} · ${LOCAL_WEATHER_LABEL[lw.kind]} · 트럭 ×${lw.fx.truck.toFixed(2)} · 풍력 ${Math.round(lw.fx.wind * TERRAIN[t].wind)}kW`]);
+      }
+    }
+    for (const [, [sx, sy, label]] of seen) this.text(label, sx + 80, sy + 14, '#2b2119', 12);
   }
 
   /** 배전 범위를 보여 줄 때: 전력 건물을 들었거나, 전력에 관련된 건물을 골랐을 때 */

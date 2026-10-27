@@ -24,6 +24,7 @@ import { RECIPES, recipesFor, type MachineKind } from '../data/recipes';
 import { ENDLESS_BY_ID, ENDLESS_REQUIRES, ENDLESS_TECHS, TECH_CATEGORIES, endlessCost, type RuleProfile, type TechCategory } from '../data/tech';
 import type { Input } from '../input/input';
 import { DAY_SEC, ambientEnabled, setAmbientEnabled, skyLabel } from '../render/ambient';
+import type { MapLayer } from '../render/renderer';
 import { TERRAIN } from '../data/terrain';
 import { LOCAL_WEATHER_LABEL } from '../sim/weather-v1';
 import { lanRoomCheck, type Session } from '../net/session';
@@ -253,6 +254,11 @@ export class UI {
     $('btn-research').addEventListener('click', () => this.toggleModal('research'));
     $('btn-stats').addEventListener('click', () => this.toggleModal('stats'));
     $('btn-map').addEventListener('click', () => game.toggleMap());
+    $('layers').addEventListener('click', (e) => {
+      const l = (e.target as HTMLElement).closest<HTMLElement>('[data-layer]')?.dataset.layer as MapLayer | undefined;
+      if (l) game.input.layer = game.input.layer === l ? 'base' : l;
+      this.update();
+    });
     $('btn-help').addEventListener('click', () => this.toggleModal('help'));
     $('btn-rates').addEventListener('click', () => this.toggleRates());
     $('btn-undo').addEventListener('click', () => game.input.undoRedo(false));
@@ -733,6 +739,9 @@ export class UI {
       btn.classList.toggle('active', Number(btn.dataset.speed) === this.game.speed);
     });
     $('btn-map').classList.toggle('active', this.game.mapShown);
+    $('layers').hidden = !w.regional;
+    if (!w.regional) this.game.input.layer = 'base';
+    document.querySelectorAll<HTMLElement>('#layers [data-layer]').forEach((b) => b.classList.toggle('active', b.dataset.layer === this.game.input.layer));
     this.updateNet();
     // 되돌리기 버튼: 누르면 무엇이 바뀌는지 설명에 적어 둔다
     for (const [id, redo, name] of [['btn-undo', false, '되돌리기 (Ctrl+Z)'], ['btn-redo', true, '다시 하기 (Ctrl+Y)']] as const) {

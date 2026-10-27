@@ -15,7 +15,8 @@ export type Status =
   | 'no-filter'
   | 'no-trees'
   | 'no-room'
-  | 'locked';
+  | 'locked'
+  | 'no-power';
 
 export const STATUS_LABEL: Record<Status, string> = {
   idle: '대기',
@@ -31,6 +32,7 @@ export const STATUS_LABEL: Record<Status, string> = {
   'no-trees': '다 자란 나무 없음',
   'no-room': '심을 땅 없음',
   locked: '연구 필요 (아직 캘 수 없는 자원)',
+  'no-power': '전력 없음 (배전 범위 밖)',
 };
 
 export type StationMode = 'load' | 'unload';
@@ -86,6 +88,13 @@ export class Building {
   modBatch = false;
   /** "제작 완료 후 분리" 예약. 지금 배치가 끝나면 모듈을 현지 회수 더미로 한 번 내린다 */
   detach = false;
+
+  // 지역 전력 (regional-v1)
+  /** 전봇대·변전소·발전기가 붙은 전력 구역 id (0 = 없음). 그 밖의 건물은 위치로 정한다 */
+  zone = 0;
+  /** 송전 터미널: 보내는 쪽이면 true (partner = 이어진 터미널 id), 이을 때 낸 고용량 케이블 수 */
+  send = false;
+  cable = 0;
 
   // 발전기
   fuel = 0;

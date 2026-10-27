@@ -45,14 +45,15 @@ describe('수액 채취기', () => {
 
   it('군락 하나에 6대를 붙여도 합계는 분당 120개', () => {
     const w = makeWorld();
-    for (let y = 10; y < 16; y++) for (let x = 20; x < 26; x++) w.setResource(x, y, 'sap', Infinity);
+    // 허브 공급 범위(24칸) 안에
+    for (let y = 10; y < 16; y++) for (let x = 12; x < 18; x++) w.setResource(x, y, 'sap', Infinity);
     const list = [
-      w.place('sap-extractor', 26, 10, 1),
-      w.place('sap-extractor', 26, 12, 1),
-      w.place('sap-extractor', 26, 14, 1),
-      w.place('sap-extractor', 18, 10, 3),
-      w.place('sap-extractor', 18, 12, 3),
-      w.place('sap-extractor', 18, 14, 3),
+      w.place('sap-extractor', 18, 10, 1),
+      w.place('sap-extractor', 18, 12, 1),
+      w.place('sap-extractor', 18, 14, 1),
+      w.place('sap-extractor', 10, 10, 3),
+      w.place('sap-extractor', 10, 12, 3),
+      w.place('sap-extractor', 10, 14, 3),
     ];
     expect(list.every(Boolean)).toBe(true);
     const got = drain(w, list, 60, 'sap');

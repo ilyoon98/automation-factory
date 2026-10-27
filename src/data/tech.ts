@@ -356,10 +356,10 @@ export const REGIONAL_TECHS: Tech[] = [
     icon: '🌀',
     category: 'production',
     name: '산업 전동기',
-    description: '수액 채취기·화학 반응기, 고무·절연 전선·절연 모터 레시피',
+    description: '수액 채취기·화학 반응기·변전소, 고무·절연 전선·절연 모터 레시피',
     cost: stacks({ 'bronze-drive': 20, circuit: 30, wood: 60 }),
     requires: ['alloy', 'forestry'],
-    unlockBuildings: ['sap-extractor', 'chem-reactor'],
+    unlockBuildings: ['sap-extractor', 'chem-reactor', 'substation'],
     unlockRecipes: ['rubber', 'insulated-wire', 'motor'],
   },
   {
@@ -367,10 +367,10 @@ export const REGIONAL_TECHS: Tech[] = [
     icon: '🛢️',
     category: 'production',
     name: '석유와 제어',
-    description: '시추기(원유)·정유소, 플라스틱·고급 회로·산업 제어기·윤활유·정유 연료 레시피',
+    description: '시추기(원유)·정유소·연료 발전기, 플라스틱·고급 회로·산업 제어기·윤활유·정유 연료 레시피',
     cost: stacks({ motor: 8, steel: 40, circuit: 30 }),
     requires: ['industrial-motor', 'electronics', 'soil-refining'],
-    unlockBuildings: ['drill', 'refinery'],
+    unlockBuildings: ['drill', 'refinery', 'fuel-generator'],
     unlockRecipes: ['plastic', 'adv-circuit', 'controller', 'lubricant', 'fuel'],
   },
   {
@@ -389,9 +389,10 @@ export const REGIONAL_TECHS: Tech[] = [
     icon: '🌋',
     category: 'production',
     name: '황 화학',
-    description: '황 채굴, 강화 고무·강화 타이어·황산·고효율 모래 세척·고용량 케이블 레시피',
+    description: '황 채굴, 송전 터미널·지열 발전소, 강화 고무·강화 타이어·황산·고효율 모래 세척·고용량 케이블 레시피',
     cost: stacks({ controller: 8, motor: 8, steel: 40 }),
     requires: ['oil-control', 'electro-metal'],
+    unlockBuildings: ['terminal', 'geothermal'],
     unlockRecipes: ['hardened-rubber', 'tire', 'sulfuric-acid', 'acid-wash', 'hc-cable'],
   },
   {
@@ -399,9 +400,10 @@ export const REGIONAL_TECHS: Tech[] = [
     icon: '🧪',
     category: 'production',
     name: '리튬과 축전',
-    description: '염수 시추, 리튬·배터리 팩·고급 윤활제 레시피',
+    description: '염수 시추, 축전기, 리튬·배터리 팩·고급 윤활제 레시피',
     cost: stacks({ frame: 10, controller: 10, plastic: 40 }),
     requires: ['oil-control', 'electro-metal'],
+    unlockBuildings: ['accumulator'],
     unlockRecipes: ['lithium', 'battery-pack', 'adv-lubricant'],
   },
   {
@@ -433,7 +435,19 @@ export const TECH_ADVANCED_TRUCK = 'advanced-vehicle';
 export const TECH_MODULE_SLOTS = 'integrated-automation';
 
 const LEGACY_LIST = TECHS;
-const REGIONAL_LIST: Tech[] = [...TECHS.map((t) => ({ ...t, cost: REGIONAL_COSTS[t.id] ?? t.cost })), ...REGIONAL_TECHS];
+/** regional-v1에서 기존 연구가 더 여는 건물 (기본 전봇대는 차량 운송과 함께) */
+const REGIONAL_EXTRA_UNLOCK: Record<string, BuildingType[]> = { vehicles: ['pole'] };
+const REGIONAL_LIST: Tech[] = [
+  ...TECHS.map((t) => {
+    const extra = REGIONAL_EXTRA_UNLOCK[t.id];
+    return {
+      ...t,
+      cost: REGIONAL_COSTS[t.id] ?? t.cost,
+      ...(extra ? { unlockBuildings: [...(t.unlockBuildings ?? []), ...extra], description: `${t.description}, 전봇대` } : {}),
+    };
+  }),
+  ...REGIONAL_TECHS,
+];
 const LEGACY_BY_ID = TECH_BY_ID;
 const REGIONAL_BY_ID: Record<string, Tech> = Object.fromEntries(REGIONAL_LIST.map((t) => [t.id, t]));
 

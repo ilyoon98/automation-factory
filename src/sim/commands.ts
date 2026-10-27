@@ -42,6 +42,10 @@ export type Command =
   | { t: 'module-detach'; rid: string; id: number; mode: 'normal' | 'cancel-request' | 'force' }
   /** 정류장 자체 또는 직접 붙은 창고군(key, '' = 정류장만)의 조립품 1개로 고급 트럭. copy = 노선을 베낄 트럭 */
   | { t: 'build-adv-truck'; rid: string; station: number; key: string; copy?: number }
+  /** 송전: 보내는 터미널 id → 받는 터미널 target (0 = 끊기) */
+  | { t: 'power-link'; id: number; target: number }
+  /** 전력 구역의 차량 충전 예산 (kW, 0~800) */
+  | { t: 'zone-budget'; zone: number; kw: number }
   | { t: 'undo' }
   | { t: 'redo' };
 
@@ -78,6 +82,8 @@ export interface CommandResults {
   'module-install': UseResult;
   'module-detach': UseResult;
   'build-adv-truck': UseResult;
+  'power-link': UseResult;
+  'zone-budget': boolean;
   undo: { ops: EditOp[]; skipped: number } | null;
   redo: { ops: EditOp[]; skipped: number } | null;
 }
@@ -193,6 +199,12 @@ function run(w: World, c: Command): CommandResults[Command['t']] {
         const copy = c.copy ? w.vehicles.get(c.copy) : undefined;
         return w.buildAdvancedTruck(w.buildings.get(c.station), String(c.key ?? ''), copy);
       });
+    case 'power-link': {
+      const b = w.buildings.get(c.id);
+      return b ? w.linkTerminals(b, Number(c.target) || 0) : { ok: false, reason: '터미널이 없어요' };
+    }
+    case 'zone-budget':
+      return w.setZoneBudget(Number(c.zone), Number(c.kw));
     case 'undo':
       return w.undo();
     case 'redo':

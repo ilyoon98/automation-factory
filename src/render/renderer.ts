@@ -5,6 +5,7 @@ import {
   TRUCK,
   UNDERGROUND_MAX_GAP,
   isBeltType,
+  isGeneratorType,
   isForestType,
   type BuildingType,
 } from '../data/buildings';
@@ -252,6 +253,7 @@ export class Renderer {
     // 컨베이어 무늬가 흐르는 위치 (칸 단위, 0~0.5. 종류마다 속도가 다르다)
     const phase = (b: Building) => (world.time * (b.def.speed ?? BELT_SPEED) * world.boost('endless-belt')) % 0.5;
     const isLine = (b: Building) => isLineType(b.type);
+    if (world.regional && this.showGrid(world, view)) this.drawGridCoverage(world);
     for (const b of visible) if (b.type === 'road') this.drawRoad(world, b);
     for (const b of visible) {
       if (isBeltType(b.type)) this.drawBelt(b, phase(b));
@@ -1003,6 +1005,19 @@ export class Renderer {
       case 'charger':
         this.blit('charger', 0, sx, sy);
         break;
+      case 'pole':
+      case 'accumulator':
+        this.blit(b.type, 0, sx, sy);
+        if (b.type === 'accumulator') this.drawBar(sx, sy, b.energy / 10000, '#4aa36a');
+        break;
+      case 'substation':
+      case 'terminal':
+        this.blit(b.type, b.type === 'terminal' && b.partner ? Math.floor(t * 2) % 2 : 0, sx, sy);
+        break;
+      case 'fuel-generator':
+      case 'geothermal':
+        this.blit(b.type, anim(b.load > 0, 8), sx, sy);
+        break;
       case 'lumberjack':
         this.blit('lumberjack', anim(working), sx, sy);
         plate('log');
@@ -1050,6 +1065,57 @@ export class Renderer {
     if (b.crafting) {
       const p = Math.min(1, b.progress / world.craftTime(b));
       this.drawBar(sx, sy, p, b.status === 'low-power' ? '#e8c547' : PAL.green, b.size === 3 ? MACHINE3.bar : MACHINE.bar);
+    }
+  }
+
+  /** 배전 범위를 보여 줄 때: 전력 건물을 들었거나, 전력에 관련된 건물을 골랐을 때 */
+  private showGrid(world: World, view: ViewState): boolean {
+    const t = view.tool;
+    if (t && (isGeneratorType(t) || ['pole', 'substation', 'terminal', 'accumulator'].includes(t) || BUILDINGS[t].power > 0)) return true;
+    const b = view.selectedId ? world.buildings.get(view.selectedId) : undefined;
+    return !!b && (isGeneratorType(b.type) || ['pole', 'substation', 'terminal', 'accumulator', 'station', 'charger'].includes(b.type));
+  }
+
+  /** 전력 구역마다 노드 공급 범위(옅은 색)와 확장 한계(점선) */
+  private drawGridCoverage(world: World): void {
+    const ctx = this.ctx;
+    const z = this.cam.zoom;
+    for (const zone of world.zones) {
+      const hue = (zone.id * 67) % 360;
+      const lim = world.zoneLimit(zone);
+      const [lx, ly] = this.cam.worldToScreen(zone.x - lim, zone.y - lim);
+      ctx.save();
+      // 확장 한계 밖은 칠하지 않는다
+      ctx.beginPath();
+      ctx.rect(lx, ly, (lim * 2 + 1) * z, (lim * 2 + 1) * z);
+      ctx.clip();
+      ctx.fillStyle = `hsla(${hue}, 70%, 55%, 0.12)`;
+      for (const [nx, ny, r] of world.zoneNodes(zone)) {
+        const [sx, sy] = this.cam.worldToScreen(nx - r, ny - r);
+        ctx.fillRect(sx, sy, (r * 2 + 1) * z, (r * 2 + 1) * z);
+      }
+      ctx.restore();
+      ctx.strokeStyle = `hsla(${hue}, 60%, 40%, 0.6)`;
+      ctx.setLineDash([6, 4]);
+      ctx.lineWidth = 1.5;
+      ctx.strokeRect(lx, ly, (lim * 2 + 1) * z, (lim * 2 + 1) * z);
+      ctx.setLineDash([]);
+      const [cx, cy] = this.cam.worldToScreen(zone.x + 0.5, zone.y + 0.5);
+      this.text(`구역 ${zone.id}`, cx, cy - z, `hsl(${hue}, 60%, 30%)`, 12);
+    }
+    // 송전선
+    ctx.strokeStyle = 'rgba(122, 90, 154, 0.85)';
+    ctx.lineWidth = 2;
+    for (const b of world.buildings.values()) {
+      if (b.type !== 'terminal' || !b.send || !b.partner) continue;
+      const o = world.buildings.get(b.partner);
+      if (!o) continue;
+      const [ax, ay] = this.cam.worldToScreen(b.x + 1, b.y + 1);
+      const [bx, by] = this.cam.worldToScreen(o.x + 1, o.y + 1);
+      ctx.beginPath();
+      ctx.moveTo(ax, ay);
+      ctx.lineTo(bx, by);
+      ctx.stroke();
     }
   }
 

@@ -281,7 +281,7 @@ export class Codex {
         )
         .join('')}</div>`,
     ).join('');
-    const buildings = CATEGORIES.filter((c) => c.id !== 'industry' || w.regional).map(
+    const buildings = CATEGORIES.filter((c) => (c.id !== 'industry' && c.id !== 'grid') || w.regional).map(
       (c) => `<h3>건물 · ${c.name}</h3><div class="codex-grid">${c.items
         .map(
           (b) => `<div class="codex-card" data-building="${b}">

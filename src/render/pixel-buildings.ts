@@ -643,6 +643,78 @@ define('drill', 32, 32, 5, (p, f) => {
   for (const [x, y] of [[3, 3], [27, 3], [27, 15]]) bolt(p, x, y, IRON);
 });
 
+// ───────────────────────── 지역 전력 설비 ─────────────────────────
+
+define('pole', 16, 16, 1, (p) => {
+  p.rect(7, 14, 4, 1, PAL.shadow);
+  p.rect(7, 3, 3, 12, PAL.ink);
+  p.rect(8, 4, 1, 10, PAL.wood.mid);
+  p.rect(3, 3, 11, 3, PAL.ink);
+  p.rect(4, 4, 9, 1, PAL.wood.hi);
+  for (const x of [4, 12]) p.px(x, 3, PAL.brass.hi);
+});
+
+define('substation', 32, 32, 2, (p, f) => {
+  machine(p, ramp('#5a6a8a'), IRON, false);
+  // 변압기 둘과 절연체
+  for (const x of [6, 18]) {
+    p.rect(x, 5, 9, 11, PAL.ink);
+    p.rect(x + 1, 6, 7, 9, PAL.metal.mid);
+    for (let y = 7; y < 15; y += 2) p.rect(x + 1, y, 7, 1, PAL.metal.lo);
+    p.rect(x + 3, 2, 3, 3, PAL.ink);
+    p.px(x + 4, 3, f ? '#fff6b0' : PAL.brass.mid);
+  }
+  p.rect(10, 21, 12, 4, PAL.ink);
+  p.rect(11, 22, 10, 2, '#f6d64a');
+  p.px(15, 22, PAL.ink);
+  p.px(16, 23, PAL.ink);
+});
+
+define('terminal', 32, 32, 2, (p, f) => {
+  machine(p, ramp('#7a5a9a'), IRON, false);
+  // 송전탑 머리
+  p.rect(14, 1, 4, 17, PAL.ink);
+  p.rect(15, 2, 2, 15, PAL.metal.hi);
+  p.rect(6, 4, 20, 3, PAL.ink);
+  p.rect(7, 5, 18, 1, PAL.metal.mid);
+  for (const x of [7, 24]) p.disc(x + 0.5, 8.5, 1.5, f ? '#bfe6ff' : '#e8dcb0');
+  p.rect(9, 21, 14, 4, PAL.ink);
+  p.rect(10, 22, 12, 2, '#b48cf2');
+});
+
+define('accumulator', 32, 32, 1, (p) => {
+  machine(p, ramp('#3f8a6a'), IRON, false);
+  for (const x of [5, 13, 21]) {
+    p.rect(x, 4, 7, 13, PAL.ink);
+    p.rect(x + 1, 5, 5, 11, '#4aa36a');
+    p.rect(x + 1, 5, 5, 2, '#7ac48f');
+    p.rect(x + 2, 2, 3, 2, PAL.ink);
+  }
+});
+
+define('fuel-generator', 48, 48, 5, (p, f) => {
+  bigMachine(p, ramp('#a5643a'), IRON);
+  // 연료 탱크와 굴뚝
+  p.rect(5, 6, 18, 18, PAL.ink);
+  p.rect(6, 7, 16, 16, '#d96a2a');
+  p.rect(6, 7, 16, 3, '#f09a5a');
+  p.rect(30, 2, 7, 22, PAL.ink);
+  p.rect(31, 3, 5, 20, PAL.metal.mid);
+  if (f) for (let k = 0; k < 3; k++) p.px(32 + ((f + k) % 3), 1 - (k % 2), 'rgba(80,80,80,0.6)');
+  mouth(p, 20, 35, 16, 6, f, ['#fff3b0', '#f6b13f', '#d9542c']);
+});
+
+define('geothermal', 48, 48, 5, (p, f) => {
+  bigMachine(p, ramp('#9a5a4a'), IRON);
+  // 가운데 증기 탑
+  p.disc(24, 16, 11, PAL.ink);
+  p.disc(24, 16, 10, '#c9b8a8');
+  p.disc(24, 16, 6, '#7a3a2a');
+  p.disc(24, 16, 3, f ? '#f6b13f' : '#e8643a');
+  if (f) for (let k = 0; k < 4; k++) p.px(20 + k * 3, 3 + ((f + k) % 3), 'rgba(255,255,255,0.8)');
+  for (const [x, y] of [[4, 4], [42, 4], [4, 26], [42, 26]]) bolt(p, x, y, IRON);
+});
+
 define('refinery', 48, 48, 5, (p, f) => {
   bigMachine(p, ramp('#7a6a5a'), IRON);
   // 증류탑 셋과 이어진 관

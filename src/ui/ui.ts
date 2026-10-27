@@ -14,6 +14,8 @@ import {
   isMinerType,
   isRecipeMachine,
   needsRecipeChoice,
+  isGeneratorType,
+  GRID,
   MODULE,
   type BuildingType,
 } from '../data/buildings';
@@ -93,6 +95,7 @@ const STATUS_COLOR: Record<Status, string> = {
   'no-trees': '#8a7a66',
   'no-room': '#e8893a',
   locked: '#c0392b',
+  'no-power': '#c0392b',
 };
 
 const VEHICLE_STATUS_COLOR: Record<VehicleStatus, string> = {
@@ -331,6 +334,12 @@ export class UI {
     letScrollbarDrag($('left'));
 
     // 목록이 다시 그려져도 놓치지 않게 click 대신 pointerdown
+    // 전력 구역 목록: 누르면 그 구역 중심으로
+    $('power').addEventListener('pointerdown', (e) => {
+      const id = Number((e.target as HTMLElement).closest<HTMLElement>('[data-zone]')?.dataset.zone);
+      const z = id ? game.getWorld().zones.find((x) => x.id === id) : undefined;
+      if (z) game.focus(z.x + 0.5, z.y + 0.5);
+    });
     $('ore-alerts').addEventListener('pointerdown', (e) => {
       const id = Number((e.target as HTMLElement).closest<HTMLElement>('[data-patch]')?.dataset.patch);
       const r = id ? game.getWorld().patchReports().find((p) => p.id === id) : undefined;
@@ -394,6 +403,11 @@ export class UI {
       // 모듈 공급 창고·고급 트럭 연결 창고 고르기 (명령은 버튼을 눌러야 간다)
       if (sel.dataset.act === 'mod-src') {
         this.moduleSrc.set(b.id, Number(sel.value));
+        this.update();
+        return;
+      }
+      if (sel.dataset.act === 'zone-budget') {
+        game.exec({ t: 'zone-budget', zone: Number(sel.dataset.zone), kw: Number(sel.value) });
         this.update();
         return;
       }
@@ -777,6 +791,7 @@ export class UI {
 
   private updatePower(w: World): void {
     this.powerSound(w);
+    if (w.regional) return this.updateZones(w);
     const p = w.power;
     const pct = Math.round(p.satisfaction * 100);
     const color = p.satisfaction >= 1 ? '#3f8a3a' : p.satisfaction >= 0.6 ? '#b7791f' : '#c0392b';
@@ -801,6 +816,34 @@ export class UI {
       <div class="row"><span>기계 속도</span><b style="color:${color}">${pct}%</b></div>
       ${parts.length > 1 ? `<p class="muted power-src">${parts.join(' · ')} kW</p>` : ''}
       ${p.charge > 0 ? `<p class="muted power-src">사용 중 ${Math.round(p.charge)} kW는 트럭 충전</p>` : ''}`;
+  }
+
+  /** regional-v1: 전력 구역마다 수요·공급·송전·축전·충전 (누르면 그 구역으로) */
+  private updateZones(w: World): void {
+    const kw = (n: number) => Math.round(n).toLocaleString();
+    const rows = w.zones
+      .map((z) => {
+        const s = w.zoneState.get(z.id);
+        if (!s) return '';
+        const sat = s.satisfaction;
+        const color = sat >= 1 ? '#3f8a3a' : sat >= 0.6 ? '#b7791f' : '#c0392b';
+        const need = s.demand + s.charge;
+        const supply = s.nonfuel + s.received + s.fuel + s.discharge;
+        const kind = z.hub ? '허브' : w.zoneCap(z) > 3000 ? '정식' : '현지';
+        const extra = [
+          s.received ? `수전 ${kw(s.received)}` : '',
+          s.sent ? `송전 ${kw(s.sent)}` : '',
+          s.storeMax ? `축전 ${(s.stored / 1000).toFixed(1)}/${s.storeMax / 1000}MJ` : '',
+          s.charge ? `충전 ${kw(s.charge)}/${z.budget}` : '',
+        ].filter(Boolean);
+        return `<div class="zone-row" data-zone="${z.id}" title="누르면 이 구역으로">
+          <div class="row"><span>구역 ${z.id} <span class="muted">${kind}</span></span><b style="color:${color}">${Math.round(sat * 100)}%</b></div>
+          <div class="bar"><div style="width:${Math.min(100, (need / Math.max(1, s.capacity)) * 100)}%;background:${color}"></div></div>
+          <p class="muted power-src">수요 ${kw(need)} / 쓸 수 있는 ${kw(Math.max(supply, s.capacity))} kW${extra.length ? ` · ${extra.join(' · ')}` : ''}</p></div>`;
+      })
+      .join('');
+    $('power').innerHTML = `<h3>전력 <span class="muted">구역 ${w.zones.length}곳</span></h3>${rows}
+      <p class="muted power-src">발전기를 공급 범위 밖에 놓으면 새 구역이 생겨요. 전봇대(12칸 이음·6칸 공급)·변전소로 넓혀요.</p>`;
   }
 
   private updateStock(w: World): void {
@@ -1067,7 +1110,10 @@ export class UI {
         <button data-act="build-truck" ${check.ok ? '' : 'disabled'}>🚚 트럭 만들기 <span class="cost">${cost}</span></button>
         ${check.ok ? '' : `<p class="muted">${check.reason}</p>`}</div>`;
       if (w.regional) html += this.advTruckBlock(w, b);
+      if (w.regional) html += this.budgetBlock(w, b);
     }
+    if (b.type === 'terminal' && w.regional) html += this.terminalBlock(w, b);
+    if (b.type === 'charger' && w.regional) html += this.budgetBlock(w, b);
     if (isRecipeMachine(b.type)) {
       const options = recipesFor(b.type as MachineKind)
         .filter((r) => w.unlockedRecipes.has(r.id))
@@ -1144,6 +1190,78 @@ export class UI {
     return html;
   }
 
+  /** 정류장·충전기가 속한 구역의 차량 충전 예산 고르기 */
+  private budgetBlock(w: World, b: Building): string {
+    const z = w.zoneOf(b);
+    if (!z) return '';
+    const opts = [0, 100, 200, 300, 400, 500, 600, 700, 800]
+      .map((k) => `<option value="${k}" ${k === z.budget ? 'selected' : ''}>${k} kW${k === GRID.charge ? ' (기본)' : ''}</option>`)
+      .join('');
+    return `<label class="recipe">구역 ${z.id} 충전 예산 <select data-act="zone-budget" data-zone="${z.id}">${opts}</select></label>
+      <p class="muted">이 구역의 모든 정류장·충전기가 나눠 써요. 먼저 온 트럭부터 받고, 남은 트럭은 기다려요.</p>`;
+  }
+
+  /** 송전 터미널: 이어진 곳과 끊기, 또는 받을 터미널 고르기 (거리·케이블 수) */
+  private terminalBlock(w: World, b: Building): string {
+    const at = (t: Building) => {
+      const i = w.refTile(t);
+      return [i % w.width, Math.floor(i / w.width)];
+    };
+    const dist = (t: Building) => {
+      const [ax, ay] = at(b);
+      const [bx, by] = at(t);
+      return Math.abs(ax - bx) + Math.abs(ay - by);
+    };
+    const z = w.zoneOf(b);
+    if (b.partner) {
+      const o = w.buildings.get(b.partner)!;
+      const oz = w.zoneOf(o);
+      return `<div class="row"><span>${b.send ? '보내는 곳' : '받는 곳에서'}</span><b>터미널 #${o.id} (구역 ${oz?.id ?? '?'}, ${dist(o)}칸)</b></div>
+        <div class="actions"><button data-act="link-cut">연결 끊기 <span class="muted">케이블 ${(b.send ? b : o).cable}개 돌려받음</span></button></div>`;
+    }
+    if (!z) return '<p class="muted">전력 구역 안에 놓아야 이을 수 있어요.</p>';
+    const list = [...w.buildings.values()].filter((t) => t.type === 'terminal' && t !== b && !t.partner && w.zoneOf(t) && w.zoneOf(t) !== z);
+    if (!list.length) return '<p class="muted">다른 구역에 이을 송전 터미널을 하나 더 지어 주세요.</p>';
+    const opts = list
+      .map((t) => {
+        const d = dist(t);
+        return `<option value="${t.id}" ${d > GRID.link.range ? 'disabled' : ''}>구역 ${w.zoneOf(t)!.id} 터미널 #${t.id} · ${d}칸 · 케이블 ${Math.ceil(d / GRID.link.perCable)}개</option>`;
+      })
+      .join('');
+    return `<label class="recipe">보낼 곳 <select data-act="link-target">${opts}</select></label>
+      <div class="actions"><button data-act="link-go">⚡ 이 터미널에서 보내기</button></div>
+      <p class="muted">한 방향으로만 보내요 (최대 2MW, 95% 도착). 받는 구역이 실제로 모자란 만큼만 보내요.</p>`;
+  }
+
+  /** regional-v1: 이 건물의 전력 구역과 송전·축전 상태 */
+  private gridLines(w: World, b: Building): string[] {
+    const powered = b.def.power > 0 || isGeneratorType(b.type) || ['station', 'charger', 'pole', 'substation', 'terminal', 'accumulator'].includes(b.type);
+    if (!powered) return [];
+    const z = w.zoneOf(b);
+    const lines: string[] = [];
+    if (!z) {
+      lines.push(`<div class="row"><span>전력 구역</span><b style="color:#c0392b">배전 범위 밖</b></div>`);
+      if (b.type === 'pole' || b.type === 'substation') lines.push('<p class="muted">같은 구역의 허브·발전기·변전소·전봇대에서 12칸 안에 놓아야 이어져요.</p>');
+      return lines;
+    }
+    const s = w.zoneState.get(z.id);
+    lines.push(`<div class="row"><span>전력 구역</span><b>구역 ${z.id} · ${Math.round((s?.satisfaction ?? 1) * 100)}%</b></div>`);
+    if (b.type === 'accumulator') {
+      const pct = b.energy / GRID.accumulator.capacity;
+      lines.push(`<div class="row"><span>저장</span><b>${(b.energy / 1000).toFixed(2)} / ${GRID.accumulator.capacity / 1000} MJ <span class="muted">${b.load > 0 ? `충전 ${Math.round(b.load)}kW` : b.load < 0 ? `방전 ${Math.round(-b.load)}kW` : ''}</span></b></div>`);
+      lines.push(`<div class="bar"><div style="width:${pct * 100}%;background:#3f8a6a"></div></div>`);
+    }
+    if (b.type === 'terminal' && b.partner) {
+      const flow = w.linkFlow.get(b.send ? b.id : b.partner) ?? 0;
+      lines.push(`<div class="row"><span>${b.send ? '보내는 중' : '받는 중'}</span><b>${Math.round(b.send ? flow : flow * GRID.link.efficiency)} kW</b></div>`);
+    }
+    if (b.type === 'station' || b.type === 'charger') {
+      lines.push(`<div class="row"><span>구역 충전</span><b>${Math.round(s?.charge ?? 0)} / ${z.budget} kW 예산</b></div>`);
+    }
+    if (isGeneratorType(b.type) && b.load > 0) lines.push(`<div class="row"><span>지금 출력</span><b>${Math.round(b.load)} kW</b></div>`);
+    return lines;
+  }
+
   /** 정보창을 다시 그려야 하는 현지 실물 상태 (모듈 슬롯·공급 창고 수량·고급 트럭 재료·처리 중 명령) */
   private useSig(w: World, b: Building): string {
     if (!w.regional) return '';
@@ -1156,9 +1274,13 @@ export class UI {
     if (isRecipeMachine(b.type)) {
       return `${w.moduleState(b)}${b.crafting && b.modBatch ? 'L' : ''}|${w.moduleSupport(b) ?? ''}|${groups('module')}|${this.moduleSrc.get(b.id) ?? ''}|${busy}`;
     }
+    if (b.type === 'terminal') {
+      return `${b.partner}|${w.zoneOf(b)?.id}|${[...w.buildings.values()].filter((t) => t.type === 'terminal' && !t.partner).map((t) => `${t.id}:${w.zoneOf(t)?.id}`).join(',')}`;
+    }
+    if (b.type === 'charger') return `${w.zoneOf(b)?.id}:${w.zoneOf(b)?.budget}`;
     if (b.type === 'station') {
       const kit = countOf(b.inBuf, 'truck-kit') + countOf(b.outBuf, 'truck-kit');
-      return `${w.advTruckSupport(b) ?? ''}|${kit}|${groups('truck-kit')}|${this.kitSrc.get(b.id) ?? ''}|${busy}`;
+      return `${w.advTruckSupport(b) ?? ''}|${kit}|${groups('truck-kit')}|${this.kitSrc.get(b.id) ?? ''}|${busy}|${w.zoneOf(b)?.id}:${w.zoneOf(b)?.budget}`;
     }
     return '';
   }
@@ -1256,6 +1378,7 @@ export class UI {
 
   private infoDynamic(w: World, b: Building): string {
     const lines: string[] = [];
+    if (w.regional) lines.push(...this.gridLines(w, b));
     const st = w.machineStats(b);
     if (st) lines.push(productionBlock(st));
     if (HAS_STATUS.includes(b.type)) {
@@ -1730,6 +1853,14 @@ export class UI {
           3000,
         ),
       );
+    }
+    if (act === 'link-go' || act === 'link-cut') {
+      const target = act === 'link-go' ? Number(document.querySelector<HTMLSelectElement>('#info select[data-act="link-target"]')?.value) : 0;
+      const src = act === 'link-cut' && !b.send && b.partner ? b.partner : b.id;
+      this.game.exec({ t: 'power-link', id: src, target }, (r) => {
+        this.toast(r.ok ? (target ? '송전을 이었어요' : '송전을 끊었어요 (케이블은 허브로)') : (r.reason ?? '할 수 없어요'), 3000);
+        this.update();
+      });
     }
     if (act === 'adv-truck') {
       const w = this.game.getWorld();

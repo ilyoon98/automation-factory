@@ -37,9 +37,16 @@ export type BuildingType =
   | 'electrolyzer'
   | 'large-assembler'
   | 'sap-extractor'
-  | 'drill';
+  | 'drill'
+  // 지역 전력 (regional-v1)
+  | 'pole'
+  | 'substation'
+  | 'terminal'
+  | 'accumulator'
+  | 'fuel-generator'
+  | 'geothermal';
 
-export type Category = 'logistics' | 'production' | 'power' | 'storage' | 'transport' | 'forest' | 'industry';
+export type Category = 'logistics' | 'production' | 'power' | 'storage' | 'transport' | 'forest' | 'industry' | 'grid';
 
 /**
  * 하단 툴바 카테고리. key로 탭을 바꾸고, 숫자 1~9로 items의 순서대로 고른다.
@@ -64,6 +71,7 @@ export const CATEGORIES: { id: Category; name: string; key: string; items: Build
   { id: 'forest', name: '숲', key: 'n', items: ['lumberjack', 'planter', 'sawmill'] },
   // regional-v1 세계에서만 탭이 보인다
   { id: 'industry', name: '산업', key: 'j', items: ['sap-extractor', 'drill', 'chem-reactor', 'refinery', 'electrolyzer', 'large-assembler'] },
+  { id: 'grid', name: '배전', key: 'u', items: ['pole', 'substation', 'terminal', 'accumulator', 'fuel-generator', 'geothermal'] },
 ];
 
 /**
@@ -593,6 +601,95 @@ export const BUILDINGS: Record<BuildingType, BuildingDef> = {
     placeable: true,
     ports: { in: [], out: [[1, 2]] },
   },
+  pole: {
+    type: 'pole',
+    name: '전봇대',
+    size: 1,
+    cost: [
+      { item: 'wood', count: 2 },
+      { item: 'copper-wire', count: 4 },
+    ],
+    power: 0,
+    color: '#8f6a3a',
+    description: '같은 전력 구역의 허브·발전기·변전소·전봇대에서 12칸 안에 놓으면 둘레 6칸에 전기를 보낸다. 구역 중심에서 너무 멀면(확장 한계) 닿지 않는다.',
+    placeable: true,
+  },
+  substation: {
+    type: 'substation',
+    name: '변전소',
+    size: 2,
+    cost: [
+      { item: 'steel', count: 8 },
+      { item: 'wood', count: 8 },
+      { item: 'insulated-wire', count: 8 },
+      { item: 'motor', count: 1 },
+    ],
+    power: 0,
+    color: '#5a6a8a',
+    description: '전력 구역을 정식 구역으로: 처리 전력 6MW, 둘레 18칸 공급, 확장 한계 36칸(허브 구역은 40칸).',
+    placeable: true,
+  },
+  terminal: {
+    type: 'terminal',
+    name: '송전 터미널',
+    size: 2,
+    cost: [
+      { item: 'steel', count: 16 },
+      { item: 'aluminum-plate', count: 8 },
+      { item: 'hc-cable', count: 6 },
+      { item: 'controller', count: 2 },
+    ],
+    power: 0,
+    color: '#7a5a9a',
+    description: '다른 구역의 터미널과 한 방향으로 잇는다 (최대 128칸·2MW·효율 95%). 이을 때 고용량 케이블을 거리÷8 올림 개 더 쓴다.',
+    placeable: true,
+  },
+  accumulator: {
+    type: 'accumulator',
+    name: '축전기',
+    size: 2,
+    cost: [
+      { item: 'battery-pack', count: 4 },
+      { item: 'steel', count: 4 },
+      { item: 'controller', count: 1 },
+    ],
+    power: 0,
+    color: '#3f8a6a',
+    description: '남는 비연료 전기를 10MJ까지 모았다가(충전 효율 95%) 모자랄 때 내보낸다. 충·방전 최대 200kW, 10%는 남긴다.',
+    placeable: true,
+  },
+  'fuel-generator': {
+    type: 'fuel-generator',
+    name: '연료 발전기',
+    size: 3,
+    cost: [
+      { item: 'steel', count: 16 },
+      { item: 'motor', count: 2 },
+      { item: 'controller', count: 1 },
+      { item: 'brick', count: 12 },
+    ],
+    power: 0,
+    color: '#a5643a',
+    description: '정유 연료를 태워 최대 1.5MW (연료 1개 = 6000kJ). 뒤 가운데 한 칸으로 연료만 받는다 (30개까지).',
+    placeable: true,
+    ports: { in: [[1, -1]], out: [] },
+  },
+  geothermal: {
+    type: 'geothermal',
+    name: '지열 발전소',
+    size: 3,
+    cost: [
+      { item: 'steel', count: 30 },
+      { item: 'bronze', count: 12 },
+      { item: 'motor', count: 4 },
+      { item: 'controller', count: 4 },
+      { item: 'concrete', count: 24 },
+    ],
+    power: 0,
+    color: '#9a5a4a',
+    description: '가운데 칸을 화산의 지열 분출구 위에 놓는다. 연료 없이 밤낮·날씨와 상관없이 1.8MW.',
+    placeable: true,
+  },
   'large-assembler': {
     type: 'large-assembler',
     name: '대형 조립소',
@@ -712,6 +809,27 @@ export const ADVANCED_TRUCK = {
 export const isExtractorType = (t: BuildingType) => t === 'sap-extractor' || t === 'drill';
 /** 새 채취 설비: 수액 채취기 분당 30개, 고무나무 군락 하나에 분당 120개까지. 시추기 분당 60개 */
 export const EXTRACT = { sapTime: 2, groveMax: 4, drillTime: 1 };
+
+/** 지역 전력 (regional-v1, docs/지형-운송-전력-상세기획.md §9~11) */
+export const GRID = {
+  /** 허브 구역: 직접 공급 반경·확장 한계·처리 전력 */
+  hub: { radius: 24, limit: 40, cap: 3000 },
+  /** 첫 발전기로 만든 현지 구역 */
+  local: { radius: 10, limit: 28, cap: 3000 },
+  /** 변전소로 정식화한 구역 (허브 구역의 한계 40칸은 그대로) */
+  formal: { radius: 18, limit: 36, cap: 6000 },
+  pole: { radius: 6, link: 12 },
+  /** 구역 차량 충전 예산 기본값 (kW) */
+  charge: 400,
+  link: { range: 128, cap: 2000, efficiency: 0.95, perCable: 8, maxPerZone: 3 },
+  accumulator: { capacity: 10000, rate: 200, efficiency: 0.95, floor: 0.1 },
+  fuel: { power: 1500, energy: 6000, cap: 30 },
+  geothermal: 1800,
+};
+
+/** 전기를 만드는 건물 (놓을 때 공급 범위 밖이면 새 전력 구역을 만든다) */
+export const isGeneratorType = (t: BuildingType) =>
+  t === 'generator' || t === 'hydro' || t === 'solar' || t === 'wind' || t === 'fuel-generator' || t === 'geothermal';
 
 /** 둘레의 나무를 다루는 건물 (벌목기·식목기) */
 export const isForestType = (t: BuildingType) => t === 'lumberjack' || t === 'planter';

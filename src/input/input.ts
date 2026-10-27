@@ -49,6 +49,7 @@ const ROTATABLE: BuildingType[] = [
   'large-assembler',
   'sap-extractor',
   'drill',
+  'fuel-generator',
 ];
 /**
  * 마우스 중심 조작.

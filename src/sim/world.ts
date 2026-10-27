@@ -24,7 +24,9 @@ import {
   isMinerType,
   isRecipeMachine,
   isExtractorType,
+  isGeneratorType,
   EXTRACT,
+  GRID,
   needsRecipeChoice,
   type BuildingType,
   type Ports,
@@ -148,6 +150,35 @@ interface TruckEdit {
  * 같은 칸·아이템이라도 회수 사건(ev)마다 따로 기록하고, 꺼낼 때는 먼저 생긴 사건부터 줄인다.
  * 칸을 막지 않으며 벨트·트럭으로 넣을 수 없다. 하역기로만 꺼낸다
  */
+/** 지역 전력 구역. 중심(x, y)은 처음 만든 노드 자리이고, 그 발전기를 철거해도 바뀌지 않는다 */
+export interface Zone {
+  id: number;
+  x: number;
+  y: number;
+  hub: boolean;
+  /** 구역을 만든 건물 (허브 또는 첫 발전기) */
+  creator: number;
+  /** 차량 충전 예산 (kW) */
+  budget: number;
+}
+
+/** 구역의 이번 틱 전력 (kW, 저장은 kJ) */
+export interface ZoneState {
+  demand: number;
+  charge: number;
+  nonfuel: number;
+  received: number;
+  sent: number;
+  discharge: number;
+  fuel: number;
+  stored: number;
+  storeMax: number;
+  capacity: number;
+  cap: number;
+  satisfaction: number;
+  request: number;
+}
+
 export interface PileEntry {
   tile: number;
   item: ItemId;
@@ -360,6 +391,18 @@ export class World {
   seed = 0;
   /** 세계 규칙 프로필. 기존 저장은 legacy-v042로 읽고 자동으로 바꾸지 않는다 */
   rules: RuleProfile = 'legacy-v042';
+  /** 지역 전력 구역 (regional-v1). 허브 구역과, 공급 범위 밖에 놓은 발전기가 만든 구역 */
+  zones: Zone[] = [];
+  nextZoneId = 1;
+  /** 구역마다 이번 틱 전력 (화면용, 매 틱 다시 계산) */
+  zoneState = new Map<number, ZoneState>();
+  /** 송전 터미널(보내는 쪽 id)마다 이번 틱 보낸 kW */
+  linkFlow = new Map<number, number>();
+  /** 이번 틱 트럭마다 실제로 받는 충전 kW (구역 충전 예산·전력 비율 반영) */
+  private chargeGrant = new Map<number, number>();
+  private gridDirty = true;
+  private nodeCache = new Map<number, [number, number, number][]>();
+  private zoneOfB = new Map<number, number>();
   /** 칸마다 지형 번호 (TERRAIN_IDS). 예전 지도는 null (지형 배율 없음) */
   terrain: Uint8Array | null = null;
   /** 지열 분출구 칸들 (분출구마다 지열 발전소 한 대) */
@@ -793,6 +836,9 @@ export class World {
         if (this.resItem[this.idx(x + dx, y + dy)] === 'sap') return { ok: false, reason: '고무나무 위에는 지을 수 없음' };
       }
     }
+    if (type === 'geothermal' && !this.vents.includes(this.refTile({ x, y, size: def.size }))) {
+      return { ok: false, reason: '가운데 칸을 지열 분출구 위에 놓아야 함' };
+    }
     if (isMinerType(type) && type !== 'pump') {
       for (let dy = 0; dy < def.size; dy++) {
         for (let dx = 0; dx < def.size; dx++) {
@@ -966,6 +1012,7 @@ export class World {
     // 광맥이 없는 땅에 놓은 채굴기는 흙을 캔다 (광맥 위에 놓은 건 광맥이 바닥나면 멈춘다)
     if (isMinerType(type) && type !== 'pump' && b.mineTiles.length === 0) b.mineDirt = true;
     if (type === 'station') b.stationNo = this.nextStationNo++;
+    this.assignZone(b);
     if (type === 'underground') {
       const plan = this.undergroundPlan(x, y, dir);
       b.ugMode = plan.mode;
@@ -1014,6 +1061,7 @@ export class World {
     for (let dy = 0; dy < 3; dy++) for (let dx = 0; dx < 3; dx++) this.setResource(x + dx, y + dy, null, 0);
     const b = this.place('hub', x, y, 0, true)!;
     this.hub = b;
+    this.ensureHubZone();
     return b;
   }
 
@@ -1065,6 +1113,7 @@ export class World {
       ...(b.module ? { mod: ev } : {}),
     });
     for (const c of b.def.cost) addTo(this.stock, c.item, c.count);
+    if (b.type === 'terminal' && b.partner) this.unlinkTerminal(b);
     this.refundContents(b, 'remove', ev);
     this.dropModule(b, 'remove', ev);
     const partner = this.partnerOf(b);
@@ -1201,7 +1250,7 @@ export class World {
   private updateStats(b: Building): void {
     const s = b.stats;
     const k = DT / STATS_TAU;
-    s.eff += ((b.crafting ? this.power.satisfaction : 0) - s.eff) * k;
+    s.eff += ((b.crafting ? this.satOf(b) : 0) - s.eff) * k;
     s.work += ((b.crafting ? 1 : 0) - s.work) * k;
     s.starve += ((b.status === 'no-input' || b.status === 'depleted' ? 1 : 0) - s.starve) * k;
     s.blocked += ((b.status === 'output-full' ? 1 : 0) - s.blocked) * k;
@@ -1296,7 +1345,7 @@ export class World {
     b.modBatch = false;
     b.progress = 0;
     // 발전기에 쌓인 연료 (수력 발전기는 물)
-    if (b.fuel) give(b.type === 'hydro' ? 'water' : 'coal', b.fuel);
+    if (b.fuel) give(b.type === 'hydro' ? 'water' : b.type === 'fuel-generator' ? 'fuel' : 'coal', b.fuel);
     b.fuel = 0;
     if (b.held) give(b.held, b.heldN);
     b.held = null;
@@ -2039,7 +2088,450 @@ export class World {
     b.modBatch = !!b.module;
   }
 
+  // ───────────────────────── 지역 전력 (regional-v1) ─────────────────────────
+
+  /** 허브 구역 (없으면 만든다) */
+  private ensureHubZone(): void {
+    if (!this.regional || !this.hub || this.zones.some((z) => z.hub)) return;
+    const h = this.refTile(this.hub);
+    this.zones.push({ id: this.nextZoneId++, x: h % this.width, y: Math.floor(h / this.width), hub: true, creator: this.hub.id, budget: GRID.charge });
+    this.gridDirty = true;
+  }
+
+  /** 구역이 변전소로 정식화됐는지 */
+  private zoneFormal(z: Zone): boolean {
+    for (const b of this.buildings.values()) if (b.type === 'substation' && b.zone === z.id) return true;
+    return false;
+  }
+
+  /** 구역 중심에서의 확장 한계 (체비쇼프 칸) */
+  zoneLimit(z: Zone): number {
+    return z.hub ? GRID.hub.limit : this.zoneFormal(z) ? GRID.formal.limit : GRID.local.limit;
+  }
+
+  /** 구역 처리 전력 (kW) */
+  zoneCap(z: Zone): number {
+    return this.zoneFormal(z) ? GRID.formal.cap : z.hub ? GRID.hub.cap : GRID.local.cap;
+  }
+
+  /**
+   * 구역의 공급 노드: 허브(24칸)·구역을 만든 발전기(10칸)·변전소(18칸)와, 이들에서 12칸씩 이어진 전봇대(6칸).
+   * 각 노드 [x, y, 반경]
+   */
+  zoneNodes(z: Zone): [number, number, number][] {
+    const at = (b: Building): [number, number] => {
+      const t = this.refTile(b);
+      return [t % this.width, Math.floor(t / this.width)];
+    };
+    const nodes: [number, number, number][] = [];
+    const creator = this.buildings.get(z.creator);
+    if (z.hub && this.hub) nodes.push([...at(this.hub), GRID.hub.radius]);
+    else if (creator && isGeneratorType(creator.type)) nodes.push([...at(creator), GRID.local.radius]);
+    for (const b of this.buildings.values()) if (b.type === 'substation' && b.zone === z.id) nodes.push([...at(b), GRID.formal.radius]);
+    // 전봇대: 이미 이어진 노드에서 12칸 안이면 차례로 잇는다 (id 순으로 고정)
+    const poles = [...this.buildings.values()].filter((b) => b.type === 'pole' && b.zone === z.id).sort((a, c) => a.id - c.id);
+    let grew = true;
+    const linked = new Set<number>();
+    while (grew) {
+      grew = false;
+      for (const p of poles) {
+        if (linked.has(p.id)) continue;
+        const [px, py] = at(p);
+        if (nodes.some(([x, y]) => Math.max(Math.abs(x - px), Math.abs(y - py)) <= GRID.pole.link)) {
+          linked.add(p.id);
+          nodes.push([px, py, GRID.pole.radius]);
+          grew = true;
+        }
+      }
+    }
+    return nodes;
+  }
+
+  /** (x, y) 칸에 전기를 주는 구역 (여럿이면 중심이 가까운 곳, 같으면 id가 작은 곳). 없으면 null */
+  zoneAt(x: number, y: number): Zone | null {
+    if (this.gridDirty) this.rebuildGrid();
+    let best: Zone | null = null;
+    let bd = Infinity;
+    for (const z of this.zones) {
+      const limit = this.zoneLimit(z);
+      if (Math.max(Math.abs(x - z.x), Math.abs(y - z.y)) > limit) continue;
+      const nodes = this.nodeCache.get(z.id) ?? [];
+      if (!nodes.some(([nx, ny, r]) => Math.max(Math.abs(x - nx), Math.abs(y - ny)) <= r)) continue;
+      const d = (x - z.x) ** 2 + (y - z.y) ** 2;
+      if (d < bd || (d === bd && best && z.id < best.id)) [best, bd] = [z, d];
+    }
+    return best;
+  }
+
+  /** 건물이 속한 전력 구역 (기준 칸이 공급 범위 안). 예전 세계·범위 밖이면 null */
+  zoneOf(b: Building): Zone | null {
+    if (!this.regional) return null;
+    if (this.gridDirty) this.rebuildGrid();
+    const id = this.zoneOfB.get(b.id);
+    return id ? (this.zones.find((z) => z.id === id) ?? null) : null;
+  }
+
+  /** 전봇대·변전소를 놓을 때 붙을 구역: 이어진 노드에서 12칸 안이고 구역 확장 한계 안 */
+  private nodeZoneFor(x: number, y: number): Zone | null {
+    if (this.gridDirty) this.rebuildGrid();
+    let best: Zone | null = null;
+    let bd = Infinity;
+    for (const z of this.zones) {
+      if (Math.max(Math.abs(x - z.x), Math.abs(y - z.y)) > this.zoneLimit(z)) continue;
+      const nodes = this.nodeCache.get(z.id) ?? [];
+      if (!nodes.some(([nx, ny]) => Math.max(Math.abs(x - nx), Math.abs(y - ny)) <= GRID.pole.link)) continue;
+      const d = (x - z.x) ** 2 + (y - z.y) ** 2;
+      if (d < bd) [best, bd] = [z, d];
+    }
+    return best;
+  }
+
+  /** 새 전력 건물의 구역 정하기 (place에서). 공급 범위 밖에 놓은 발전기는 새 구역을 만든다 */
+  private assignZone(b: Building): void {
+    if (!this.regional) return;
+    const t = this.refTile(b);
+    const x = t % this.width;
+    const y = Math.floor(t / this.width);
+    if (b.type === 'pole' || b.type === 'substation') b.zone = this.nodeZoneFor(x, y)?.id ?? 0;
+    else if (isGeneratorType(b.type)) {
+      const z = this.zoneAt(x, y);
+      if (z) b.zone = z.id;
+      else {
+        b.zone = this.nextZoneId++;
+        this.zones.push({ id: b.zone, x, y, hub: false, creator: b.id, budget: GRID.charge });
+      }
+    }
+    this.gridDirty = true;
+  }
+
+  private rebuildGrid(): void {
+    this.gridDirty = false;
+    this.nodeCache.clear();
+    for (const z of this.zones) this.nodeCache.set(z.id, this.zoneNodes(z));
+    this.zoneOfB.clear();
+    for (const b of this.buildings.values()) {
+      if (isLineType(b.type) || b.type === 'road') continue;
+      const t = this.refTile(b);
+      const z = this.zoneAt(t % this.width, Math.floor(t / this.width));
+      if (z) this.zoneOfB.set(b.id, z.id);
+    }
+  }
+
+  /** 이 건물이 지금 받는 전력 비율 (0~1). 예전 세계는 공장 전체 하나 */
+  satOf(b: Building): number {
+    if (!this.regional) return this.power.satisfaction;
+    const z = this.zoneOf(b);
+    return z ? (this.zoneState.get(z.id)?.satisfaction ?? 1) : 0;
+  }
+
+  /** 이 칸의 지형·날씨를 반영한 태양광 한 대 출력 (kW) */
+  solarAt(b: Building): number {
+    if (!this.regional) return this.solarOutput();
+    const i = this.refTile(b);
+    return SOLAR_POWER * (1 - darkness(this.time)) * TERRAIN[this.terrainAt(i)].solar * this.weatherEffect(i).solar;
+  }
+
+  windAt(b: Building): number {
+    if (!this.regional) return this.windOutput();
+    const i = this.refTile(b);
+    return this.weatherEffect(i).wind * TERRAIN[this.terrainAt(i)].wind;
+  }
+
+  /**
+   * 지역 전력: 구역마다 따로 수요·발전을 맞춘다. 같은 틱 안에서
+   * 1) 비연료 발전(허브·태양광·풍력·지열·수력) 2) 수전 3) 축전 방전 4) 석탄·연료 발전 순으로 쓴다.
+   * 송전 요청은 하류에서 상류로 모으고(선로마다 95%로 나눔), 전달은 상류에서 하류로 한다. 순환 연결은 만들지 않는다
+   */
+  private updateGrid(): void {
+    if (this.gridDirty) this.rebuildGrid();
+    const sun = 1 - darkness(this.time);
+    type Acc = {
+      z: Zone;
+      demand: number;
+      charge: number;
+      free: number;
+      hydros: Building[];
+      coal: Building[];
+      fuel: Building[];
+      accs: Building[];
+      cap: number;
+      recv: number;
+      sent: number;
+      discharge: number;
+      fuelUsed: number;
+      stored: number;
+    };
+    const st = new Map<number, Acc>();
+    for (const z of this.zones) {
+      st.set(z.id, { z, demand: 0, charge: 0, free: z.hub ? HUB_BASE_POWER : 0, hydros: [], coal: [], fuel: [], accs: [], cap: this.zoneCap(z), recv: 0, sent: 0, discharge: 0, fuelUsed: 0, stored: 0 });
+    }
+    for (const b of this.buildings.values()) {
+      const zid = this.zoneOfB.get(b.id);
+      const s = zid ? st.get(zid) : undefined;
+      if (b.crafting && b.def.power > 0 && s) s.demand += this.workPower(b);
+      if (b.type === 'solar' || b.type === 'wind') {
+        b.load = s ? (b.type === 'solar' ? (sun > 0 ? this.solarAt(b) : 0) : this.windAt(b)) : 0;
+        b.status = b.load > 0 ? 'working' : 'idle';
+        if (s) s.free += b.load;
+      } else if (b.type === 'geothermal') {
+        b.load = s ? GRID.geothermal : 0;
+        b.status = s ? 'working' : 'idle';
+        if (s) s.free += b.load;
+      } else if (b.type === 'generator' || b.type === 'hydro' || b.type === 'fuel-generator') {
+        const has = b.energy > 0 || b.fuel > 0 || countOf(b.inBuf, 'charcoal') > 0;
+        if (!has || !s) {
+          b.load = 0;
+          b.status = b.type === 'hydro' ? 'no-water' : 'no-fuel';
+        } else (b.type === 'hydro' ? s.hydros : b.type === 'generator' ? s.coal : s.fuel).push(b);
+      } else if (b.type === 'accumulator' && s) {
+        s.accs.push(b);
+        s.stored += b.energy;
+      }
+    }
+    // 차량 충전: 구역 충전 예산 안에서 도착 순서·id 순으로
+    this.chargeGrant.clear();
+    const wants: { v: Vehicle; want: number; z: number }[] = [];
+    for (const v of this.vehicles.values()) {
+      const want = this.chargeWant(v);
+      if (want <= 0) continue;
+      const spot = this.chargeSpot(v);
+      const zid = spot ? this.zoneOfB.get(spot.id) : undefined;
+      if (zid) wants.push({ v, want, z: zid });
+    }
+    wants.sort((a, c) => a.v.arrivedAt - c.v.arrivedAt || a.v.id - c.v.id);
+    const left = new Map(this.zones.map((z) => [z.id, z.budget]));
+    for (const w of wants) {
+      const g = Math.min(w.want, left.get(w.z) ?? 0);
+      if (g <= 0) continue;
+      left.set(w.z, left.get(w.z)! - g);
+      this.chargeGrant.set(w.v.id, g);
+      st.get(w.z)!.charge += g;
+    }
+    // 송전 연결: 보내는 터미널 → 받는 터미널 (구역이 다르고 둘 다 구역 안)
+    const links: { src: Building; from: number; to: number; out: number; send: number }[] = [];
+    for (const b of this.buildings.values()) {
+      if (b.type !== 'terminal' || !b.send || !b.partner) continue;
+      const dst = this.buildings.get(b.partner);
+      const from = this.zoneOfB.get(b.id);
+      const to = dst ? this.zoneOfB.get(dst.id) : undefined;
+      if (from && to && from !== to) links.push({ src: b, from, to, out: 0, send: 0 });
+    }
+    links.sort((a, c) => a.src.id - c.src.id);
+    const order = this.zoneOrder(links);
+    const hydroCap = (s: Acc) => s.hydros.length * HYDRO_POWER;
+    const nonfuel = (s: Acc) => s.free + hydroCap(s);
+    // 요청: 하류부터
+    const req = new Map<number, number>();
+    for (let k = order.length - 1; k >= 0; k--) {
+      const s = st.get(order[k])!;
+      let down = 0;
+      for (const l of links) if (l.from === s.z.id) down += l.out;
+      const r = Math.max(0, Math.min(s.cap, s.demand + s.charge) + down - nonfuel(s));
+      req.set(s.z.id, r);
+      // 이 구역으로 들어오는 선로들에 나눠 요청 (터미널 id 순, 선로마다 받을 수 있는 1.9MW까지)
+      let rest = r;
+      for (const l of links) {
+        if (l.to !== s.z.id) continue;
+        const got = Math.min(rest, GRID.link.cap * GRID.link.efficiency);
+        l.out = got / GRID.link.efficiency;
+        rest -= got;
+      }
+    }
+    // 전달: 상류부터
+    for (const id of order) {
+      const s = st.get(id)!;
+      const need = Math.min(s.cap, s.demand + s.charge);
+      let avail = nonfuel(s) + s.recv;
+      let served = Math.min(need, avail);
+      avail -= served;
+      for (const l of links) {
+        if (l.from !== id) continue;
+        const send = Math.min(l.out, avail, Math.max(0, s.cap - served - s.sent));
+        avail -= send;
+        s.sent += send;
+        l.send = send;
+        st.get(l.to)!.recv += send * GRID.link.efficiency;
+      }
+      // 모자라면 축전기 방전, 그래도 모자라면 석탄·연료 발전
+      let deficit = need - served;
+      for (const a of s.accs) {
+        if (deficit <= 0) break;
+        const can = Math.min(GRID.accumulator.rate, Math.max(0, (a.energy - GRID.accumulator.capacity * GRID.accumulator.floor) / DT));
+        const d = Math.min(can, deficit);
+        a.energy -= d * DT;
+        a.load = -d;
+        deficit -= d;
+        served += d;
+        s.discharge += d;
+      }
+      const fuelCap = s.coal.length * GENERATOR_POWER + s.fuel.length * GRID.fuel.power;
+      const burn = Math.min(fuelCap, Math.max(0, deficit));
+      served += burn;
+      s.fuelUsed = burn;
+      const share = fuelCap > 0 ? burn / fuelCap : 0;
+      this.burn(s.coal, GENERATOR_POWER * share, COAL_ENERGY);
+      this.burn(s.fuel, GRID.fuel.power * share, GRID.fuel.energy);
+      // 남는 비연료 전기로 축전 (방전한 틱에는 충전하지 않는다)
+      let spare = s.discharge > 0 ? 0 : avail;
+      for (const a of s.accs) {
+        if (s.discharge > 0) break;
+        const room = (GRID.accumulator.capacity - a.energy) / (DT * GRID.accumulator.efficiency);
+        const c = Math.min(GRID.accumulator.rate, room, spare);
+        a.energy += c * DT * GRID.accumulator.efficiency;
+        a.load = c;
+        spare -= c;
+        avail -= c;
+      }
+      // 수력: 허브·태양광·풍력·지열을 먼저 쓰고 모자란 만큼만 물을 태운다
+      const used = nonfuel(s) + s.recv - avail;
+      const hydroUse = Math.max(0, Math.min(hydroCap(s), used - s.free));
+      this.burn(s.hydros, s.hydros.length ? hydroUse / s.hydros.length : 0, WATER_ENERGY);
+      const demand = s.demand + s.charge;
+      const satisfaction = demand === 0 ? 1 : Math.min(1, served / demand);
+      this.zoneState.set(id, {
+        demand: s.demand,
+        charge: s.charge,
+        nonfuel: nonfuel(s),
+        received: s.recv,
+        sent: s.sent,
+        discharge: s.discharge,
+        fuel: s.fuelUsed,
+        stored: s.accs.reduce((a, b) => a + b.energy, 0),
+        storeMax: s.accs.length * GRID.accumulator.capacity,
+        capacity: nonfuel(s) + s.recv + fuelCap + s.accs.length * GRID.accumulator.rate,
+        cap: s.cap,
+        satisfaction,
+        request: req.get(id) ?? 0,
+      });
+    }
+    for (const l of links) this.linkFlow.set(l.src.id, l.send);
+    // 차량 충전은 구역 비율만큼
+    for (const [vid, g] of this.chargeGrant) {
+      const v = this.vehicles.get(vid)!;
+      const spot = this.chargeSpot(v);
+      const zid = spot ? this.zoneOfB.get(spot.id) : undefined;
+      this.chargeGrant.set(vid, g * (zid ? (this.zoneState.get(zid)?.satisfaction ?? 0) : 0));
+    }
+    // 화면용 합계
+    let demand = 0;
+    let capacity = 0;
+    let supply = 0;
+    let charge = 0;
+    for (const z of this.zoneState.values()) {
+      demand += z.demand + z.charge;
+      capacity += z.capacity;
+      supply += (z.demand + z.charge) * z.satisfaction;
+      charge += z.charge;
+    }
+    this.power = { demand, capacity, supply, satisfaction: demand ? supply / demand : 1, charge };
+  }
+
+  /** 송전 연결을 따라 상류 구역부터 (Kahn 순서, 같은 단계는 id 순). 연결이 없는 구역도 들어간다 */
+  private zoneOrder(links: { from: number; to: number }[]): number[] {
+    const ids = this.zones.map((z) => z.id).sort((a, b) => a - b);
+    const indeg = new Map(ids.map((id) => [id, 0]));
+    for (const l of links) indeg.set(l.to, (indeg.get(l.to) ?? 0) + 1);
+    const out: number[] = [];
+    const ready = ids.filter((id) => !indeg.get(id));
+    while (ready.length) {
+      ready.sort((a, b) => a - b);
+      const id = ready.shift()!;
+      out.push(id);
+      for (const l of links) {
+        if (l.from !== id) continue;
+        indeg.set(l.to, indeg.get(l.to)! - 1);
+        if (indeg.get(l.to) === 0) ready.push(l.to);
+      }
+    }
+    // 순환에 걸린 구역은 (만들지 못하게 막지만 혹시라도) 마지막에
+    for (const id of ids) if (!out.includes(id)) out.push(id);
+    return out;
+  }
+
+  /** 트럭이 충전하는 건물 (정류장·길가 충전기) */
+  private chargeSpot(v: Vehicle): Building | null {
+    if (v.charger) {
+      for (const b of this.buildings.values()) {
+        if (b.type !== 'charger') continue;
+        const x = v.tile % this.width;
+        const y = Math.floor(v.tile / this.width);
+        if (Math.abs(b.x - x) + Math.abs(b.y - y) === 1) return b;
+      }
+      return null;
+    }
+    if (!this.routeOk(v)) return v.home ? (this.buildings.get(v.home) ?? null) : null;
+    return this.buildings.get(v.stopId) ?? null;
+  }
+
+  /**
+   * 송전 연결: src 터미널에서 dst 터미널로 (dst = 0이면 끊기, 케이블은 허브로 돌려준다).
+   * 두 터미널은 다른 구역에 있어야 하고, 거리 128칸 이하, 구역마다 보내기·받기 3개까지, 순환 없음.
+   * 이을 때 고용량 케이블 (맨해튼 거리 ÷ 8 올림)개를 허브에서 낸다
+   */
+  linkTerminals(src: Building, dstId: number): UseResult {
+    if (!this.regional || src.type !== 'terminal') return { ok: false, reason: '송전 터미널이 아니에요' };
+    if (!dstId) {
+      if (!src.partner) return { ok: false, reason: '이어진 곳이 없어요' };
+      this.unlinkTerminal(src);
+      return { ok: true };
+    }
+    const dst = this.buildings.get(dstId);
+    if (!dst || dst.type !== 'terminal' || dst === src) return { ok: false, reason: '받을 송전 터미널을 골라 주세요' };
+    if (src.partner || dst.partner) return { ok: false, reason: '터미널 하나는 한 연결에만 써요 (먼저 끊어 주세요)' };
+    const from = this.zoneOf(src);
+    const to = this.zoneOf(dst);
+    if (!from || !to) return { ok: false, reason: '두 터미널 모두 전력 구역 안에 있어야 해요' };
+    if (from === to) return { ok: false, reason: '같은 구역끼리는 잇지 않아요' };
+    const a = this.refTile(src);
+    const b = this.refTile(dst);
+    const dist = Math.abs((a % this.width) - (b % this.width)) + Math.abs(Math.floor(a / this.width) - Math.floor(b / this.width));
+    if (dist > GRID.link.range) return { ok: false, reason: `너무 멀어요 (${dist}칸, 최대 ${GRID.link.range}칸)` };
+    const links = [...this.buildings.values()].filter((t) => t.type === 'terminal' && t.send && t.partner);
+    const ends = links.map((t) => [this.zoneOf(t)?.id, this.zoneOf(this.buildings.get(t.partner)!)?.id]);
+    if (ends.filter(([f]) => f === from.id).length >= GRID.link.maxPerZone) return { ok: false, reason: '이 구역은 이미 3곳에 보내요' };
+    if (ends.filter(([, t]) => t === to.id).length >= GRID.link.maxPerZone) return { ok: false, reason: '받는 구역은 이미 3곳에서 받아요' };
+    // 순환: to에서 따라가 from에 닿으면 안 된다
+    const seen = new Set<number>([to.id]);
+    const stack = [to.id];
+    while (stack.length) {
+      const z = stack.pop()!;
+      if (z === from.id) return { ok: false, reason: '전기가 돌아서 다시 오는 연결은 만들 수 없어요' };
+      for (const [f, t] of ends) if (f === z && t && !seen.has(t)) seen.add(t), stack.push(t);
+    }
+    const cables = Math.ceil(dist / GRID.link.perCable);
+    if (this.stockOf('hc-cable') < cables) return { ok: false, reason: `고용량 케이블 ${cables}개가 필요해요` };
+    addTo(this.stock, 'hc-cable', -cables);
+    src.partner = dst.id;
+    dst.partner = src.id;
+    src.send = true;
+    dst.send = false;
+    src.cable = cables;
+    return { ok: true };
+  }
+
+  private unlinkTerminal(t: Building): void {
+    const other = this.buildings.get(t.partner);
+    const src = t.send ? t : other;
+    if (src?.cable) addTo(this.stock, 'hc-cable', src.cable);
+    if (src) src.cable = 0;
+    if (other) {
+      other.partner = 0;
+      other.send = false;
+    }
+    t.partner = 0;
+    t.send = false;
+  }
+
+  /** 구역의 차량 충전 예산 (0~800kW) */
+  setZoneBudget(id: number, kw: number): boolean {
+    const z = this.zones.find((x) => x.id === id);
+    if (!z || !Number.isFinite(kw)) return false;
+    z.budget = Math.max(0, Math.min(800, Math.round(kw / 50) * 50));
+    return true;
+  }
+
   private updatePower(): void {
+    if (this.regional) return this.updateGrid();
     let demand = 0;
     let solar = 0;
     const gens: Building[] = [];
@@ -2114,11 +2606,11 @@ export class World {
 
   private updateCrafting(b: Building): void {
     if (!b.crafting) return;
-    const sat = this.power.satisfaction;
+    const sat = this.satOf(b);
     const time = this.craftTime(b);
     const speed = sat;
     b.progress += DT * speed;
-    b.status = sat < 1 ? 'low-power' : 'working';
+    b.status = sat <= 0 && this.regional && !this.zoneOf(b) ? 'no-power' : sat < 1 ? 'low-power' : 'working';
     if (b.progress < time) return;
 
     this.finishCraft(b);
@@ -2370,6 +2862,10 @@ export class World {
         if (n.fuel + countOf(n.inBuf, 'charcoal') >= GENERATOR_FUEL_CAP) return false;
         if (item === 'coal') n.fuel++;
         else addTo(n.inBuf, 'charcoal', 1);
+        return true;
+      case 'fuel-generator':
+        if (item !== 'fuel' || n.fuel >= GRID.fuel.cap) return false;
+        n.fuel++;
         return true;
       case 'hydro':
         if (item !== 'water' || n.fuel >= HYDRO_WATER_CAP) return false;
@@ -3064,7 +3560,9 @@ export class World {
     // 정류장에 서 있으면 충전 (전력이 모자라면 그 비율만큼만). 노선 없는 고급 트럭도 조립한 정류장 옆이면
     const want = this.chargeWant(v);
     if (want > 0) {
-      v.battery = Math.min(this.truckBattery(v), v.battery + want * this.power.satisfaction * DT);
+      // regional-v1: 구역 충전 예산 안에서 받은 만큼 (예산을 못 받은 트럭은 기다린다)
+      const got = this.regional ? (this.chargeGrant.get(v.id) ?? 0) : want * this.power.satisfaction;
+      v.battery = Math.min(this.truckBattery(v), v.battery + got * DT);
       if (this.batteryFull(v)) v.battery = this.truckBattery(v);
     }
     if (!this.routeOk(v)) {
@@ -3274,6 +3772,7 @@ export class World {
 
   private rebuildLayout(): void {
     this.layoutDirty = false;
+    this.gridDirty = true;
     this.targetCache.clear();
     const belts = [...this.buildings.values()].filter(
       (b) => isBeltType(b.type) || (b.type === 'underground' && b.ugMode === 'in'),
@@ -3373,6 +3872,8 @@ export class World {
         ...(b.cycle ? { cycle: b.cycle } : {}),
         ...(b.filter ? { filter: b.filter } : {}),
         ...(b.ugMode ? { ug: b.ugMode, partner: b.partner } : {}),
+        ...(b.zone ? { zone: b.zone } : {}),
+        ...(b.type === 'terminal' && b.partner ? { partner: b.partner, ...(b.send ? { send: true, cable: b.cable } : {}) } : {}),
         ...(b.type === 'station' ? { no: b.stationNo, ...(b.stationMode === 'unload' ? { mode: 'unload' as const } : {}) } : {}),
         // 슬롯의 모듈 1개와 출처, 지금 배치가 모듈을 쓰는지, 분리 예약 (슬롯과 배치는 같은 한 개를 가리킨다)
         ...(b.module ? { mod: b.module.from } : {}),
@@ -3403,6 +3904,7 @@ export class World {
       // 예전 세계는 모양을 그대로 (없으면 legacy-v042로 읽는다)
       ...(this.rules !== 'legacy-v042' ? { rules: this.rules } : {}),
       ...(this.terrain ? { terrain: runLength(this.terrain), vents: [...this.vents] } : {}),
+      ...(this.zones.length ? { zones: this.zones.map((z) => ({ ...z })), nextZoneId: this.nextZoneId } : {}),
       ...(this.piles.length || this.nextPileEv > 1
         ? { piles: this.piles.map((p): [number, number, number, number, PileReason] => [p.tile, ITEM_IDS.indexOf(p.item), p.n, p.ev, p.why]), pileEv: this.nextPileEv }
         : {}),
@@ -3468,6 +3970,9 @@ export class World {
       b.filter = s.filter ?? null;
       b.ugMode = s.ug ?? null;
       b.partner = s.partner ?? 0;
+      b.zone = s.zone ?? 0;
+      b.send = s.send ?? false;
+      b.cable = s.cable ?? 0;
       b.stationNo = s.no ?? 0;
       b.stationMode = s.mode ?? 'load';
       b.module = s.mod !== undefined ? { from: s.mod } : null;
@@ -3521,6 +4026,10 @@ export class World {
     }
     w.nextPileEv = Math.max(data.pileEv ?? 1, ...w.piles.map((p) => p.ev + 1));
     w.doneCmds = new Map(data.cmds ?? []);
+    w.zones = (data.zones ?? []).map((z) => ({ ...z }));
+    w.nextZoneId = data.nextZoneId ?? Math.max(0, ...w.zones.map((z) => z.id)) + 1;
+    // 구역이 생기기 전의 확장 세계 저장이면 허브 구역을 만든다
+    w.ensureHubZone();
     w.moduleBatches = data.counters?.moduleBatches ?? 0;
     w.advDelivered = data.counters?.advDelivered ?? 0;
     // v1은 입출구 방향이 없던 시절이라, 이어진 컨베이어를 보고 방향을 맞춰 준다.
@@ -3597,7 +4106,8 @@ export class World {
   checksum(): number {
     const h = new Hasher();
     h.num(this.tickNo).num(this.nextId).num(this.nextVehicleId).num(this.time);
-    h.str(this.rules).num(this.nextPileEv).num(this.moduleBatches).num(this.advDelivered);
+    h.str(this.rules).num(this.nextPileEv).num(this.moduleBatches).num(this.advDelivered).num(this.nextZoneId);
+    for (const z of this.zones) h.num(z.id).num(z.x).num(z.y).num(z.creator).num(z.budget);
     for (const p of this.piles) h.num(p.tile).str(p.item).num(p.n).num(p.ev);
     for (const [rid, r] of this.doneCmds) h.str(rid).num(r.ok ? 1 : 0).num(r.vehicle ?? 0).num(r.from ?? 0);
     for (const [item, n] of this.stock) h.str(item).num(n);
@@ -3609,7 +4119,7 @@ export class World {
       h.num(b.id).str(b.type).num(b.x).num(b.y).num(b.dir).str(b.recipe ?? '').str(b.filter ?? '');
       h.num(b.progress).num(b.crafting ? 1 : 0).num(b.outRR).num(b.mineIdx).num(b.fuel).num(b.energy);
       h.num(b.cycle).num(b.partner).num(b.heldFrom).str(b.held ?? '').num(b.heldN).str(b.stationMode);
-      h.num(b.module ? b.module.from + 1 : 0).num(b.modBatch ? 1 : 0).num(b.detach ? 1 : 0);
+      h.num(b.module ? b.module.from + 1 : 0).num(b.modBatch ? 1 : 0).num(b.detach ? 1 : 0).num(b.zone).num(b.send ? 1 : 0).num(b.cable);
       for (const [item, n] of b.inBuf) h.str(item).num(n);
       for (const [item, n] of b.outBuf) h.str(item).num(n);
       for (const it of b.items) h.str(it.item).num(it.pos).num(it.n);
@@ -3684,6 +4194,10 @@ export interface SavedBuilding {
   mod?: number;
   modBatch?: boolean;
   detach?: boolean;
+  /** 지역 전력: 붙은 구역, 송전 터미널의 보내는 쪽·낸 케이블 */
+  zone?: number;
+  send?: boolean;
+  cable?: number;
 }
 
 export interface SavedVehicle {
@@ -3745,6 +4259,9 @@ export interface SaveData {
   /** 지형 [번호, 이어진 칸 수, 번호, 칸 수, …] (예전 지도는 없음)과 지열 분출구 칸들 */
   terrain?: number[];
   vents?: number[];
+  /** 지역 전력 구역과 다음 구역 번호 */
+  zones?: Zone[];
+  nextZoneId?: number;
   /** 현지 회수 더미 [칸 번호, 아이템 번호, 개수, 회수 사건, 이유]와 다음 사건 번호 */
   piles?: [number, number, number, number, PileReason][];
   pileEv?: number;

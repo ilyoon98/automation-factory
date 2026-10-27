@@ -1,7 +1,7 @@
 import { BUILDINGS, CATEGORIES, FOREST, TRUCK, isMinerType, isRecipeMachine, type BuildingType } from '../data/buildings';
 import { ITEMS, type ItemId } from '../data/items';
 import { RECIPES, recipesFor, type MachineKind, type Recipe } from '../data/recipes';
-import { ENDLESS_GROWTH, ENDLESS_TECHS, TECHS } from '../data/tech';
+import { ENDLESS_GROWTH, ENDLESS_TECHS, REGIONAL_TECHS, TECHS } from '../data/tech';
 import type { World } from '../sim/world';
 import { buildingIconUrl, depositIconUrl, itemIconUrl, itemLink } from './icons';
 
@@ -70,7 +70,7 @@ function depositLink(id: DepositId): string {
 /** 레시피·건물을 해금하는 연구 이름 (처음부터 쓸 수 있으면 없음) */
 const recipeTech = new Map<string, string>();
 const buildingTech = new Map<BuildingType, string>();
-for (const t of TECHS) {
+for (const t of [...TECHS, ...REGIONAL_TECHS]) {
   for (const r of t.unlockRecipes ?? []) recipeTech.set(r, t.name);
   for (const b of t.unlockBuildings ?? []) buildingTech.set(b, t.name);
 }
@@ -144,6 +144,17 @@ const ITEM_GROUPS: { name: string; items: ItemId[] }[] = [
   { name: '흙 정제', items: ['gravel', 'sand', 'mineral-dust', 'iron-concentrate', 'copper-concentrate'] },
   { name: '부산물 · 건설 재료', items: ['mud', 'slag', 'brick', 'concrete'] },
   { name: '숲', items: ['sapling', 'log', 'wood', 'sawdust', 'charcoal', 'paper'] },
+];
+
+/** 지역 생산망 확장 세계(regional-v1)에서만 보이는 아이템 */
+const REGIONAL_ITEM_GROUPS: { name: string; items: ItemId[] }[] = [
+  { name: '특화 원자재', items: ['tin-ore', 'bauxite', 'sap', 'crude-oil', 'sulfur', 'brine'] },
+  {
+    name: '산업 소재',
+    items: ['tin-plate', 'bronze', 'rubber', 'insulated-wire', 'plastic', 'aluminum-plate', 'hardened-rubber', 'sulfuric-acid', 'lithium', 'lubricant', 'fuel', 'adv-lubricant'],
+  },
+  { name: '산업 부품', items: ['bronze-drive', 'motor', 'adv-circuit', 'controller', 'frame', 'tire', 'battery-pack', 'hc-cable'] },
+  { name: '완제품', items: ['truck-kit', 'module'] },
 ];
 
 const fmt = (n: number) => {
@@ -250,7 +261,7 @@ export class Codex {
         <button class="x" data-act="close-codex">×</button>
       </header>`;
     const body = !p
-      ? this.indexPage()
+      ? this.indexPage(w)
       : 'item' in p
         ? this.itemPage(w, p.item)
         : 'deposit' in p
@@ -260,8 +271,8 @@ export class Codex {
     this.refresh();
   }
 
-  private indexPage(): string {
-    const items = ITEM_GROUPS.map(
+  private indexPage(w: World): string {
+    const items = (w.regional ? [...ITEM_GROUPS, ...REGIONAL_ITEM_GROUPS] : ITEM_GROUPS).map(
       (g) => `<h3>${g.name}</h3><div class="codex-grid">${g.items
         .map(
           (i) => `<div class="codex-card" data-item="${i}">
@@ -270,7 +281,7 @@ export class Codex {
         )
         .join('')}</div>`,
     ).join('');
-    const buildings = CATEGORIES.map(
+    const buildings = CATEGORIES.filter((c) => c.id !== 'industry' || w.regional).map(
       (c) => `<h3>건물 · ${c.name}</h3><div class="codex-grid">${c.items
         .map(
           (b) => `<div class="codex-card" data-building="${b}">
@@ -351,7 +362,7 @@ export class Codex {
     const builds = (Object.keys(BUILDINGS) as BuildingType[])
       .map((b) => ({ b, c: BUILDINGS[b].cost.find((c) => c.item === item) }))
       .filter((x) => x.c);
-    const techs = TECHS.map((t) => ({ t, c: t.cost.find((c) => c.item === item) })).filter((x) => x.c);
+    const techs = w.techs.map((t) => ({ t, c: t.cost.find((c) => c.item === item) })).filter((x) => x.c);
     const endless = ENDLESS_TECHS.map((t) => ({ t, c: t.base.find((c) => c.item === item) })).filter((x) => x.c);
 
     const head = `<div class="codex-head">

@@ -15,12 +15,12 @@ import type { Blueprint } from '../sim/blueprint';
 import type { Building, StationMode, Status } from '../sim/building';
 import type { Vehicle } from '../sim/vehicle';
 import { DX, DY, type Dir } from '../sim/dir';
-import { BELT_SPEED, World, isLineType, patchAlert, storageBounds } from '../sim/world';
+import { BELT_SPEED, World, isLineType, patchAlert, portTiles, storageBounds } from '../sim/world';
 import { ambientEnabled, darkness, sunset, weatherAt } from './ambient';
 import type { Camera } from './camera';
 import { roundRect } from './draw-item';
 import { NUM_ADVANCE, ORE_GROUND, PAL, TILE, TREE_LEAF, hash, loadSpriteOverrides, sprite, spriteHalf, tone } from './pixel';
-import { MACHINE } from './pixel-buildings';
+import { MACHINE, MACHINE3 } from './pixel-buildings';
 
 /** 목표 표시 색 (진분홍: 모래·광맥·숲·호수 어디에도 없는 색이라 눈에 띈다. style.css .guide-pulse와 같게) */
 const GUIDE_COLOR = '#ff3d8b';
@@ -267,6 +267,7 @@ export class Renderer {
     if (!this.lod) {
       const storages = new Set(visible.filter((b) => b.type === 'storage').map((b) => world.storageGroup(b)[0]));
       for (const leader of storages) this.drawStorageInfo(world, leader);
+      if (world.piles.length) this.drawPiles(world, x0, y0, x1, y1);
     }
     // 트럭은 건물 위에 (도로 옆 정류장에 서 있을 때도 보이게). 같은 칸에 서 있는 트럭들은 도로를 따라 줄 세워 그린다
     const spots = world.truckSpots();
@@ -1001,14 +1002,74 @@ export class Renderer {
         this.blit('sawmill', anim(working, 12), sx, sy);
         plate(world.recipeOf(b)?.outputs[0].item);
         break;
+      case 'chem-reactor':
+      case 'electrolyzer':
+        this.blit(b.type, anim(working), sx, sy);
+        plate(world.recipeOf(b)?.outputs[0].item);
+        break;
+      case 'refinery':
+      case 'large-assembler': {
+        this.blit(b.type, anim(working), sx, sy);
+        const item = world.recipeOf(b)?.outputs[0].item;
+        if (item) this.blit(`item:${item}`, 0, sx + MACHINE3.plate.x * u, sy + MACHINE3.plate.y * u);
+        break;
+      }
     }
 
-    if (HAS_PORTS.includes(b.type)) this.drawPorts(b.type, b.dir, sx, sy, b.stationMode);
+    if (b.def.ports) this.drawPortTiles(b, sx, sy);
+    else if (HAS_PORTS.includes(b.type)) this.drawPorts(b.type, b.dir, sx, sy, b.stationMode);
+    // 자동화 설비 모듈: 윗면 오른쪽 위에 보라 표식 (분리 예약이면 깜빡)
+    if (b.module && (!b.detach || Math.floor(t * 2) % 2 === 0)) {
+      const mx = b.size * TILE - 7;
+      this.artRect(sx, sy, mx, 2, 5, 5, PAL.ink);
+      this.artRect(sx, sy, mx + 1, 3, 3, 3, b.modBatch ? '#b48cf2' : '#8f5fd9');
+    }
 
     // 진행 막대
     if (b.crafting) {
       const p = Math.min(1, b.progress / world.craftTime(b));
-      this.drawBar(sx, sy, p, b.status === 'low-power' ? '#e8c547' : PAL.green);
+      this.drawBar(sx, sy, p, b.status === 'low-power' ? '#e8c547' : PAL.green, b.size === 3 ? MACHINE3.bar : MACHINE.bar);
+    }
+  }
+
+  /** 현지 회수 더미: 칸 오른쪽 아래에 상자와 가장 많은 아이템 (건물 위에 덧그려 가려지지 않게) */
+  private drawPiles(world: World, x0: number, y0: number, x1: number, y1: number): void {
+    for (const [tile, total] of world.pileTiles()) {
+      const x = tile % world.width;
+      const y = Math.floor(tile / world.width);
+      if (x < x0 || y < y0 || x > x1 || y > y1 || total <= 0) continue;
+      const [sx, sy] = this.cam.worldToScreen(x, y);
+      let top: ItemId | null = null;
+      let max = 0;
+      for (const [item, n] of world.pileAt(tile)) if (n > max) [top, max] = [item, n];
+      this.artRect(sx, sy, 5, 5, 11, 11, PAL.ink);
+      this.artRect(sx, sy, 6, 6, 9, 9, '#c9a46a');
+      if (top) this.blit(`item:${top}`, 0, sx + 6 * this.u, sy + 6 * this.u);
+    }
+  }
+
+  /** 지정 칸 입출구가 있는 새 설비: 입구 칸마다 안쪽 화살표, 출구 칸마다 바깥 화살표 (그 칸과 맞닿은 테두리에) */
+  private drawPortTiles(b: Building, sx: number, sy: number): void {
+    const ctx = this.ctx;
+    const u = this.u;
+    const S = b.size;
+    for (const kind of ['in', 'out'] as const) {
+      const s = sprite(kind === 'in' ? 'arrow-in' : 'arrow-out');
+      if (!s) continue;
+      for (const [x, y] of portTiles(b, kind)) {
+        const lx = x - b.x;
+        const ly = y - b.y;
+        // 칸이 몸체의 어느 쪽에 붙었는지: 0 위, 1 오른쪽, 2 아래, 3 왼쪽
+        const side = ly < 0 ? 0 : lx >= S ? 1 : ly >= S ? 2 : 3;
+        const cx = (side === 1 ? S : side === 3 ? 0 : lx + 0.5) * TILE;
+        const cy = (side === 2 ? S : side === 0 ? 0 : ly + 0.5) * TILE;
+        ctx.save();
+        ctx.translate(sx + cx * u, sy + cy * u);
+        ctx.rotate((side * Math.PI) / 2);
+        if (kind === 'in') ctx.scale(1, -1);
+        ctx.drawImage(s.img, 0, 0, s.w, s.h, (-s.w / 2) * u, -2 * u, s.w * u, s.h * u);
+        ctx.restore();
+      }
     }
   }
 

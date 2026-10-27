@@ -43,6 +43,10 @@ const ROTATABLE: BuildingType[] = [
   'electric-furnace',
   'lumberjack',
   'sawmill',
+  'chem-reactor',
+  'refinery',
+  'electrolyzer',
+  'large-assembler',
 ];
 /**
  * 마우스 중심 조작.

@@ -564,6 +564,105 @@ define('electric-furnace', 32, 32, 5, (p, f) => {
   mouth(p, 16, 20, 12, 5, f, glow);
 });
 
+// ───────────────────────── 지역 생산망 확장 설비 ─────────────────────────
+
+/** 3×3 기계 몸체 (윗면 y 2~30 / 앞면 y 31~44) + 앞면 왼쪽 이름표 (안쪽 8×8은 MACHINE3.plate) */
+function bigMachine(p: Pen, top: Ramp, face: Ramp): void {
+  block(p, 1, 1, 46, 45, top, face, 14);
+  p.rect(3, 34, 10, 10, PAL.ink);
+  p.rect(4, 35, 8, 8, CREAM);
+  p.rect(4, 42, 8, 1, '#ddcca6');
+}
+
+/** 3×3 기계의 덧그림 자리 (2×2의 MACHINE과 같은 뜻) */
+export const MACHINE3 = {
+  plate: { x: 4, y: 35 },
+  bar: { x: 15, y: 40, w: 29 },
+};
+
+define('chem-reactor', 32, 32, 5, (p, f) => {
+  const green = ramp('#5f9a6a');
+  machine(p, green, IRON);
+  // 반응 탱크 둘: 일하면 거품이 오른다
+  for (const [cx, c] of [
+    [10.5, '#e8dcb0'],
+    [21.5, '#d8e05a'],
+  ] as const) {
+    p.disc(cx, 10.5, 6.5, PAL.ink);
+    p.disc(cx, 10.5, 5.5, PAL.metal.mid);
+    p.disc(cx, 10.5, 4, c);
+    p.px(Math.floor(cx) - 2, 8, '#ffffff');
+    if (f) for (let k = 0; k < 3; k++) p.px(Math.floor(cx) - 2 + ((f + k * 2) % 5), 12 - ((f + k) % 4), tone(c, 0.4));
+  }
+  p.rect(15, 9, 2, 3, PAL.metal.lo);
+  for (const [x, y] of [[3, 3], [27, 3]]) bolt(p, x, y, IRON);
+  // 앞면 밸브
+  for (const x of [17, 23]) {
+    p.disc(x + 1.5, 23.5, 2.5, PAL.ink);
+    p.disc(x + 1.5, 23.5, 1.5, f ? PAL.red : '#a0463a');
+  }
+});
+
+define('electrolyzer', 32, 32, 5, (p, f) => {
+  machine(p, ramp('#7a8fb0'), IRON);
+  // 전해조: 두 전극 사이에 일하면 불꽃
+  p.rect(4, 4, 24, 13, PAL.ink);
+  p.rect(5, 5, 22, 11, '#3f5a7a');
+  p.rect(5, 5, 22, 2, '#5f7fa5');
+  for (const x of [9, 21]) {
+    p.rect(x, 3, 3, 12, PAL.ink);
+    p.rect(x + 1, 4, 1, 10, x < 16 ? PAL.brass.mid : PAL.metal.hi);
+  }
+  if (f) for (let k = 0; k < 4; k++) p.px(13 + (hash(f * 3 + k) % 7), 7 + (hash(f * 7 + k) % 6), k % 2 ? '#fff6b0' : '#bfe6ff');
+  for (const [x, y] of [[3, 18], [27, 18]]) bolt(p, x, y, IRON);
+  mouth(p, 16, 20, 12, 5, f, ['#f2fbff', '#bfe6ff', '#6fb6f2']);
+});
+
+define('refinery', 48, 48, 5, (p, f) => {
+  bigMachine(p, ramp('#7a6a5a'), IRON);
+  // 증류탑 셋과 이어진 관
+  for (const [x, h] of [
+    [6, 24],
+    [18, 20],
+    [30, 26],
+  ] as const) {
+    p.rect(x, 30 - h, 9, h, PAL.ink);
+    p.rect(x + 1, 31 - h, 7, h - 2, PAL.metal.mid);
+    p.rect(x + 1, 31 - h, 2, h - 2, PAL.metal.hi);
+    p.rect(x + 6, 31 - h, 1, h - 2, PAL.metal.lo);
+    for (let y = 33 - h; y < 28; y += 5) p.rect(x + 1, y, 7, 1, PAL.metal.lo);
+  }
+  p.rect(14, 12, 5, 2, PAL.ink);
+  p.rect(26, 10, 5, 2, PAL.ink);
+  // 굴뚝 불꽃
+  if (f) {
+    const fire = ['#fff3b0', '#f6b13f', '#d9542c'];
+    for (let k = 0; k < 3; k++) p.px(33 + k + (f % 2), 2 + ((f + k) % 2), fire[k]);
+  }
+  for (const [x, y] of [[42, 33], [42, 41]]) bolt(p, x, y, IRON);
+});
+
+define('large-assembler', 48, 48, 5, (p, f) => {
+  bigMachine(p, ramp('#8a6fb0'), PAL.wood);
+  for (const [x, y] of [[3, 3], [43, 3], [3, 27], [43, 27]]) bolt(p, x, y, IRON);
+  const t = f ? f - 1 : 0;
+  // 큰 톱니 둘과 가운데 조립대 위의 팔
+  shapeAround(p, 13.5, 14.5, 9.5, gearFill(13.5, 14.5, 9.5, 10, (t * TAU) / 10, PAL.brass));
+  shapeAround(p, 33.5, 20.5, 7.5, gearFill(33.5, 20.5, 7.5, 8, (-t * TAU) / 8 + 0.2, PAL.metal));
+  p.rect(26, 4, 16, 6, PAL.ink);
+  p.rect(27, 5, 14, 4, PAL.metal.mid);
+  p.rect(27, 5, 14, 1, PAL.metal.hi);
+  const arm = 28 + ((t * 3) % 10);
+  p.rect(arm, 9, 3, 6, PAL.ink);
+  p.rect(arm + 1, 10, 1, 4, PAL.brass.hi);
+  // 앞면 서랍
+  for (const x of [17, 26, 35]) {
+    p.rect(x, 35, 7, 5, PAL.ink);
+    p.rect(x + 1, 36, 5, 3, PAL.wood.hi);
+    p.px(x + 3, 37, PAL.brass.lo);
+  }
+});
+
 define('pump', 32, 32, 5, (p, f) => {
   machine(p, PAL.metal, ramp('#4f7fae'));
   // 우물: 일하면 물결이 퍼진다

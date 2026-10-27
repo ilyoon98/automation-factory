@@ -6,6 +6,7 @@ import { Renderer, type OtherPlayer, type PingMark } from './render/renderer';
 import { addForests, addLakes, generateWorld } from './sim/mapgen';
 import type { Command, PlaceResult, ResultOf } from './sim/commands';
 import { DT, World } from './sim/world';
+import { ITEM_IDS } from './data/items';
 import { Chat } from './ui/chat';
 import { uiZoom } from './ui/crisp';
 import { Minimap } from './ui/minimap';
@@ -13,7 +14,23 @@ import { sound } from './ui/sound';
 import { UI, type GameApi } from './ui/ui';
 import { setupUpdateBanner } from './ui/update';
 
-const SAVE_KEY = 'automation-game/save-v1';
+/**
+ * 개발용 지역 생산망 확장 세계 (주소 끝에 ?regional-dev). 확장 지도·지역 전력이 아직 없어 기존 지도에 regional-v1 규칙만 얹는다.
+ * 모든 연구를 마치고 허브 재고를 채운 시험용 세계라 평소 저장과 섞이지 않게 따로 저장한다
+ */
+const REGIONAL_DEV = new URLSearchParams(location.search).has('regional-dev');
+const SAVE_KEY = REGIONAL_DEV ? 'automation-game/save-regional-dev' : 'automation-game/save-v1';
+
+/** 새 세계 (개발용 regional-dev면 확장 규칙·연구 완료·재고) */
+function newWorld(): World {
+  const w = generateWorld((Math.random() * 2 ** 31) | 0);
+  if (REGIONAL_DEV) {
+    w.rules = 'regional-v1';
+    for (const t of w.techs) w.applyTech(t.id);
+    for (const item of ITEM_IDS) w.stock.set(item, 500);
+  }
+  return w;
+}
 const AUTOSAVE_SEC = 30;
 
 function loadWorld(): World | null {
@@ -38,7 +55,7 @@ const camera = new Camera();
 const renderer = new Renderer(canvas);
 
 const loaded = loadWorld();
-let world = loaded ?? generateWorld((Math.random() * 2 ** 31) | 0);
+let world = loaded ?? newWorld();
 let lastSpeed = 1;
 const minimap = new Minimap(document.getElementById('minimap') as HTMLCanvasElement, () => world, camera);
 
@@ -68,7 +85,7 @@ const session = new Session({
   },
   restoreOwnWorld() {
     // 손님으로 있는 동안 내 저장은 건드리지 않았으므로 그대로 불러오면 된다
-    world = loadWorld() ?? generateWorld((Math.random() * 2 ** 31) | 0);
+    world = loadWorld() ?? newWorld();
     game.input.selectedId = null;
     game.input.selectedVehicle = null;
     game.input.tool = null;
@@ -176,7 +193,7 @@ const game: GameApi = {
       return;
     }
     backupWorld();
-    world = generateWorld((Math.random() * 2 ** 31) | 0);
+    world = newWorld();
     game.input.selectedId = null;
     game.input.tool = null;
     centerOnHub();
@@ -228,7 +245,7 @@ const game: GameApi = {
 };
 
 /** 새 게임·파일 불러오기·되돌리기로 공장이 통째로 바뀌기 바로 전의 공장 (한 칸만) */
-const BACKUP_KEY = 'automation-game/save-backup';
+const BACKUP_KEY = REGIONAL_DEV ? 'automation-game/save-regional-dev-backup' : 'automation-game/save-backup';
 let hasBackup = (() => {
   try {
     return localStorage.getItem(BACKUP_KEY) !== null;

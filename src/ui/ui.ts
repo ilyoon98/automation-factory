@@ -24,6 +24,8 @@ import { RECIPES, recipesFor, type MachineKind } from '../data/recipes';
 import { ENDLESS_BY_ID, ENDLESS_REQUIRES, ENDLESS_TECHS, TECH_CATEGORIES, endlessCost, type RuleProfile, type TechCategory } from '../data/tech';
 import type { Input } from '../input/input';
 import { DAY_SEC, ambientEnabled, setAmbientEnabled, skyLabel } from '../render/ambient';
+import { TERRAIN } from '../data/terrain';
+import { LOCAL_WEATHER_LABEL } from '../sim/weather-v1';
 import { lanRoomCheck, type Session } from '../net/session';
 import { VERSION } from '../version';
 import { STATUS_LABEL, countOf, type Building, type StationMode, type Status } from '../sim/building';
@@ -74,6 +76,8 @@ export interface GameApi {
   readonly hasBackup: boolean;
   /** 화면 가운데를 그 칸 좌표로 옮긴다 */
   focus(x: number, y: number): void;
+  /** 지금 화면 가운데 칸 좌표 */
+  readonly center: { x: number; y: number };
   /** 지도 켜고 끄기 */
   readonly mapShown: boolean;
   toggleMap(): void;
@@ -707,7 +711,7 @@ export class UI {
     const t = Math.floor(w.time);
     const time = `${Math.floor(t / 60)}:${String(t % 60).padStart(2, '0')}`;
     // 하늘 아이콘 (낮·해 질 녘·밤·흐림·비). 태양광·풍력 출력이 하늘을 따르니 화면 효과를 꺼도 보인다
-    const sky = skyLabel(w.seed, w.time);
+    const sky = w.regional ? this.regionalSky(w) : skyLabel(w.seed, w.time);
     $('clock').textContent = `${sky.icon} ${time}`;
     $('clock').title = `${sky.text} · 게임 시간 ${time} (하루 ${DAY_SEC / 60}분) · 태양광 ${Math.round(w.solarOutput())}kW · 풍력 ${Math.round(w.windOutput())}kW (한 대)`;
     document.querySelectorAll<HTMLButtonElement>('#topbar [data-speed]').forEach((btn) => {
@@ -816,6 +820,22 @@ export class UI {
       <div class="row"><span>기계 속도</span><b style="color:${color}">${pct}%</b></div>
       ${parts.length > 1 ? `<p class="muted power-src">${parts.join(' · ')} kW</p>` : ''}
       ${p.charge > 0 ? `<p class="muted power-src">사용 중 ${Math.round(p.charge)} kW는 트럭 충전</p>` : ''}`;
+  }
+
+  /** regional-v1: 화면 가운데 지형의 지금 날씨 (예보 없이 지금 영향만) */
+  private regionalSky(w: World): { icon: string; text: string } {
+    const cam = this.game.center;
+    const x = Math.max(0, Math.min(w.width - 1, Math.floor(cam.x)));
+    const y = Math.max(0, Math.min(w.height - 1, Math.floor(cam.y)));
+    const t = w.terrainAt(w.idx(x, y));
+    const lw = w.localWeather(t);
+    const base = skyLabel(w.seed, w.time);
+    const icon = { clear: base.icon, cloudy: '⛅', fog: '🌫️', rain: '🌧️', snow: '🌨️', sandstorm: '🌪️', storm: '⛈️' }[lw.kind];
+    const fx = lw.fx;
+    return {
+      icon,
+      text: `${TERRAIN[t].name} · ${LOCAL_WEATHER_LABEL[lw.kind]} (트럭 ×${fx.truck.toFixed(2)} · 태양광 ×${fx.solar.toFixed(2)} · 풍력 ${Math.round(fx.wind * TERRAIN[t].wind)}kW/대) · ${base.text}`,
+    };
   }
 
   /** regional-v1: 전력 구역마다 수요·공급·송전·축전·충전 (누르면 그 구역으로) */

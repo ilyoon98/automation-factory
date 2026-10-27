@@ -184,6 +184,9 @@ const game: GameApi = {
     minimap.toggle();
     ui.update();
   },
+  get center() {
+    return { x: camera.x, y: camera.y };
+  },
   focus(x: number, y: number) {
     camera.x = x;
     camera.y = y;

@@ -1472,7 +1472,7 @@ export class Renderer {
     const dpr = this.dpr;
     const dark = darkness(world.time);
     const glow = sunset(world.time);
-    const sky = weatherAt(world.seed, world.time);
+    const sky = this.skyFor(world);
     const W = this.canvas.width;
     const H = this.canvas.height;
     ctx.save();
@@ -1483,9 +1483,11 @@ export class Renderer {
       ctx.fillStyle = `rgba(255,140,70,${(0.13 * glow).toFixed(3)})`;
       ctx.fillRect(0, 0, W, H);
     }
-    // 흐림·비: 잿빛
+    // 흐림·비: 잿빛 (확장 지도의 모래 바람은 누런빛, 눈·안개는 하얀빛)
     if (sky.cloud > 0) {
-      ctx.fillStyle = `rgba(70,80,95,${(0.16 * sky.cloud + 0.08 * sky.rain).toFixed(3)})`;
+      ctx.fillStyle = sky.tint
+        ? `rgba(${sky.tint},${(0.18 * sky.cloud).toFixed(3)})`
+        : `rgba(70,80,95,${(0.16 * sky.cloud + 0.08 * sky.rain).toFixed(3)})`;
       ctx.fillRect(0, 0, W, H);
     }
 
@@ -1545,8 +1547,8 @@ export class Renderer {
     while (this.drops.length < want) this.drops.push({ x: Math.random(), y: Math.random(), s: 0.7 + Math.random() * 0.6 });
     if (this.drops.length > want) this.drops.length = want;
     if (this.drops.length) {
-      // 밝은 모래 위에서도 보이게 진한 푸른 회색 (밤에는 조금 밝게)
-      ctx.strokeStyle = dark > 0.5 ? 'rgba(170,190,225,0.5)' : 'rgba(70,95,140,0.5)';
+      // 밝은 모래 위에서도 보이게 진한 푸른 회색 (밤에는 조금 밝게). 눈은 흰 송이, 모래 바람은 누런 줄
+      ctx.strokeStyle = sky.snow ? 'rgba(255,255,255,0.85)' : sky.sand ? 'rgba(170,130,70,0.45)' : dark > 0.5 ? 'rgba(170,190,225,0.5)' : 'rgba(70,95,140,0.5)';
       ctx.lineWidth = Math.max(1.5, 1.5 * dpr);
       ctx.beginPath();
       for (const d of this.drops) {
@@ -1559,13 +1561,30 @@ export class Renderer {
         if (d.x < -0.05) d.x += 1.1;
         const x = d.x * W;
         const y = d.y * H;
-        const len = 14 * d.s * dpr;
+        const len = (sky.snow ? 3 : 14) * d.s * dpr;
         ctx.moveTo(x, y);
-        ctx.lineTo(x + len * 0.25, y - len);
+        if (sky.sand) ctx.lineTo(x + len, y - len * 0.1);
+        else ctx.lineTo(x + len * 0.25, y - len);
       }
       ctx.stroke();
     }
     ctx.restore();
+  }
+
+  /**
+   * 화면에 보일 날씨. 예전 지도는 세계 하나의 180초 날씨, 확장 지도는 화면 가운데 지형의 현지 날씨
+   * (비는 눈밭에서 눈, 사막·염호에서 모래 바람). 시뮬레이션과 같은 값을 쓴다
+   */
+  private skyFor(world: World): { cloud: number; rain: number; tint?: string; snow?: boolean; sand?: boolean } {
+    if (!world.regional) return weatherAt(world.seed, world.time);
+    const x = Math.max(0, Math.min(world.width - 1, Math.floor(this.cam.x)));
+    const y = Math.max(0, Math.min(world.height - 1, Math.floor(this.cam.y)));
+    const lw = world.localWeather(world.terrainAt(world.idx(x, y)));
+    const s = lw.strength;
+    const cloud = { clear: 0, cloudy: 0.6, fog: 0.9, rain: 1, snow: 0.8, sandstorm: 0.9, storm: 1.2 }[lw.kind] * s;
+    const rain = lw.kind === 'rain' || lw.kind === 'storm' || lw.kind === 'snow' || lw.kind === 'sandstorm' ? (lw.kind === 'storm' ? 1.4 : 1) * s : 0;
+    const tint = lw.kind === 'sandstorm' ? '190,150,90' : lw.kind === 'snow' || lw.kind === 'fog' ? '235,240,245' : undefined;
+    return { cloud, rain, tint, snow: lw.kind === 'snow', sand: lw.kind === 'sandstorm' };
   }
 
   /** 목표가 가리키는 곳: 핑과 같은 모양 (화면 밖이면 가장자리 화살표), 사라지지 않는다 */

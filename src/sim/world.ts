@@ -1134,6 +1134,8 @@ export class World {
 
   /** 지금 하는 작업 1회에 걸리는 시간 (초) */
   craftTime(b: Building): number {
+    // 양수기는 비·폭풍에 더 많이 퍼 올린다 (전력도 그만큼)
+    if (b.type === 'pump' && this.regional) return 1 / ((b.def.speed ?? 1) * this.boost('endless-mining') * this.weatherEffect(this.refTile(b)).pump);
     if (isMinerType(b.type)) return 1 / ((b.def.speed ?? 1) * this.boost('endless-mining'));
     if (b.type === 'drill') return EXTRACT.drillTime / this.boost('endless-mining');
     if (b.type === 'sap-extractor') {
@@ -1149,7 +1151,8 @@ export class World {
 
   /** 작동 중 전력 (kW). 모듈을 쓰는 배치는 1.25배 */
   workPower(b: Building): number {
-    return b.def.power * (b.modBatch ? MODULE.power : 1);
+    const pump = b.type === 'pump' && this.regional ? this.weatherEffect(this.refTile(b)).pump : 1;
+    return b.def.power * (b.modBatch ? MODULE.power : 1) * pump;
   }
 
   /** 끝없는 연구로 빨라진 배율 (1 = 그대로, 3단계면 1.3) */
@@ -3592,7 +3595,8 @@ export class World {
       }
     }
     const empty = v.battery <= 0;
-    const full = this.truckSpeed(v) * DT * (empty ? TRUCK.emptySpeed : 1);
+    // regional-v1: 지금 바퀴가 있는 칸의 날씨만큼 느려진다 (칸당 전기는 그대로)
+    const full = this.truckSpeed(v) * DT * (empty ? TRUCK.emptySpeed : 1) * this.weatherEffect(v.tile).truck;
     const [arrived, left] = this.move(v, st, full);
     // 한 칸에 drive / speed kJ (기본 속도 기준: 빨라져도 칸당 드는 전기는 같다)
     v.battery = Math.max(0, v.battery - (full - left) * this.truckPerTile(v));

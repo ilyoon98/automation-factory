@@ -46,6 +46,10 @@ export type Command =
   | { t: 'power-link'; id: number; target: number }
   /** 계획 운송: 품목별 1회 상한, 정기편 주기(초, 0 = 예전 방식), 조기 출발 */
   | { t: 'truck-plan'; id: number; plan: { item: ItemId; cap: number }[]; period: number; early: boolean }
+  /** 계획 운송 노선 일시정지 (새 편을 싣지 않음) */
+  | { t: 'truck-pause'; id: number; on: boolean }
+  /** 트럭 화물을 지금 칸의 회수 더미에 내려놓기 */
+  | { t: 'truck-dump'; id: number }
   /** 정류장 연결 창고 (닿은 창고 id, 0 = 없음) */
   | { t: 'station-dock'; id: number; storage: number }
   /** 정류장 목표 재고 (0 = 지우기) */
@@ -95,6 +99,8 @@ export interface CommandResults {
   project: boolean;
   'truck-plan': boolean;
   'station-dock': boolean;
+  'truck-pause': boolean;
+  'truck-dump': boolean;
   'station-target': boolean;
   undo: { ops: EditOp[]; skipped: number } | null;
   redo: { ops: EditOp[]; skipped: number } | null;
@@ -220,6 +226,16 @@ function run(w: World, c: Command): CommandResults[Command['t']] {
       const plan = Array.isArray(c.plan) ? c.plan.filter((p) => Object.hasOwn(ITEMS, p?.item) && Number.isInteger(p.cap) && p.cap > 0) : null;
       if (!v || !plan || ![0, 60, 120, 180, 240].includes(c.period)) return false;
       return w.setPlan(v, plan, c.period, !!c.early);
+    }
+    case 'truck-pause': {
+      const v = w.vehicles.get(c.id);
+      if (!v) return false;
+      v.paused = !!c.on;
+      return true;
+    }
+    case 'truck-dump': {
+      const v = w.vehicles.get(c.id);
+      return !!v && w.dumpCargo(v);
     }
     case 'station-dock': {
       const b = w.buildings.get(c.id);

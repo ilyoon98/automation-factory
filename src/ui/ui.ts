@@ -120,6 +120,7 @@ const VEHICLE_STATUS_COLOR: Record<VehicleStatus, string> = {
   'no-supply': '#b7791f',
   satisfied: '#3f8a3a',
   returning: '#e8893a',
+  paused: '#8a7a66',
 };
 
 /** 트럭이 멈춰 있을 때 할 일 */
@@ -1788,7 +1789,7 @@ export class UI {
       : homes.length
         ? w.canBuildTruck(homes[0])
         : { ok: false, reason: '정류장을 먼저 골라 주세요' };
-    const key = `v${v.id}|${v.stops.map((st) => `${st.id}${st.act}${st.item ?? ''}`).join(',')}|${w.endlessLevel('endless-truck')}|${stations.map((s) => `${s.id}${s.stationMode}`).join(',')}|${clone.reason ?? ''}|${JSON.stringify(v.plan)}${v.period}${v.early}|${this.planRows.get(v.id) ?? ''}`;
+    const key = `v${v.id}|${v.stops.map((st) => `${st.id}${st.act}${st.item ?? ''}`).join(',')}|${w.endlessLevel('endless-truck')}|${stations.map((s) => `${s.id}${s.stationMode}`).join(',')}|${clone.reason ?? ''}|${JSON.stringify(v.plan)}${v.period}${v.early}${v.paused}|${this.planRows.get(v.id) ?? ''}`;
     if (key !== this.infoKey) {
       this.infoKey = key;
       const opt = (sel: number) =>
@@ -1828,6 +1829,12 @@ export class UI {
           <button data-act="stop-add" ${v.stops.length >= ROUTE_MAX ? 'disabled' : ''}>+ 정류장 더하기 <span class="muted">(최대 ${ROUTE_MAX}곳)</span></button>
         </div>
         ${w.regional ? this.planBlock(w, v) : ''}
+        ${
+          w.regional
+            ? `<div class="actions">${v.plan.length ? `<button data-act="plan-pause">${v.paused ? '▶ 노선 다시 운행' : '⏸ 노선 일시정지'}</button>` : ''}
+            <button data-act="truck-dump" title="실은 화물을 지금 자리의 회수 더미에 내려요 (하역기로 다시 꺼낼 수 있어요)">📦 화물 내려놓기</button></div>`
+            : ''
+        }
         <div class="dyn"></div>
         <div class="actions">
           ${
@@ -1943,6 +1950,9 @@ export class UI {
           this.update();
         });
       }
+      if (act === 'plan-pause') this.game.exec({ t: 'truck-pause', id: v.id, on: !v.paused });
+      if (act === 'truck-dump')
+        this.game.exec({ t: 'truck-dump', id: v.id }, (ok) => this.toast(ok ? '화물을 이 자리 회수 더미에 내려놨어요' : '내려놓을 화물이 없어요', 2500));
       if (act === 'plan-row') this.planRows.set(v.id, (this.planRows.get(v.id) ?? Math.max(1, v.plan.length)) + 1);
       if (act === 'plan-clear') {
         this.game.exec({ t: 'truck-plan', id: v.id, plan: [], period: 0, early: false });

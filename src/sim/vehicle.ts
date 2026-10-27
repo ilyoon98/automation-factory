@@ -32,7 +32,8 @@ export type VehicleStatus =
   | 'scheduled'
   | 'no-supply'
   | 'satisfied'
-  | 'returning';
+  | 'returning'
+  | 'paused';
 
 export const VEHICLE_STATUS_LABEL: Record<VehicleStatus, string> = {
   moving: '달리는 중',
@@ -49,6 +50,7 @@ export const VEHICLE_STATUS_LABEL: Record<VehicleStatus, string> = {
   'no-supply': '출발지 재료 부족',
   satisfied: '수요 충족 (빈 편 생략)',
   returning: '반송 중',
+  paused: '노선 일시정지',
 };
 
 /** 차량 종류 이름 */
@@ -121,6 +123,8 @@ export class Vehicle {
   returning = false;
   /** 품목 차례 (예약·하역을 돌려 가며 공정하게) */
   planTurn = 0;
+  /** 노선 일시정지: 새 편을 싣지 않는다 */
+  paused = false;
   /** 마지막으로 짐을 실은 정류장과 그 전력 구역 (다른 곳에 내리면 배송 실적) */
   fromStation = 0;
   fromZone = 0;

@@ -152,6 +152,72 @@ describe('연결 창고와 계획 적재', () => {
     expect(w.reservations).toEqual([]);
   });
 
+  it('가는 도중 목적지 정류장을 철거하면 실은 화물을 출발지로 반송한다 (배송 실적 없음)', () => {
+    const { w, a, b, v } = yard();
+    a.inBuf.set('motor', 20);
+    applyCommand(w, 0, { t: 'truck-plan', id: v.id, plan: [{ item: 'motor', cap: 20 }], period: 0, early: false });
+    runUntil(w, () => v.stop === 1);
+    run(w, 0.5);
+    w.remove(b);
+    expect(w.reservations.filter((r) => r.dir === 'in')).toEqual([]);
+    runUntil(w, () => v.load === 0, 30);
+    expect(pool(w, a, 'motor')).toBe(20);
+    expect(w.stats.delivered).toBe(0);
+    expect(v.returning).toBe(false);
+  });
+
+  it('목적지를 싣기 정류장으로 바꾸면 계약이 끝나고 반송한다', () => {
+    const { w, a, b, v } = yard();
+    a.inBuf.set('motor', 20);
+    applyCommand(w, 0, { t: 'truck-plan', id: v.id, plan: [{ item: 'motor', cap: 20 }], period: 0, early: false });
+    runUntil(w, () => v.stop === 1);
+    w.setStationMode(b, 'load');
+    runUntil(w, () => v.load === 0 && v.stop === 0, 40);
+    expect(pool(w, a, 'motor')).toBe(20);
+    expect(countOf(b.inBuf, 'motor')).toBe(0);
+  });
+
+  it('일시정지: 실은 화물은 한 번 배송하고, 그다음은 빈 차로 기다린다', () => {
+    const { w, a, b, v } = yard();
+    a.inBuf.set('motor', 100);
+    applyCommand(w, 0, { t: 'truck-plan', id: v.id, plan: [{ item: 'motor', cap: 20 }], period: 0, early: false });
+    runUntil(w, () => v.stop === 1);
+    expect(applyCommand(w, 0, { t: 'truck-pause', id: v.id, on: true })).toBe(true);
+    run(w, 40);
+    expect(pool(w, b, 'motor')).toBe(20);
+    expect(v.load).toBe(0);
+    expect(v.status).toBe('paused');
+    expect(w.reservations).toEqual([]);
+    applyCommand(w, 0, { t: 'truck-pause', id: v.id, on: false });
+    runUntil(w, () => v.load > 0, 20);
+  });
+
+  it('화물 내려놓기: 지금 칸의 회수 더미로, 예약은 끝', () => {
+    const { w, a, v } = yard();
+    a.inBuf.set('motor', 20);
+    applyCommand(w, 0, { t: 'truck-plan', id: v.id, plan: [{ item: 'motor', cap: 20 }], period: 0, early: false });
+    runUntil(w, () => v.stop === 1);
+    run(w, 1);
+    const tile = v.tile;
+    expect(applyCommand(w, 0, { t: 'truck-dump', id: v.id })).toBe(true);
+    expect(v.load).toBe(0);
+    expect(w.pileCount(tile, 'motor')).toBe(20);
+    expect(w.reservations).toEqual([]);
+  });
+
+  it('길이 끊기면 목적지 입고 예약을 풀어 공간을 잠그지 않는다', () => {
+    const { w, a, b, v } = yard();
+    a.inBuf.set('motor', 20);
+    applyCommand(w, 0, { t: 'truck-plan', id: v.id, plan: [{ item: 'motor', cap: 20 }], period: 0, early: false });
+    runUntil(w, () => v.stop === 1);
+    expect(w.inReserved(b)).toBe(20);
+    for (let x = 17; x <= 19; x++) w.remove(w.buildingAt(x, 12)!);
+    run(w, 3);
+    expect(v.status).toBe('no-route');
+    expect(w.inReserved(b)).toBe(0);
+    expect(v.load).toBe(20);
+  });
+
   it('정기편 120초: 예정 시각 10초 전부터 싣고, 예정 시각에 떠난다', () => {
     const { w, a, v } = yard();
     a.inBuf.set('motor', 100);

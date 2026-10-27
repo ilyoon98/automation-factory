@@ -44,6 +44,12 @@ export type Command =
   | { t: 'build-adv-truck'; rid: string; station: number; key: string; copy?: number }
   /** 송전: 보내는 터미널 id → 받는 터미널 target (0 = 끊기) */
   | { t: 'power-link'; id: number; target: number }
+  /** 계획 운송: 품목별 1회 상한, 정기편 주기(초, 0 = 예전 방식), 조기 출발 */
+  | { t: 'truck-plan'; id: number; plan: { item: ItemId; cap: number }[]; period: number; early: boolean }
+  /** 정류장 연결 창고 (닿은 창고 id, 0 = 없음) */
+  | { t: 'station-dock'; id: number; storage: number }
+  /** 정류장 목표 재고 (0 = 지우기) */
+  | { t: 'station-target'; id: number; item: ItemId; n: number }
   /** 전력 구역의 차량 충전 예산 (kW, 0~800) */
   | { t: 'zone-budget'; zone: number; kw: number }
   | { t: 'undo' }
@@ -84,6 +90,9 @@ export interface CommandResults {
   'build-adv-truck': UseResult;
   'power-link': UseResult;
   'zone-budget': boolean;
+  'truck-plan': boolean;
+  'station-dock': boolean;
+  'station-target': boolean;
   undo: { ops: EditOp[]; skipped: number } | null;
   redo: { ops: EditOp[]; skipped: number } | null;
 }
@@ -202,6 +211,20 @@ function run(w: World, c: Command): CommandResults[Command['t']] {
     case 'power-link': {
       const b = w.buildings.get(c.id);
       return b ? w.linkTerminals(b, Number(c.target) || 0) : { ok: false, reason: '터미널이 없어요' };
+    }
+    case 'truck-plan': {
+      const v = w.vehicles.get(c.id);
+      const plan = Array.isArray(c.plan) ? c.plan.filter((p) => Object.hasOwn(ITEMS, p?.item) && Number.isInteger(p.cap) && p.cap > 0) : null;
+      if (!v || !plan || ![0, 60, 120, 180, 240].includes(c.period)) return false;
+      return w.setPlan(v, plan, c.period, !!c.early);
+    }
+    case 'station-dock': {
+      const b = w.buildings.get(c.id);
+      return !!b && w.setDock(b, Number(c.storage) || 0);
+    }
+    case 'station-target': {
+      const b = w.buildings.get(c.id);
+      return !!b && Object.hasOwn(ITEMS, c.item) && w.setTarget(b, c.item, Number(c.n));
     }
     case 'zone-budget':
       return w.setZoneBudget(Number(c.zone), Number(c.kw));

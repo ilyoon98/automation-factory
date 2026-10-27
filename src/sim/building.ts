@@ -96,6 +96,12 @@ export class Building {
   send = false;
   cable = 0;
 
+  // 정류장 물류 (regional-v1)
+  /** 연결 창고 (몸체에 닿은 창고 id, 그 창고군 전체를 정류장 풀로 쓴다. 0 = 없음) */
+  dock = 0;
+  /** 목적지 목표 재고 (품목 → 개수). 계획 운송은 부족한 만큼만 요청한다 */
+  targets = new Map<ItemId, number>();
+
   // 발전기
   fuel = 0;
   energy = 0;

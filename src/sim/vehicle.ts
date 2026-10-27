@@ -28,7 +28,11 @@ export type VehicleStatus =
   | 'charging'
   | 'no-battery'
   | 'no-route'
-  | 'no-station';
+  | 'no-station'
+  | 'scheduled'
+  | 'no-supply'
+  | 'satisfied'
+  | 'returning';
 
 export const VEHICLE_STATUS_LABEL: Record<VehicleStatus, string> = {
   moving: '달리는 중',
@@ -41,6 +45,10 @@ export const VEHICLE_STATUS_LABEL: Record<VehicleStatus, string> = {
   'no-battery': '배터리 없음 (천천히)',
   'no-route': '길 없음',
   'no-station': '정류장을 골라 주세요',
+  scheduled: '다음 편 기다리는 중',
+  'no-supply': '출발지 재료 부족',
+  satisfied: '수요 충족 (빈 편 생략)',
+  returning: '반송 중',
 };
 
 /** 차량 종류 이름 */
@@ -98,6 +106,21 @@ export class Vehicle {
   kit: { item: ItemId; from: number } | null = null;
   /** 고급 트럭을 조립한 정류장. 노선이 없어도 이 정류장 옆 도로에 서 있으면 충전한다 (0 = 없음) */
   home = 0;
+
+  // 계획 운송 (regional-v1, 싣기 → 내리기 두 정류장)
+  /** 품목별 1회 적재 상한 (비어 있으면 예전 방식) */
+  plan: { item: ItemId; cap: number }[] = [];
+  /** 정기편 주기 (초, 0 = 새 짐 없이 5초 뒤 출발하던 방식), 다음 출발 예정 게임 시각, 조기 출발 */
+  period = 0;
+  nextDue = 0;
+  early = false;
+  /** 이번 적재·하역 작업 경과 (초, -1 = 작업 전), 하나도 못 내린 시간 */
+  loadTimer = -1;
+  stuck = 0;
+  /** 목적지에 못 내린 화물을 출발 정류장으로 가져가는 중 */
+  returning = false;
+  /** 품목 차례 (예약·하역을 돌려 가며 공정하게) */
+  planTurn = 0;
 
   constructor(
     readonly id: number,

@@ -113,6 +113,10 @@ const VEHICLE_STATUS_COLOR: Record<VehicleStatus, string> = {
   'no-battery': '#e8893a',
   'no-route': '#c0392b',
   'no-station': '#c0392b',
+  scheduled: '#8a7a66',
+  'no-supply': '#b7791f',
+  satisfied: '#3f8a3a',
+  returning: '#e8893a',
 };
 
 /** 트럭이 멈춰 있을 때 할 일 */
@@ -182,6 +186,8 @@ export class UI {
   private useBusy = new Set<string>();
   /** 기계마다 마지막으로 고른 모듈 공급 창고군 (대표 창고 id), 정류장마다 고른 연결 창고군 (구조 표시, '' = 없음) */
   private moduleSrc = new Map<number, number>();
+  /** 트럭 계획 편집 중인 줄 수 */
+  private planRows = new Map<number, number>();
   private kitSrc = new Map<number, string>();
   private researchKey = '';
   /** 연구 창에서 보고 있는 탭 (처음 열 때 정한다) */
@@ -407,6 +413,11 @@ export class UI {
       // 모듈 공급 창고·고급 트럭 연결 창고 고르기 (명령은 버튼을 눌러야 간다)
       if (sel.dataset.act === 'mod-src') {
         this.moduleSrc.set(b.id, Number(sel.value));
+        this.update();
+        return;
+      }
+      if (sel.dataset.act === 'station-dock') {
+        game.exec({ t: 'station-dock', id: b.id, storage: Number(sel.value) });
         this.update();
         return;
       }
@@ -1032,6 +1043,11 @@ export class UI {
       const t = w.vehicles.get(Number(s.dataset.truckStatus));
       if (t) s.textContent = `· ${VEHICLE_STATUS_LABEL[t.status]} (${t.load}/${w.truckCapacity(t)})`;
     });
+    // 정류장 목표 재고: 현재 · 입고 예정 (매 프레임 숫자만)
+    el.querySelectorAll<HTMLElement>('[data-target-row]').forEach((s) => {
+      const item = s.dataset.targetRow as ItemId;
+      s.textContent = `${w.poolCount(b, item)} · 입고 예정 ${w.inReserved(b, item)}`;
+    });
     // 목록을 다시 만들지 않고 개수만 바꾼다 (고르는 도중에 목록이 흔들리지 않게)
     if (src) {
       el.querySelectorAll<HTMLOptionElement>('select[data-act="filter"] option[data-name]').forEach((o) => {
@@ -1131,6 +1147,7 @@ export class UI {
         ${check.ok ? '' : `<p class="muted">${check.reason}</p>`}</div>`;
       if (w.regional) html += this.advTruckBlock(w, b);
       if (w.regional) html += this.budgetBlock(w, b);
+      if (w.regional) html += this.dockBlock(w, b);
     }
     if (b.type === 'terminal' && w.regional) html += this.terminalBlock(w, b);
     if (b.type === 'charger' && w.regional) html += this.budgetBlock(w, b);
@@ -1207,6 +1224,55 @@ export class UI {
     }
     html += `<button data-act="codex" title="이 건물의 설명·짓는 법·레시피">📖 도감</button>`;
     html += `</div>`;
+    return html;
+  }
+
+  /**
+   * 계획 운송 (확장 세계, 싣기 → 내리기 두 정류장): 품목별 1회 상한, 정기편 주기, 조기 출발.
+   * 고친 뒤 "계획 적용"을 눌러야 명령이 간다 (합계가 적재량을 넘으면 알린다)
+   */
+  private planBlock(w: World, v: Vehicle): string {
+    if (!(v.stops.length === 2 && v.stops[0].act === 'load' && v.stops[1].act === 'unload')) {
+      return '<p class="muted">싣기 → 내리기 두 정류장 노선이면 품목별 계획 운송을 쓸 수 있어요.</p>';
+    }
+    const rows = this.planRows.get(v.id) ?? Math.max(1, v.plan.length);
+    const opts = (sel: string) =>
+      '<option value="">-</option>' + ITEM_IDS.map((i) => `<option value="${i}" ${i === sel ? 'selected' : ''}>${ITEMS[i].name}</option>`).join('');
+    let html = `<div class="route plan"><div class="route-head"><span>운송 계획</span><span class="muted">품목별 한 번에 싣는 최대 (합계 ${w.truckCapacity(v)} 이하)</span></div>`;
+    for (let i = 0; i < rows; i++) {
+      const p = v.plan[i];
+      html += `<div class="line"><select data-plan-item="${i}">${opts(p?.item ?? '')}</select>
+        <input type="number" min="1" max="${w.truckCapacity(v)}" value="${p?.cap ?? 10}" data-plan-cap="${i}" style="width:4em"></div>`;
+    }
+    const per = [0, 60, 120, 180, 240]
+      .map((s) => `<option value="${s}" ${s === v.period ? 'selected' : ''}>${s ? `${s}초마다 정기편` : '새 짐이 없으면 5초 뒤 (예전 방식)'}</option>`)
+      .join('');
+    html += `<button data-act="plan-row">+ 품목</button>
+      <label class="recipe">출발 <select data-plan-period>${per}</select></label>
+      <label><input type="checkbox" data-plan-early ${v.early ? 'checked' : ''}> 다 실으면 예정보다 먼저 출발</label>
+      <div class="actions"><button data-act="plan-apply">계획 적용</button>${v.plan.length ? '<button data-act="plan-clear">계획 끄기</button>' : ''}</div>
+      <p class="muted">목적지 정류장에 목표 재고를 정하면 모자란 만큼만 실어요. 실을 때 출발지 재고와 목적지 공간을 예약해서 다른 트럭과 겹치지 않아요.</p></div>`;
+    return html;
+  }
+
+  /** 정류장 연결 창고와 목표 재고 (확장 세계) */
+  private dockBlock(w: World, b: Building): string {
+    const groups = w.touchingStorageGroups(b);
+    let html = `<label class="recipe">연결 창고 <select data-act="station-dock"><option value="0">없음 (정류장만)</option>${groups
+      .map((g) => {
+        const rep = g.group.find((s) => s.id === g.id)!;
+        const sel = w.dockGroup(b).includes(rep);
+        return `<option value="${rep.id}" ${sel ? 'selected' : ''}>창고 묶음 #${g.id} (${g.group.length}동)</option>`;
+      })
+      .join('')}</select></label>`;
+    if (!groups.length) html += '<p class="muted">몸체에 창고를 붙이면 그 창고 묶음을 이 정류장의 보관 풀로 쓸 수 있어요.</p>';
+    html += '<div class="route-head"><span>목표 재고</span><span class="muted">현재 · 입고 예정 / 목표</span></div>';
+    for (const [item, n] of b.targets) {
+      html += `<div class="row"><span>${itemIcon(item)}${ITEMS[item].name}</span><b><span data-target-row="${item}"></span> / ${n}
+        <button data-act="target-del" data-item="${item}" title="목표 지우기">×</button></b></div>`;
+    }
+    html += `<div class="line"><select data-target-item><option value="">품목</option>${ITEM_IDS.map((i) => `<option value="${i}">${ITEMS[i].name}</option>`).join('')}</select>
+      <input type="number" min="1" value="40" data-target-n style="width:4em"><button data-act="target-add">목표 정하기</button></div>`;
     return html;
   }
 
@@ -1300,7 +1366,7 @@ export class UI {
     if (b.type === 'charger') return `${w.zoneOf(b)?.id}:${w.zoneOf(b)?.budget}`;
     if (b.type === 'station') {
       const kit = countOf(b.inBuf, 'truck-kit') + countOf(b.outBuf, 'truck-kit');
-      return `${w.advTruckSupport(b) ?? ''}|${kit}|${groups('truck-kit')}|${this.kitSrc.get(b.id) ?? ''}|${busy}|${w.zoneOf(b)?.id}:${w.zoneOf(b)?.budget}`;
+      return `${w.advTruckSupport(b) ?? ''}|${kit}|${groups('truck-kit')}|${this.kitSrc.get(b.id) ?? ''}|${busy}|${w.zoneOf(b)?.id}:${w.zoneOf(b)?.budget}|${b.dock}|${[...b.targets].join(';')}`;
     }
     return '';
   }
@@ -1656,7 +1722,7 @@ export class UI {
       : homes.length
         ? w.canBuildTruck(homes[0])
         : { ok: false, reason: '정류장을 먼저 골라 주세요' };
-    const key = `v${v.id}|${v.stops.map((st) => `${st.id}${st.act}${st.item ?? ''}`).join(',')}|${w.endlessLevel('endless-truck')}|${stations.map((s) => `${s.id}${s.stationMode}`).join(',')}|${clone.reason ?? ''}`;
+    const key = `v${v.id}|${v.stops.map((st) => `${st.id}${st.act}${st.item ?? ''}`).join(',')}|${w.endlessLevel('endless-truck')}|${stations.map((s) => `${s.id}${s.stationMode}`).join(',')}|${clone.reason ?? ''}|${JSON.stringify(v.plan)}${v.period}${v.early}|${this.planRows.get(v.id) ?? ''}`;
     if (key !== this.infoKey) {
       this.infoKey = key;
       const opt = (sel: number) =>
@@ -1695,6 +1761,7 @@ export class UI {
             .join('')}
           <button data-act="stop-add" ${v.stops.length >= ROUTE_MAX ? 'disabled' : ''}>+ 정류장 더하기 <span class="muted">(최대 ${ROUTE_MAX}곳)</span></button>
         </div>
+        ${w.regional ? this.planBlock(w, v) : ''}
         <div class="dyn"></div>
         <div class="actions">
           ${
@@ -1810,6 +1877,30 @@ export class UI {
           this.update();
         });
       }
+      if (act === 'plan-row') this.planRows.set(v.id, (this.planRows.get(v.id) ?? Math.max(1, v.plan.length)) + 1);
+      if (act === 'plan-clear') {
+        this.game.exec({ t: 'truck-plan', id: v.id, plan: [], period: 0, early: false });
+        this.planRows.delete(v.id);
+      }
+      if (act === 'plan-apply') {
+        const el = $('info');
+        const plan: { item: ItemId; cap: number }[] = [];
+        el.querySelectorAll<HTMLSelectElement>('select[data-plan-item]').forEach((s) => {
+          const cap = Number(el.querySelector<HTMLInputElement>(`input[data-plan-cap="${s.dataset.planItem}"]`)?.value);
+          if (s.value && cap > 0) plan.push({ item: s.value as ItemId, cap: Math.floor(cap) });
+        });
+        const period = Number(el.querySelector<HTMLSelectElement>('select[data-plan-period]')?.value ?? 0);
+        const early = !!el.querySelector<HTMLInputElement>('input[data-plan-early]')?.checked;
+        const total = plan.reduce((a, p) => a + p.cap, 0);
+        const cap = this.game.getWorld().truckCapacity(v);
+        if (total > cap) this.toast(`상한 합계 ${total}개가 한 번에 싣는 ${cap}개보다 많아요. 줄여 주세요`, 3500);
+        else
+          this.game.exec({ t: 'truck-plan', id: v.id, plan, period, early }, (ok) => {
+            this.toast(ok ? (plan.length ? '운송 계획을 적용했어요' : '계획을 껐어요') : '계획을 적용하지 못했어요', 2500);
+            this.planRows.delete(v.id);
+            this.update();
+          });
+      }
       if (act === 'adv-clone') {
         // 조립한 정류장(없으면 노선의 첫 정류장)의 현지 조립품 1개로 한 대 더. 노선(설정)만 베낀다
         const w = this.game.getWorld();
@@ -1873,6 +1964,14 @@ export class UI {
           3000,
         ),
       );
+    }
+    if (act === 'target-add' || act === 'target-del') {
+      const el = $('info');
+      const item = (act === 'target-add'
+        ? el.querySelector<HTMLSelectElement>('select[data-target-item]')?.value
+        : (e.target as HTMLElement).closest<HTMLElement>('[data-item]')?.dataset.item) as ItemId | undefined;
+      const n = act === 'target-add' ? Number(el.querySelector<HTMLInputElement>('input[data-target-n]')?.value) : 0;
+      if (item) this.game.exec({ t: 'station-target', id: b.id, item, n });
     }
     if (act === 'link-go' || act === 'link-cut') {
       const target = act === 'link-go' ? Number(document.querySelector<HTMLSelectElement>('#info select[data-act="link-target"]')?.value) : 0;

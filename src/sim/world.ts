@@ -179,6 +179,15 @@ export interface ZoneState {
   request: number;
 }
 
+/** 운송 예약 한 줄: 트럭 v가 holder에서 item n개를 실기로(out) / 목적지 풀 holder로 n개를 가져오기로(in) */
+export interface Reservation {
+  v: number;
+  holder: number;
+  item: ItemId;
+  n: number;
+  dir: 'in' | 'out';
+}
+
 export interface PileEntry {
   tile: number;
   item: ItemId;
@@ -411,6 +420,8 @@ export class World {
   piles: PileEntry[] = [];
   /** 다음 회수 사건 번호 */
   nextPileEv = 1;
+  /** 운송 예약 (출고: 실제 보관물, 입고: 목적지 정류장 풀). 화물이 아니라 권리 표시라 실물 합계에 더하지 않는다 */
+  reservations: Reservation[] = [];
   /** 처리한 현지 실물 명령: rid → 결과 (중복 수신은 이 결과만 돌려준다). 넣은 순서대로 오래된 것부터 잊는다 */
   doneCmds = new Map<string, UseResult>();
   /** 실제 사건 기록 (목표 판정용): 모듈을 쓴 배치 완료 수, 고급 트럭이 실제로 내린 개수 */
@@ -1127,6 +1138,11 @@ export class World {
     }
     if (b.type === 'road' || b.type === 'station' || b.type === 'charger') this.roadVersion++;
     if (b.type === 'storage') this.storagesDirty = true;
+    // 사라진 보관물·목적지에 걸린 예약은 끝낸다 (창고군이 바뀌면 그 정류장들의 싣기 예약도 다시)
+    if (this.reservations.length && (b.type === 'station' || b.type === 'storage')) {
+      this.reservations = this.reservations.filter((r) => r.holder !== b.id);
+      if (b.type === 'storage') this.reservations = this.reservations.filter((r) => r.dir === 'in');
+    }
     this.buildings.delete(b.id);
     this.layoutDirty = true;
     return true;
@@ -1434,13 +1450,6 @@ export class World {
     return [...seen.values()].sort((a, c) => a.id - c.id);
   }
 
-  /**
-   * 보관물(창고·정류장 건물 하나)에 걸린 출고 예약. 다품목 예약 운송(D06)이 아직 없어서 늘 0이다.
-   * 사용 가능 = 실물 - 예약. 예약이 생기면 여기서 보관물별 할당량을 돌려준다
-   */
-  reservedAt(_holder: Building, _item: ItemId): number {
-    return 0;
-  }
 
   /** 창고군에서 item의 [실물, 예약, 사용 가능] (같은 군의 창고를 한 번씩만 센다) */
   groupStock(group: Building[], item: ItemId): { real: number; reserved: number; free: number } {
@@ -2533,6 +2542,318 @@ export class World {
     return true;
   }
 
+  // ───────────────────────── 다품목 예약 운송 (regional-v1, docs/물류-회수-운영규칙.md §4~10) ─────────────────────────
+
+  /** 정류장에 연결한 창고군 (지정한 창고가 아직 몸체에 맞닿아 있을 때만). 없으면 빈 목록 */
+  dockGroup(st: Building): Building[] {
+    if (!st.dock) return [];
+    const s = this.buildings.get(st.dock);
+    if (s?.type !== 'storage') return [];
+    const g = this.touchingStorageGroups(st).find((x) => x.group.includes(s));
+    return g ? [...g.group].sort((a, b) => a.id - b.id) : [];
+  }
+
+  /** 물류 보관 풀: 정류장 자체와 연결 창고군 (실제 보관물들) */
+  poolOf(st: Building): Building[] {
+    return [st, ...this.dockGroup(st)];
+  }
+
+  /** 보관물 하나에 든 item 실물 (정류장은 싣기·내리기 칸 모두) */
+  private holderCount(h: Building, item: ItemId): number {
+    return countOf(h.inBuf, item) + (h.type === 'station' ? countOf(h.outBuf, item) : 0);
+  }
+
+  /** 풀의 item 실물 합계 (같은 창고를 두 번 세지 않는다) */
+  poolCount(st: Building, item: ItemId): number {
+    let n = 0;
+    for (const h of this.poolOf(st)) n += this.holderCount(h, item);
+    return n;
+  }
+
+  /** 풀의 남은 공간 (입고 예약을 뺀 값) */
+  poolFree(st: Building): number {
+    let room = Math.max(0, STATION_CAPACITY - sumOf(st.stationMode === 'unload' ? st.outBuf : st.inBuf));
+    const g = this.dockGroup(st);
+    if (g.length) room += Math.max(0, this.storageCapacity(g[0]) - this.storageTotal(g[0]));
+    return Math.max(0, room - this.inReserved(st));
+  }
+
+  /** 보관물에 걸린 출고 예약 (다른 트럭이 실기로 한 몫) */
+  reservedAt(holder: Building, item: ItemId): number {
+    let n = 0;
+    for (const r of this.reservations) if (r.dir === 'out' && r.holder === holder.id && r.item === item) n += r.n;
+    return n;
+  }
+
+  /** 목적지 풀(정류장 id)로 오는 입고 예약: item을 주면 그 품목만 */
+  inReserved(st: Building, item?: ItemId): number {
+    let n = 0;
+    for (const r of this.reservations) if (r.dir === 'in' && r.holder === st.id && (!item || r.item === item)) n += r.n;
+    return n;
+  }
+
+  /** 창고군에 연결된 정류장들로 오는 입고 예약 합계 (벨트가 그 공간을 먼저 차지하지 않게) */
+  private groupInReserved(group: Building[]): number {
+    let n = 0;
+    for (const st of this.buildings.values()) {
+      if (st.type !== 'station' || !st.dock) continue;
+      const g = this.dockGroup(st);
+      if (g.length && g[0] === group[0]) n += this.inReserved(st);
+    }
+    return n;
+  }
+
+  /** 목적지의 추가 요청량: 목표 - 실물 - 입고 예정 (목표가 없으면 제한 없음) */
+  requestOf(st: Building, item: ItemId): number {
+    const target = st.targets.get(item);
+    if (target === undefined) return Infinity;
+    return Math.max(0, target - this.poolCount(st, item) - this.inReserved(st, item));
+  }
+
+  /** 계획 운송 노선인지: 확장 세계, 계획이 있고, 싣기 → 내리기 두 정류장 */
+  planned(v: Vehicle): boolean {
+    return this.regional && v.plan.length > 0 && v.stops.length === 2 && v.stops[0].act === 'load' && v.stops[1].act === 'unload';
+  }
+
+  /** 트럭의 예약을 푼다 (dir을 주면 그쪽만) */
+  releaseReservations(v: Vehicle, dir?: 'in' | 'out'): void {
+    this.reservations = this.reservations.filter((r) => r.v !== v.id || (dir && r.dir !== dir));
+  }
+
+  /**
+   * 적재 차례가 된 트럭의 예약: 품목마다 min(이번 편 상한 - 실은 것, 출발지 가용, 목적지 요청, 목적지 공간, 차량 여유)만큼
+   * 출발지 실제 보관물(정류장 먼저, 창고 id 순)과 목적지 풀에 함께 건다. 품목 순서는 편마다 돌린다
+   */
+  private reserveTrip(v: Vehicle, src: Building, dst: Building): number {
+    this.releaseReservations(v);
+    let room = this.truckCapacity(v) - v.load;
+    let space = this.poolFree(dst);
+    let total = 0;
+    const n = v.plan.length;
+    for (let k = 0; k < n; k++) {
+      const { item, cap } = v.plan[(v.planTurn + k) % n];
+      const want = Math.min(cap - countOf(v.cargo, item), this.requestOf(dst, item), space, room);
+      if (want <= 0) continue;
+      let got = 0;
+      for (const h of this.poolOf(src)) {
+        const free = this.holderCount(h, item) - this.reservedAt(h, item);
+        const k2 = Math.min(free, want - got);
+        if (k2 <= 0) continue;
+        this.reservations.push({ v: v.id, holder: h.id, item, n: k2, dir: 'out' });
+        got += k2;
+        if (got >= want) break;
+      }
+      if (got <= 0) continue;
+      this.reservations.push({ v: v.id, holder: dst.id, item, n: got, dir: 'in' });
+      room -= got;
+      space -= got;
+      total += got;
+    }
+    v.planTurn = (v.planTurn + 1) % Math.max(1, n);
+    return total;
+  }
+
+  /** 예약한 몫을 보관물에서 한 개 실는다 (정류장 먼저). 실었으면 true */
+  private loadOne(v: Vehicle): boolean {
+    for (const r of this.reservations) {
+      if (r.v !== v.id || r.dir !== 'out' || r.n <= 0) continue;
+      const h = this.buildings.get(r.holder);
+      if (!h || this.holderCount(h, r.item) <= 0) {
+        r.n = 0;
+        continue;
+      }
+      if (countOf(h.inBuf, r.item) > 0) addTo(h.inBuf, r.item, -1);
+      else addTo(h.outBuf, r.item, -1);
+      addTo(v.cargo, r.item, 1);
+      r.n--;
+      this.reservations = this.reservations.filter((x) => x.n > 0);
+      return true;
+    }
+    return false;
+  }
+
+  /**
+   * 계획 운송의 싣는 곳: 정기편 출발 10초 전부터 적재 차례 → 예약 → 10개/초로 최대 10초 → 싣지 못한 예약은 해제 → 예정 시각에 출발.
+   * 요청이 없거나 재료가 없으면 빈 왕복을 하지 않고 다음 편을 기다린다
+   */
+  private loadPlanned(v: Vehicle, st: Building): void {
+    const dst = this.buildings.get(v.stops[1].id)!;
+    // 반송해 온 화물: 출발지 풀에 내리고, 남으면 정류장 자리 회수 더미로
+    if (v.returning) {
+      for (const [item, n] of [...v.cargo]) {
+        let left = n;
+        for (const h of this.poolOf(st)) {
+          const room = h.type === 'station' ? STATION_CAPACITY - sumOf(h.inBuf) : this.storageCapacity(h) - this.storageTotal(h);
+          const k = Math.min(left, Math.max(0, room));
+          if (k > 0) addTo(h.inBuf, item, k);
+          left -= k;
+        }
+        if (left > 0) this.addPile(this.idx(st.x, st.y), item, left, this.nextPileEv++, 'truck');
+        v.cargo.delete(item);
+      }
+      v.returning = false;
+      v.loadTimer = -1;
+    }
+    if (v.loadTimer < 0) {
+      // 정기편은 출발 10초 전부터 적재 차례, 예전 방식은 빈 편 뒤 5초 쉬었다가
+      if (v.period > 0 ? this.time < v.nextDue - 10 : this.time < v.nextDue) {
+        v.status = 'scheduled';
+        return;
+      }
+      const got = this.reserveTrip(v, st, dst);
+      if (got <= 0 && v.load <= 0) {
+        // 빈 편: 이번 주기를 넘긴다
+        const want = v.plan.some((p) => this.requestOf(dst, p.item) > 0);
+        v.status = want ? 'no-supply' : 'satisfied';
+        if (v.period > 0) v.nextDue = Math.max(v.nextDue, this.time) + v.period;
+        else v.nextDue = this.time + TRUCK.wait;
+        return;
+      }
+      v.loadTimer = 0;
+      v.timer = 0;
+    }
+    const gap = 1 / TRUCK.transfer;
+    v.loadTimer += DT;
+    v.timer = Math.min(gap, v.timer + DT);
+    const pending = this.reservations.some((r) => r.v === v.id && r.dir === 'out');
+    if (pending && v.timer >= gap - 1e-9 && v.loadTimer <= 10 + 1e-9) {
+      v.timer -= gap;
+      if (this.loadOne(v)) {
+        v.status = 'loading';
+        return;
+      }
+    }
+    if (pending && v.loadTimer < 10) {
+      v.status = 'loading';
+      return;
+    }
+    // 적재 끝: 남은 출고 예약 해제, 실은 만큼만 입고 예약 유지
+    this.releaseReservations(v, 'out');
+    this.trimInbound(v);
+    if (v.load <= 0) {
+      v.loadTimer = -1;
+      return;
+    }
+    if (v.period > 0 && this.time < v.nextDue && !v.early) {
+      v.status = 'scheduled';
+      return;
+    }
+    if (!this.batteryFull(v)) {
+      v.status = 'charging';
+      return;
+    }
+    v.nextDue = v.period > 0 ? Math.max(v.nextDue + v.period, this.time + 1) : this.time;
+    v.loadTimer = -1;
+    this.goTo(v, 1);
+  }
+
+  /** 입고 예약을 실제로 실은 화물만큼으로 줄인다 */
+  private trimInbound(v: Vehicle): void {
+    for (const r of this.reservations) if (r.v === v.id && r.dir === 'in') r.n = Math.min(r.n, countOf(v.cargo, r.item));
+    this.reservations = this.reservations.filter((r) => r.n > 0);
+  }
+
+  /**
+   * 계획 운송의 내리는 곳: 품목을 돌려 가며 풀(정류장 → 연결 창고)에 내린다. 입고 예약을 실물로 바꾼다.
+   * 최대 10초 또는 5초 동안 하나도 못 내리면 남은 화물은 반송 (출발 정류장으로 가져가 내린다)
+   */
+  private unloadPlanned(v: Vehicle, st: Building): void {
+    if (v.loadTimer < 0) {
+      v.loadTimer = 0;
+      v.stuck = 0;
+    }
+    const gap = 1 / TRUCK.transfer;
+    v.loadTimer += DT;
+    v.stuck += DT;
+    v.timer = Math.min(gap, v.timer + DT);
+    const items = [...v.cargo.keys()].filter((i) => countOf(v.cargo, i) > 0);
+    if (!items.length) {
+      this.releaseReservations(v);
+      v.loadTimer = -1;
+      v.status = 'unloading';
+      return this.leave(v);
+    }
+    if (v.timer >= gap - 1e-9) {
+      v.timer -= gap;
+      for (let k = 0; k < items.length; k++) {
+        const item = items[(v.planTurn + k) % items.length];
+        if (!this.dropInto(st, item)) continue;
+        addTo(v.cargo, item, -1);
+        const r = this.reservations.find((x) => x.v === v.id && x.dir === 'in' && x.item === item);
+        if (r) r.n--;
+        this.reservations = this.reservations.filter((x) => x.n > 0);
+        v.lapUnloaded++;
+        if (v.kind === 'advanced') this.advDelivered++;
+        v.stuck = 0;
+        v.planTurn++;
+        v.status = 'unloading';
+        return;
+      }
+    }
+    if (v.loadTimer >= 10 || v.stuck >= 5) {
+      // 반송
+      this.releaseReservations(v);
+      v.returning = true;
+      v.loadTimer = -1;
+      v.status = 'returning';
+      this.goTo(v, 0);
+      return;
+    }
+    v.status = v.stuck > gap * 2 ? 'unload-full' : 'unloading';
+  }
+
+  /** 목적지 풀에 한 개 내린다 (정류장 칸 먼저, 그다음 연결 창고). 내렸으면 true */
+  private dropInto(st: Building, item: ItemId): boolean {
+    const buf = st.stationMode === 'unload' ? st.outBuf : st.inBuf;
+    if (sumOf(buf) < STATION_CAPACITY) {
+      addTo(buf, item, 1);
+      return true;
+    }
+    const g = this.dockGroup(st);
+    if (g.length && this.storageTotal(g[0]) < this.storageCapacity(g[0])) {
+      addTo(g[0].inBuf, item, 1);
+      return true;
+    }
+    return false;
+  }
+
+  /** 운송 계획 바꾸기 (품목별 1회 상한, 정기편 주기 초, 조기 출발). 합계가 적재량을 넘으면 거절 */
+  setPlan(v: Vehicle, plan: { item: ItemId; cap: number }[], period: number, early: boolean): boolean {
+    const total = plan.reduce((a, p) => a + p.cap, 0);
+    if (total > this.truckCapacity(v)) return false;
+    // 아직 싣지 않은 예약은 다시 계산한다 (이미 실은 화물의 입고 예약은 그대로)
+    this.releaseReservations(v, 'out');
+    v.plan = plan.map((p) => ({ ...p }));
+    v.period = period;
+    v.early = early;
+    // 같은 노선 트럭들은 주기/대수 간격으로 나눠 출발
+    const same = [...this.vehicles.values()].filter((o) => o.stops.length === 2 && o.stops[0].id === v.stops[0].id && o.stops[1].id === v.stops[1].id && o.period > 0);
+    const k = Math.max(0, same.indexOf(v));
+    v.nextDue = this.time + (period > 0 && same.length ? (k * period) / same.length : 0);
+    v.loadTimer = -1;
+    return true;
+  }
+
+  /** 정류장 연결 창고 (닿은 창고군 중 하나, 0 = 없음). 바꾸면 그 정류장에서 싣기로 한 예약을 다시 계산한다 */
+  setDock(st: Building, storage: number): boolean {
+    if (st.type !== 'station') return false;
+    if (storage) {
+      const s = this.buildings.get(storage);
+      if (s?.type !== 'storage' || !this.touchingStorageGroups(st).some((g) => g.group.includes(s))) return false;
+    }
+    st.dock = storage;
+    for (const v of this.vehicles.values()) if (v.stops.some((s) => s.id === st.id)) this.releaseReservations(v, 'out');
+    return true;
+  }
+
+  /** 목적지 목표 재고 (n = 0이면 지운다) */
+  setTarget(st: Building, item: ItemId, n: number): boolean {
+    if (st.type !== 'station' || !Number.isFinite(n) || n < 0) return false;
+    if (n === 0) st.targets.delete(item);
+    else st.targets.set(item, Math.floor(n));
+    return true;
+  }
+
   private updatePower(): void {
     if (this.regional) return this.updateGrid();
     let demand = 0;
@@ -2779,7 +3100,7 @@ export class World {
       src?.type === 'hub'
         ? this.stockOf(item)
         : src?.type === 'storage'
-          ? this.storageCount(src, item)
+          ? this.storageCount(src, item) - this.storageGroup(src).reduce((a, s) => a + this.reservedAt(s, item), 0)
           : pile >= 0 && this.piles.length
             ? this.pileCount(pile, item)
             : 0;
@@ -2800,7 +3121,7 @@ export class World {
       const sent = this.insert(t, item, b, have);
       if (sent <= 0) continue;
       if (src?.type === 'hub') addTo(this.stock, item, -sent);
-      else if (src?.type === 'storage') this.storageTake(src, item, sent);
+      else if (src?.type === 'storage') this.storageTake(src, item, sent, true);
       else this.takePile(pile, item, sent);
       if (!b.filter) b.cycle = (ITEM_IDS.indexOf(item) + 1) % ITEM_IDS.length;
       b.progress = 0;
@@ -2829,8 +3150,9 @@ export class World {
     if (n.def.ports ? !this.portFrom(n, src) : !acceptsFrom(n, fromSide)) return false;
     switch (n.type) {
       case 'storage': {
-        // 합쳐진 창고는 묶음 전체가 한 창고 (받은 칸에 쌓는다)
-        if (this.storageTotal(n) >= this.storageCapacity(n)) return false;
+        // 합쳐진 창고는 묶음 전체가 한 창고 (받은 칸에 쌓는다). 트럭이 예약한 입고 공간은 비워 둔다
+        const resv = this.reservations.length ? this.groupInReserved(this.storageGroup(n)) : 0;
+        if (this.storageTotal(n) + resv >= this.storageCapacity(n)) return false;
         addTo(n.inBuf, item, 1);
         return true;
       }
@@ -3047,9 +3369,10 @@ export class World {
   }
 
   /** 합쳐진 창고에서 item을 n개 꺼낸다 (앞 창고부터) */
-  private storageTake(b: Building, item: ItemId, n: number): void {
+  private storageTake(b: Building, item: ItemId, n: number, free = false): void {
     for (const s of this.storageGroup(b)) {
-      const k = Math.min(n, countOf(s.inBuf, item));
+      // free: 트럭이 예약한 몫은 남긴다 (하역기 등 다른 출고)
+      const k = Math.max(0, Math.min(n, countOf(s.inBuf, item) - (free ? this.reservedAt(s, item) : 0)));
       if (k > 0) addTo(s.inBuf, item, -k);
       n -= k;
       if (n <= 0) return;
@@ -3251,6 +3574,7 @@ export class World {
       if (this.regional) this.addPile(v.tile, item, n, ev, 'truck');
       else addTo(this.stock, item, n);
     }
+    this.releaseReservations(v);
     this.vehicles.delete(v.id);
   }
 
@@ -3342,6 +3666,8 @@ export class World {
    * 없으면 짐이 있을 때는 첫 내리는 곳, 없을 때는 첫 싣는 곳으로 간다
    */
   setStops(v: Vehicle, stops: RouteStop[]): void {
+    // 노선이 바뀌면 아직 싣지 않은 예약은 푼다 (실은 화물의 입고 예약은 그대로)
+    this.releaseReservations(v, 'out');
     const cur = v.stops[v.stop];
     const from = v.stops.map((s) => ({ ...s }));
     v.stops = stops.map((s) => ({ ...s }));
@@ -3579,6 +3905,11 @@ export class World {
       v.timer = 0;
       v.idle = 0;
       v.arrivedAt = this.time;
+    }
+    if (this.planned(v)) {
+      if (v.state === 'loading') this.loadPlanned(v, st);
+      else this.unloadPlanned(v, st);
+      return;
     }
     if (v.state === 'loading') this.loadTruck(v, st);
     else this.unloadTruck(v, st);
@@ -3877,6 +4208,8 @@ export class World {
         ...(b.filter ? { filter: b.filter } : {}),
         ...(b.ugMode ? { ug: b.ugMode, partner: b.partner } : {}),
         ...(b.zone ? { zone: b.zone } : {}),
+        ...(b.dock ? { dock: b.dock } : {}),
+        ...(b.targets.size ? { targets: [...b.targets] } : {}),
         ...(b.type === 'terminal' && b.partner ? { partner: b.partner, ...(b.send ? { send: true, cable: b.cable } : {}) } : {}),
         ...(b.type === 'station' ? { no: b.stationNo, ...(b.stationMode === 'unload' ? { mode: 'unload' as const } : {}) } : {}),
         // 슬롯의 모듈 1개와 출처, 지금 배치가 모듈을 쓰는지, 분리 예약 (슬롯과 배치는 같은 한 개를 가리킨다)
@@ -3904,11 +4237,15 @@ export class World {
         ...(v.charger ? { charger: true } : {}),
         ...(v.filter ? { filter: v.filter } : {}),
         ...(v.kind !== 'basic' ? { kind: v.kind, kit: v.kit ?? undefined, home: v.home } : {}),
+        ...(v.plan.length || v.returning
+          ? { plan: v.plan.map((p) => ({ ...p })), period: v.period, nextDue: v.nextDue, early: v.early, loadTimer: v.loadTimer, stuck: v.stuck, returning: v.returning, planTurn: v.planTurn }
+          : {}),
       })),
       // 예전 세계는 모양을 그대로 (없으면 legacy-v042로 읽는다)
       ...(this.rules !== 'legacy-v042' ? { rules: this.rules } : {}),
       ...(this.terrain ? { terrain: runLength(this.terrain), vents: [...this.vents] } : {}),
       ...(this.zones.length ? { zones: this.zones.map((z) => ({ ...z })), nextZoneId: this.nextZoneId } : {}),
+      ...(this.reservations.length ? { resv: this.reservations.map((r) => ({ ...r })) } : {}),
       ...(this.piles.length || this.nextPileEv > 1
         ? { piles: this.piles.map((p): [number, number, number, number, PileReason] => [p.tile, ITEM_IDS.indexOf(p.item), p.n, p.ev, p.why]), pileEv: this.nextPileEv }
         : {}),
@@ -3975,6 +4312,8 @@ export class World {
       b.ugMode = s.ug ?? null;
       b.partner = s.partner ?? 0;
       b.zone = s.zone ?? 0;
+      b.dock = s.dock ?? 0;
+      b.targets = new Map(s.targets ?? []);
       b.send = s.send ?? false;
       b.cable = s.cable ?? 0;
       b.stationNo = s.no ?? 0;
@@ -4016,6 +4355,16 @@ export class World {
       v.battery = s.battery ?? w.truckBattery();
       v.charger = s.charger ?? false;
       // 종류가 없는 차량은 기존 기본 트럭
+      if (s.plan) {
+        v.plan = s.plan.map((p) => ({ ...p }));
+        v.period = s.period ?? 0;
+        v.nextDue = s.nextDue ?? 0;
+        v.early = s.early ?? false;
+        v.loadTimer = s.loadTimer ?? -1;
+        v.stuck = s.stuck ?? 0;
+        v.returning = s.returning ?? false;
+        v.planTurn = s.planTurn ?? 0;
+      }
       if (s.kind === 'advanced') {
         v.kind = 'advanced';
         v.kit = s.kit ?? null;
@@ -4031,6 +4380,7 @@ export class World {
     w.nextPileEv = Math.max(data.pileEv ?? 1, ...w.piles.map((p) => p.ev + 1));
     w.doneCmds = new Map(data.cmds ?? []);
     w.zones = (data.zones ?? []).map((z) => ({ ...z }));
+    w.reservations = (data.resv ?? []).map((r) => ({ ...r }));
     w.nextZoneId = data.nextZoneId ?? Math.max(0, ...w.zones.map((z) => z.id)) + 1;
     // 구역이 생기기 전의 확장 세계 저장이면 허브 구역을 만든다
     w.ensureHubZone();
@@ -4112,6 +4462,7 @@ export class World {
     h.num(this.tickNo).num(this.nextId).num(this.nextVehicleId).num(this.time);
     h.str(this.rules).num(this.nextPileEv).num(this.moduleBatches).num(this.advDelivered).num(this.nextZoneId);
     for (const z of this.zones) h.num(z.id).num(z.x).num(z.y).num(z.creator).num(z.budget);
+    for (const r of this.reservations) h.num(r.v).num(r.holder).str(r.item).num(r.n).str(r.dir);
     for (const p of this.piles) h.num(p.tile).str(p.item).num(p.n).num(p.ev);
     for (const [rid, r] of this.doneCmds) h.str(rid).num(r.ok ? 1 : 0).num(r.vehicle ?? 0).num(r.from ?? 0);
     for (const [item, n] of this.stock) h.str(item).num(n);
@@ -4123,7 +4474,8 @@ export class World {
       h.num(b.id).str(b.type).num(b.x).num(b.y).num(b.dir).str(b.recipe ?? '').str(b.filter ?? '');
       h.num(b.progress).num(b.crafting ? 1 : 0).num(b.outRR).num(b.mineIdx).num(b.fuel).num(b.energy);
       h.num(b.cycle).num(b.partner).num(b.heldFrom).str(b.held ?? '').num(b.heldN).str(b.stationMode);
-      h.num(b.module ? b.module.from + 1 : 0).num(b.modBatch ? 1 : 0).num(b.detach ? 1 : 0).num(b.zone).num(b.send ? 1 : 0).num(b.cable);
+      h.num(b.module ? b.module.from + 1 : 0).num(b.modBatch ? 1 : 0).num(b.detach ? 1 : 0).num(b.zone).num(b.send ? 1 : 0).num(b.cable).num(b.dock);
+      for (const [item, n] of b.targets) h.str(item).num(n);
       for (const [item, n] of b.inBuf) h.str(item).num(n);
       for (const [item, n] of b.outBuf) h.str(item).num(n);
       for (const it of b.items) h.str(it.item).num(it.pos).num(it.n);
@@ -4131,6 +4483,8 @@ export class World {
     for (const v of this.vehicles.values()) {
       h.num(v.id).num(v.x).num(v.y).num(v.tile).str(v.state).num(v.timer).num(v.idle).num(v.battery).num(v.charger ? 1 : 0);
       h.num(v.stop).str(v.kind).num(v.home).str(v.kit?.item ?? '').num(v.kit?.from ?? 0);
+      h.num(v.period).num(v.nextDue).num(v.loadTimer).num(v.stuck).num(v.returning ? 1 : 0).num(v.planTurn).num(v.early ? 1 : 0);
+      for (const p of v.plan) h.str(p.item).num(p.cap);
       for (const s of v.stops) h.num(s.id).str(s.act).str(s.item ?? '');
       for (const [item, n] of v.cargo) h.str(item).num(n);
     }
@@ -4198,6 +4552,9 @@ export interface SavedBuilding {
   mod?: number;
   modBatch?: boolean;
   detach?: boolean;
+  /** 정류장 연결 창고·목적지 목표 재고 */
+  dock?: number;
+  targets?: [ItemId, number][];
   /** 지역 전력: 붙은 구역, 송전 터미널의 보내는 쪽·낸 케이블 */
   zone?: number;
   send?: boolean;
@@ -4230,6 +4587,15 @@ export interface SavedVehicle {
   kind?: TruckKind;
   kit?: { item: ItemId; from: number };
   home?: number;
+  /** 계획 운송 (regional-v1) */
+  plan?: { item: ItemId; cap: number }[];
+  period?: number;
+  nextDue?: number;
+  early?: boolean;
+  loadTimer?: number;
+  stuck?: number;
+  returning?: boolean;
+  planTurn?: number;
 }
 
 export interface SaveData {
@@ -4266,6 +4632,8 @@ export interface SaveData {
   /** 지역 전력 구역과 다음 구역 번호 */
   zones?: Zone[];
   nextZoneId?: number;
+  /** 운송 예약 */
+  resv?: Reservation[];
   /** 현지 회수 더미 [칸 번호, 아이템 번호, 개수, 회수 사건, 이유]와 다음 사건 번호 */
   piles?: [number, number, number, number, PileReason][];
   pileEv?: number;

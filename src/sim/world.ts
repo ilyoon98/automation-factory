@@ -2295,9 +2295,14 @@ export class World {
 
   /** 구역이 변전소로 정식화됐는지 */
   private zoneFormal(z: Zone): boolean {
-    for (const b of this.buildings.values()) if (b.type === 'substation' && b.zone === z.id) return true;
-    return false;
+    if (this.gridDirty || !this.formalCache) {
+      // 배치가 바뀐 뒤 처음 물을 때 한 번만 센다 (구역마다 건물 전체를 돌지 않게)
+      this.formalCache = new Set();
+      for (const b of this.buildings.values()) if (b.type === 'substation' && b.zone) this.formalCache.add(b.zone);
+    }
+    return this.formalCache.has(z.id);
   }
+  private formalCache: Set<number> | null = null;
 
   /** 구역 중심에서의 확장 한계 (체비쇼프 칸) */
   zoneLimit(z: Zone): number {
@@ -2400,6 +2405,7 @@ export class World {
   }
 
   private rebuildGrid(): void {
+    this.formalCache = null;
     this.gridDirty = false;
     this.nodeCache.clear();
     for (const z of this.zones) this.nodeCache.set(z.id, this.zoneNodes(z));

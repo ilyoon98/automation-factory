@@ -1,5 +1,5 @@
 import type { BuildingType } from './buildings';
-import type { ItemStack } from './items';
+import type { ItemId, ItemStack } from './items';
 
 /** 연구 창의 탭 (endless = 끝없는 연구, TECHS가 아니라 ENDLESS_TECHS) */
 export type TechCategory = 'production' | 'logistics' | 'power' | 'resources' | 'endless';
@@ -301,6 +301,152 @@ export const TECHS: Tech[] = [
 ];
 
 export const TECH_BY_ID: Record<string, Tech> = Object.fromEntries(TECHS.map((t) => [t.id, t]));
+
+/**
+ * 세계마다 정해지는 규칙 프로필. 저장에 남고 같이 하는 사람 모두 같은 것을 쓴다.
+ * - legacy-v042: 지금까지의 세계 (기존 저장은 모두 이것으로 읽는다. 자동으로 바꾸지 않는다)
+ * - regional-v1: 지역 생산망 확장 세계. 기존 연구 20종의 새 비용 + 산업 연구 T01~T08
+ */
+export type RuleProfile = 'legacy-v042' | 'regional-v1';
+export const RULE_PROFILES: RuleProfile[] = ['legacy-v042', 'regional-v1'];
+
+const stacks = (o: Partial<Record<ItemId, number>>): ItemStack[] =>
+  Object.entries(o).map(([item, count]) => ({ item: item as ItemId, count: count! }));
+
+/** regional-v1의 기존 연구 20종 비용 (선행 관계·효과는 그대로) */
+const REGIONAL_COSTS: Record<string, ItemStack[]> = {
+  automation: stacks({ 'iron-plate': 20 }),
+  logistics: stacks({ 'iron-plate': 30, gear: 15 }),
+  storage: stacks({ 'iron-plate': 40, gear: 20 }),
+  'copper-working': stacks({ 'copper-plate': 40 }),
+  power: stacks({ 'iron-plate': 40, gear: 15 }),
+  wind: stacks({ 'iron-plate': 40, gear: 15 }),
+  steel: stacks({ 'iron-plate': 100, coal: 50 }),
+  forestry: stacks({ 'iron-plate': 80, gear: 40 }),
+  electronics: stacks({ 'copper-wire': 100, gear: 40 }),
+  'fast-belt': stacks({ steel: 50, gear: 80 }),
+  'mining-productivity': stacks({ steel: 80, circuit: 60 }),
+  vehicles: stacks({ steel: 80, gear: 60, circuit: 30 }),
+  battery: stacks({ 'copper-plate': 100, circuit: 60, steel: 40 }),
+  'soil-refining': stacks({ steel: 80, circuit: 50 }),
+  separation: stacks({ brick: 60, circuit: 40 }),
+  renewables: stacks({ brick: 50, circuit: 40 }),
+  'electric-steel': stacks({ brick: 60, circuit: 50 }),
+  'paper-making': stacks({ wood: 80, circuit: 40 }),
+  'forest-care': stacks({ paper: 50, wood: 120 }),
+  'ore-independence': stacks({ concrete: 30, brick: 100, 'iron-plate': 200, steel: 80 }),
+};
+
+/**
+ * 산업 연구 T01~T08 (regional-v1에서만). 기획의 수액 채취기·시추기·전력 설비·주석 등 채굴 대상 해금은
+ * 지도·지역 전력이 들어올 때 붙인다 (지금은 레시피와 생산 설비만)
+ */
+export const REGIONAL_TECHS: Tech[] = [
+  {
+    id: 'alloy',
+    icon: '🥉',
+    category: 'production',
+    name: '합금 가공',
+    description: '주석판·청동·청동 구동부 레시피',
+    cost: stacks({ steel: 40, circuit: 20 }),
+    requires: ['vehicles'],
+    unlockRecipes: ['tin-plate', 'bronze', 'bronze-drive'],
+  },
+  {
+    id: 'industrial-motor',
+    icon: '🌀',
+    category: 'production',
+    name: '산업 전동기',
+    description: '화학 반응기, 고무·절연 전선·절연 모터 레시피',
+    cost: stacks({ 'bronze-drive': 20, circuit: 30, wood: 60 }),
+    requires: ['alloy', 'forestry'],
+    unlockBuildings: ['chem-reactor'],
+    unlockRecipes: ['rubber', 'insulated-wire', 'motor'],
+  },
+  {
+    id: 'oil-control',
+    icon: '🛢️',
+    category: 'production',
+    name: '석유와 제어',
+    description: '정유소, 플라스틱·고급 회로·산업 제어기·윤활유·정유 연료 레시피',
+    cost: stacks({ motor: 8, steel: 40, circuit: 30 }),
+    requires: ['industrial-motor', 'electronics', 'soil-refining'],
+    unlockBuildings: ['refinery'],
+    unlockRecipes: ['plastic', 'adv-circuit', 'controller', 'lubricant', 'fuel'],
+  },
+  {
+    id: 'electro-metal',
+    icon: '🔋',
+    category: 'production',
+    name: '전해 금속',
+    description: '전해로, 알루미늄판·경량 프레임 레시피',
+    cost: stacks({ motor: 8, bronze: 20, brick: 40 }),
+    requires: ['industrial-motor', 'soil-refining'],
+    unlockBuildings: ['electrolyzer'],
+    unlockRecipes: ['aluminum-plate', 'frame'],
+  },
+  {
+    id: 'sulfur-chem',
+    icon: '🌋',
+    category: 'production',
+    name: '황 화학',
+    description: '강화 고무·강화 타이어·황산·고효율 모래 세척·고용량 케이블 레시피',
+    cost: stacks({ controller: 8, motor: 8, steel: 40 }),
+    requires: ['oil-control', 'electro-metal'],
+    unlockRecipes: ['hardened-rubber', 'tire', 'sulfuric-acid', 'acid-wash', 'hc-cable'],
+  },
+  {
+    id: 'lithium-storage',
+    icon: '🧪',
+    category: 'production',
+    name: '리튬과 축전',
+    description: '리튬·배터리 팩·고급 윤활제 레시피',
+    cost: stacks({ frame: 10, controller: 10, plastic: 40 }),
+    requires: ['oil-control', 'electro-metal'],
+    unlockRecipes: ['lithium', 'battery-pack', 'adv-lubricant'],
+  },
+  {
+    id: 'advanced-vehicle',
+    icon: '🚛',
+    category: 'logistics',
+    name: '상위 차량 조립',
+    description: '대형 조립소와 고급 트럭 조립품. 정류장에서 현지 조립품 1개로 고급 트럭을 만들어요',
+    cost: stacks({ tire: 20, 'battery-pack': 10, controller: 10 }),
+    requires: ['sulfur-chem', 'lithium-storage'],
+    unlockBuildings: ['large-assembler'],
+    unlockRecipes: ['truck-kit'],
+  },
+  {
+    id: 'integrated-automation',
+    icon: '🧩',
+    category: 'production',
+    name: '통합 자동화',
+    description: '자동화 설비 모듈 레시피와 설비 슬롯. 인접 창고의 모듈 1개를 레시피 기계에 설치해요 (속도 ×1.2, 작업 전력 ×1.25)',
+    cost: stacks({ frame: 16, 'hc-cable': 24, controller: 16, paper: 60 }),
+    requires: ['advanced-vehicle', 'paper-making'],
+    unlockRecipes: ['module'],
+  },
+];
+
+/** 고급 트럭 조립을 여는 연구 (T07) */
+export const TECH_ADVANCED_TRUCK = 'advanced-vehicle';
+/** 설비 모듈 설치를 여는 연구 (T08) */
+export const TECH_MODULE_SLOTS = 'integrated-automation';
+
+const LEGACY_LIST = TECHS;
+const REGIONAL_LIST: Tech[] = [...TECHS.map((t) => ({ ...t, cost: REGIONAL_COSTS[t.id] ?? t.cost })), ...REGIONAL_TECHS];
+const LEGACY_BY_ID = TECH_BY_ID;
+const REGIONAL_BY_ID: Record<string, Tech> = Object.fromEntries(REGIONAL_LIST.map((t) => [t.id, t]));
+
+/** 이 규칙의 연구 목록 (연구 창 순서) */
+export function techsFor(rules: RuleProfile): Tech[] {
+  return rules === 'regional-v1' ? REGIONAL_LIST : LEGACY_LIST;
+}
+
+/** 이 규칙의 연구 하나 (없으면 undefined) */
+export function techFor(rules: RuleProfile, id: string): Tech | undefined {
+  return (rules === 'regional-v1' ? REGIONAL_BY_ID : LEGACY_BY_ID)[id];
+}
 
 /**
  * 끝없는 연구: 최종 목표(광맥 독립)를 마친 뒤 단계마다 올리는 연구. 끝이 없다.

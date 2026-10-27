@@ -77,6 +77,14 @@ export class Building {
   /** 분리기처럼 순서대로 결과가 나오는 레시피에서 다음 차례 */
   cycle = 0;
 
+  // 자동화 설비 모듈 (regional-v1, 연구 "통합 자동화" 뒤 레시피 기계)
+  /** 장착 슬롯의 모듈 1개. from = 꺼내 온 창고 id (기록용, 그 창고가 사라져도 모듈은 남는다). null = 비어 있음 */
+  module: { from: number } | null = null;
+  /** 지금 제작 중인 배치가 모듈을 쓰는지 (배치를 시작할 때 정해서 끝날 때까지 유지) */
+  modBatch = false;
+  /** "제작 완료 후 분리" 예약. 지금 배치가 끝나면 모듈을 현지 회수 더미로 한 번 내린다 */
+  detach = false;
+
   // 발전기
   fuel = 0;
   energy = 0;

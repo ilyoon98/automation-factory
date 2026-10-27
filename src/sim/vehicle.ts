@@ -1,4 +1,4 @@
-import { TRUCK } from '../data/buildings';
+import { TRUCK, type TruckKind } from '../data/buildings';
 import type { ItemId } from '../data/items';
 
 /**
@@ -43,6 +43,9 @@ export const VEHICLE_STATUS_LABEL: Record<VehicleStatus, string> = {
   'no-station': '정류장을 골라 주세요',
 };
 
+/** 차량 종류 이름 */
+export const TRUCK_KIND_LABEL: Record<TruckKind, string> = { basic: '트럭', advanced: '고급 트럭' };
+
 /**
  * 트럭. 건물이 아니라 도로 위를 달리는 차라서 칸을 차지하지 않는다 (트럭끼리 겹쳐 지나간다).
  * 노선(정류장 2~8곳)을 차례대로 돌고, 마지막 정류장 다음에는 처음으로 돌아간다.
@@ -86,6 +89,15 @@ export class Vehicle {
   battery = TRUCK.battery;
   /** 길 중간 충전기 앞에 서서 충전하는 중 (가득 차면 다시 간다) */
   charger = false;
+  /** 차량 종류. 기본 = 허브 재료로 만든 트럭, 고급 = 정류장 현지 조립품으로 만든 트럭 */
+  kind: TruckKind = 'basic';
+  /**
+   * 고급 트럭에 포함된 원가: 실제로 차감한 조립품과 그 출처(정류장·창고 건물 id). 철거하면 이 조립품만 현지에 돌려준다.
+   * 기본 트럭은 null (허브 비용 TRUCK.cost)
+   */
+  kit: { item: ItemId; from: number } | null = null;
+  /** 고급 트럭을 조립한 정류장. 노선이 없어도 이 정류장 옆 도로에 서 있으면 충전한다 (0 = 없음) */
+  home = 0;
 
   constructor(
     readonly id: number,

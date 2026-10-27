@@ -1,4 +1,5 @@
 import {
+  ADVANCED_TRUCK,
   BUILDINGS,
   CHARCOAL_ENERGY,
   COAL_ENERGY,
@@ -6,6 +7,8 @@ import {
   GENERATOR_POWER,
   HUB_BASE_POWER,
   HYDRO_POWER,
+  MODULE,
+  MODULE_MACHINES,
   SOLAR_POWER,
   SOLAR_WEATHER,
   STATION_CAPACITY,
@@ -20,11 +23,27 @@ import {
   isForestType,
   isMinerType,
   isRecipeMachine,
+  needsRecipeChoice,
   type BuildingType,
+  type Ports,
+  type TruckKind,
 } from '../data/buildings';
 import { ITEM_IDS, type ItemId, type ItemStack } from '../data/items';
 import { RECIPES, type MachineKind, type Recipe } from '../data/recipes';
-import { ENDLESS_BY_ID, ENDLESS_REQUIRES, INITIAL_BUILDINGS, INITIAL_RECIPES, TECH_BY_ID, endlessCost } from '../data/tech';
+import {
+  ENDLESS_BY_ID,
+  ENDLESS_REQUIRES,
+  INITIAL_BUILDINGS,
+  INITIAL_RECIPES,
+  RULE_PROFILES,
+  TECH_ADVANCED_TRUCK,
+  TECH_MODULE_SLOTS,
+  endlessCost,
+  techFor,
+  techsFor,
+  type RuleProfile,
+  type Tech,
+} from '../data/tech';
 import { Building, addTo, countOf, type BeltItem, type StationMode } from './building';
 import { DX, DY, opposite, rotateCW, type Dir } from './dir';
 import { darkness, weatherMix } from './sky';
@@ -101,6 +120,8 @@ export type EditOp =
       ug: 'in' | 'out' | null;
       /** 철거될 때의 id. 정류장을 되돌리면 이 id를 오가던 트럭을 새 정류장에 다시 잇는다 */
       id: number;
+      /** 장착돼 있던 모듈을 내려놓은 회수 사건 번호. 되돌릴 때 그 회수분이 그 자리에 남아 있으면 다시 장착한다 */
+      mod?: number;
     }
   | { kind: 'rotate'; x: number; y: number; from: Dir; to: Dir }
   | { kind: 'recipe'; x: number; y: number; from: string | null; to: string | null }
@@ -116,6 +137,62 @@ interface TruckEdit {
   id: number;
   tile: number;
   stops: RouteStop[];
+}
+
+/**
+ * 현지 회수 더미의 한 덩어리 (regional-v1). 철거·레시피 변경·모듈 분리 등으로 실제 물건이 있던 칸에 남는다.
+ * 같은 칸·아이템이라도 회수 사건(ev)마다 따로 기록하고, 꺼낼 때는 먼저 생긴 사건부터 줄인다.
+ * 칸을 막지 않으며 벨트·트럭으로 넣을 수 없다. 하역기로만 꺼낸다
+ */
+export interface PileEntry {
+  tile: number;
+  item: ItemId;
+  n: number;
+  ev: number;
+  why: PileReason;
+}
+
+export type PileReason = 'remove' | 'recipe' | 'mode' | 'module' | 'cancel' | 'truck';
+
+export const PILE_REASON_LABEL: Record<PileReason, string> = {
+  remove: '철거',
+  recipe: '레시피 변경',
+  mode: '싣기/내리기 변경',
+  module: '모듈 분리',
+  cancel: '작업 취소',
+  truck: '차량 철거',
+};
+
+/**
+ * 현지 실물을 쓰는 명령(모듈 설치·분리, 고급 트럭 조립)의 결과. 저장해 두고, 같은 rid가 다시 오면 다시 실행하지 않고 이 결과만 돌려준다
+ */
+export interface UseResult {
+  ok: boolean;
+  /** 실패 이유 (화면 안내용) */
+  reason?: string;
+  /** 'scheduled' = 제작 완료 후 분리로 예약됨 */
+  note?: 'scheduled' | 'cancelled';
+  /** 만든 고급 트럭 id */
+  vehicle?: number;
+  /** 실제로 차감한 보관물 (정류장·창고 건물 id) */
+  from?: number;
+}
+
+/** 저장해 두는 처리한 명령 결과 수 (오래된 것부터 잊는다) */
+const DONE_CMDS_MAX = 512;
+
+/**
+ * 현지 실물 명령을 한 번만 적용한다. 같은 rid를 다시 받으면(재전송·재접속) 다시 실행하지 않고 처음 결과를 돌려준다.
+ * 실패한 명령도 결과를 남긴다: 다시 하려면 최신 상태를 보고 새 rid로 보낸다
+ */
+export function applyOnce(w: World, rid: unknown, run: () => UseResult): UseResult {
+  if (typeof rid !== 'string' || !rid || rid.length > 64) return { ok: false, reason: '잘못된 명령이에요' };
+  const done = w.doneCmds.get(rid);
+  if (done) return done;
+  const r = run();
+  w.doneCmds.set(rid, r);
+  if (w.doneCmds.size > DONE_CMDS_MAX) w.doneCmds.delete(w.doneCmds.keys().next().value!);
+  return r;
 }
 
 /** 플레이어 한 사람의 되돌리기 기록 */
@@ -264,6 +341,17 @@ export class World {
   /** 지금까지 돈 틱 수 (저장하지 않는다. 같이 하기 스냅샷에만 넣는다) */
   private tickNo = 0;
   seed = 0;
+  /** 세계 규칙 프로필. 기존 저장은 legacy-v042로 읽고 자동으로 바꾸지 않는다 */
+  rules: RuleProfile = 'legacy-v042';
+  /** 현지 회수 더미 (regional-v1). 칸 번호·아이템·회수 사건별 */
+  piles: PileEntry[] = [];
+  /** 다음 회수 사건 번호 */
+  nextPileEv = 1;
+  /** 처리한 현지 실물 명령: rid → 결과 (중복 수신은 이 결과만 돌려준다). 넣은 순서대로 오래된 것부터 잊는다 */
+  doneCmds = new Map<string, UseResult>();
+  /** 실제 사건 기록 (목표 판정용): 모듈을 쓴 배치 완료 수, 고급 트럭이 실제로 내린 개수 */
+  moduleBatches = 0;
+  advDelivered = 0;
 
   private layoutDirty = true;
   private beltOrder: Building[] = [];
@@ -306,6 +394,20 @@ export class World {
 
   stockOf(item: ItemId): number {
     return countOf(this.stock, item);
+  }
+
+  /** 지역 생산망 확장 세계인지 */
+  get regional(): boolean {
+    return this.rules === 'regional-v1';
+  }
+
+  /** 이 세계의 연구 목록 */
+  get techs(): Tech[] {
+    return techsFor(this.rules);
+  }
+
+  tech(id: string): Tech | undefined {
+    return techFor(this.rules, id);
   }
 
   canAfford(cost: ItemStack[]): boolean {
@@ -833,9 +935,13 @@ export class World {
     this.layoutDirty = true;
   }
 
-  /** 철거. 건설 비용과 안에 든 아이템을 100% 허브로 돌려준다. */
+  /**
+   * 철거. 건설 비용은 100% 허브로 돌려준다. 안에 든 아이템은 예전 세계면 허브로,
+   * regional-v1이면 그 자리의 현지 회수 더미로 (장착 모듈도 같은 회수 사건으로)
+   */
   remove(b: Building): boolean {
     if (b.type === 'hub') return false;
+    const ev = this.regional ? this.nextPileEv++ : 0;
     this.record({
       kind: 'remove',
       type: b.type,
@@ -848,14 +954,16 @@ export class World {
       no: b.stationNo,
       ug: b.ugMode,
       id: b.id,
+      ...(b.module ? { mod: ev } : {}),
     });
     for (const c of b.def.cost) addTo(this.stock, c.item, c.count);
-    this.refundContents(b);
+    this.refundContents(b, 'remove', ev);
+    this.dropModule(b, 'remove', ev);
     const partner = this.partnerOf(b);
     if (partner) {
       partner.partner = 0;
-      // 출구가 사라지면 땅속에 있던 아이템은 갈 곳이 없으니 허브로 돌려준다
-      if (b.ugMode === 'out') this.refundContents(partner);
+      // 출구가 사라지면 땅속에 있던 아이템은 갈 곳이 없으니 돌려준다
+      if (b.ugMode === 'out') this.refundContents(partner, 'remove', ev);
     }
     for (let dy = 0; dy < b.size; dy++) {
       for (let dx = 0; dx < b.size; dx++) this.occ[this.idx(b.x + dx, b.y + dy)] = 0;
@@ -872,7 +980,13 @@ export class World {
     if (isMinerType(b.type)) return 1 / ((b.def.speed ?? 1) * this.boost('endless-mining'));
     if (b.type === 'lumberjack') return FOREST.cut / this.boost('endless-mining');
     if (b.type === 'planter') return FOREST.plant;
-    return (this.recipeOf(b)?.time ?? 1) / this.boost('endless-crafting');
+    // 모듈을 쓰는 배치는 연구 적용값보다 1.2배 빠르다 (배치를 시작할 때 정해진다)
+    return (this.recipeOf(b)?.time ?? 1) / this.boost('endless-crafting') / (b.modBatch ? MODULE.speed : 1);
+  }
+
+  /** 작동 중 전력 (kW). 모듈을 쓰는 배치는 1.25배 */
+  workPower(b: Building): number {
+    return b.def.power * (b.modBatch ? MODULE.power : 1);
   }
 
   /** 끝없는 연구로 빨라진 배율 (1 = 그대로, 3단계면 1.3) */
@@ -1005,12 +1119,12 @@ export class World {
     this.layoutDirty = true;
   }
 
-  /** 정류장 싣기/내리기. 안에 쌓인 건 허브로 돌려준다 */
+  /** 정류장 싣기/내리기. 안에 쌓인 건 돌려준다 (regional-v1은 현지 회수 더미로) */
   setStationMode(b: Building, mode: StationMode): boolean {
     if (b.type !== 'station') return false;
     if (b.stationMode === mode) return true;
     this.record({ kind: 'mode', x: b.x, y: b.y, from: b.stationMode, to: mode });
-    this.refundContents(b);
+    this.refundContents(b, 'mode');
     b.stationMode = mode;
     this.layoutDirty = true;
     return true;
@@ -1032,29 +1146,207 @@ export class World {
     }
     if (b.recipe === recipeId) return true;
     this.record({ kind: 'recipe', x: b.x, y: b.y, from: b.recipe, to: recipeId });
-    this.refundContents(b);
+    this.refundContents(b, 'recipe');
+    // 모듈은 슬롯에 남는다. 분리 예약이 있었으면 작업이 취소돼 잠금이 풀렸으니 이제 한 번 내린다
+    if (b.detach) this.dropModule(b, 'module');
     b.recipe = recipeId;
     b.status = 'idle';
     return true;
   }
 
-  private refundContents(b: Building): void {
-    for (const it of b.items) addTo(this.stock, it.item, it.n);
+  /**
+   * 건물 안의 실물(버퍼·제작 중 투입물·연료·벨트 위 아이템)을 돌려준다. 예전 세계는 허브로,
+   * regional-v1은 건물 왼쪽 위 칸의 현지 회수 더미로. 제작 중이던 배치는 취소한다 (완제품은 생기지 않는다)
+   */
+  private refundContents(b: Building, why: PileReason, ev = 0): void {
+    const tile = this.idx(b.x, b.y);
+    if (this.regional && !ev) ev = this.nextPileEv++;
+    const give = (item: ItemId, n: number) => {
+      if (n <= 0) return;
+      if (this.regional) this.addPile(tile, item, n, ev, why);
+      else addTo(this.stock, item, n);
+    };
+    for (const it of b.items) give(it.item, it.n);
     b.items = [];
-    for (const [item, n] of b.inBuf) addTo(this.stock, item, n);
-    for (const [item, n] of b.outBuf) addTo(this.stock, item, n);
+    for (const [item, n] of b.inBuf) give(item, n);
+    for (const [item, n] of b.outBuf) give(item, n);
     b.inBuf.clear();
     b.outBuf.clear();
     const r = this.recipeOf(b);
-    if (b.crafting && r) for (const i of r.inputs) addTo(this.stock, i.item, i.count);
+    if (b.crafting && r) for (const i of r.inputs) give(i.item, i.count);
     b.crafting = false;
+    b.modBatch = false;
     b.progress = 0;
     // 발전기에 쌓인 연료 (수력 발전기는 물)
-    if (b.fuel) addTo(this.stock, b.type === 'hydro' ? 'water' : 'coal', b.fuel);
+    if (b.fuel) give(b.type === 'hydro' ? 'water' : 'coal', b.fuel);
     b.fuel = 0;
-    if (b.held) addTo(this.stock, b.held, b.heldN);
+    if (b.held) give(b.held, b.heldN);
     b.held = null;
     b.heldN = 0;
+  }
+
+  // ───────────────────────── 현지 회수 더미 (regional-v1) ─────────────────────────
+
+  /** 회수 더미에 쌓는다 (같은 칸·아이템·사건이면 합친다) */
+  private addPile(tile: number, item: ItemId, n: number, ev: number, why: PileReason): void {
+    if (n <= 0) return;
+    const e = this.piles.find((p) => p.tile === tile && p.item === item && p.ev === ev);
+    if (e) e.n += n;
+    else this.piles.push({ tile, item, n, ev, why });
+  }
+
+  /** 이 칸 회수 더미의 아이템별 합계 (아이템 목록 순서) */
+  pileAt(tile: number): Map<ItemId, number> {
+    const all = new Map<ItemId, number>();
+    for (const p of this.piles) if (p.tile === tile) addTo(all, p.item, p.n);
+    return new Map(ITEM_IDS.filter((i) => countOf(all, i) > 0).map((i) => [i, countOf(all, i)]));
+  }
+
+  pileCount(tile: number, item: ItemId): number {
+    let n = 0;
+    for (const p of this.piles) if (p.tile === tile && p.item === item) n += p.n;
+    return n;
+  }
+
+  /** 회수 더미가 있는 칸들 (칸 번호 → 합계 개수) */
+  pileTiles(): Map<number, number> {
+    const m = new Map<number, number>();
+    for (const p of this.piles) m.set(p.tile, (m.get(p.tile) ?? 0) + p.n);
+    return m;
+  }
+
+  /** 더미에서 item을 최대 n개 꺼낸다 (먼저 생긴 사건부터). ev를 주면 그 사건 몫에서만. 꺼낸 개수 */
+  private takePile(tile: number, item: ItemId, n: number, ev = 0): number {
+    let got = 0;
+    for (const p of this.piles) {
+      if (got >= n) break;
+      if (p.tile !== tile || p.item !== item || (ev && p.ev !== ev)) continue;
+      const k = Math.min(n - got, p.n);
+      p.n -= k;
+      got += k;
+    }
+    if (got) this.piles = this.piles.filter((p) => p.n > 0);
+    return got;
+  }
+
+  // ───────────────────────── 자동화 설비 모듈 (regional-v1) ─────────────────────────
+
+  /** 장착 모듈을 기계 왼쪽 위 칸의 현지 회수 더미로 내린다 (분리 예약도 끝). 내렸으면 true */
+  private dropModule(b: Building, why: PileReason, ev = 0): boolean {
+    if (!b.module) return false;
+    this.addPile(this.idx(b.x, b.y), 'module', 1, ev || this.nextPileEv++, why);
+    b.module = null;
+    b.detach = false;
+    return true;
+  }
+
+  /** 모듈을 설치할 수 있는 기계인지 (세계·연구·기계 종류). 안 되면 이유 */
+  moduleSupport(b: Building): string | null {
+    if (!this.regional) return '이 세계에서는 설비 모듈을 쓰지 않아요';
+    if (!MODULE_MACHINES.includes(b.type)) return '레시피 생산 기계에만 설치해요';
+    if (!this.researched.has(TECH_MODULE_SLOTS)) return `연구 "${this.tech(TECH_MODULE_SLOTS)?.name}"이 필요해요`;
+    return null;
+  }
+
+  /**
+   * 몸체가 상하좌우로 맞닿은 창고군들. 같은 군의 여러 동이 닿아도 한 번만, 대표(가장 작은 id) 창고 순.
+   * 각 군: 대표 id, 구조 표시(군의 창고 id들), 닿은 창고 id
+   */
+  touchingStorageGroups(b: Building): { id: number; key: string; group: Building[] }[] {
+    const seen = new Map<string, { id: number; key: string; group: Building[] }>();
+    for (const [nx, ny] of edgeNeighbors(b)) {
+      const n = this.buildingAt(nx, ny);
+      if (n?.type !== 'storage') continue;
+      const group = this.storageGroup(n);
+      const key = groupKey(group);
+      if (!seen.has(key)) seen.set(key, { id: Math.min(...group.map((s) => s.id)), key, group });
+    }
+    return [...seen.values()].sort((a, c) => a.id - c.id);
+  }
+
+  /**
+   * 보관물(창고·정류장 건물 하나)에 걸린 출고 예약. 다품목 예약 운송(D06)이 아직 없어서 늘 0이다.
+   * 사용 가능 = 실물 - 예약. 예약이 생기면 여기서 보관물별 할당량을 돌려준다
+   */
+  reservedAt(_holder: Building, _item: ItemId): number {
+    return 0;
+  }
+
+  /** 창고군에서 item의 [실물, 예약, 사용 가능] (같은 군의 창고를 한 번씩만 센다) */
+  groupStock(group: Building[], item: ItemId): { real: number; reserved: number; free: number } {
+    let real = 0;
+    let reserved = 0;
+    for (const s of group) {
+      real += countOf(s.inBuf, item);
+      reserved += this.reservedAt(s, item);
+    }
+    return { real, reserved, free: Math.max(0, real - reserved) };
+  }
+
+  /** 창고군에서 예약되지 않은 item 1개를 실제로 들고 있는 창고 (id 순). 없으면 null */
+  private groupHolder(group: Building[], item: ItemId): Building | null {
+    for (const s of [...group].sort((a, c) => a.id - c.id)) {
+      if (countOf(s.inBuf, item) - this.reservedAt(s, item) >= 1) return s;
+    }
+    return null;
+  }
+
+  /**
+   * 모듈 설치: 몸체에 닿은 창고군(storage = 닿은 창고 id, key = 명령을 낼 때 본 군의 구조)의 예약되지 않은 모듈 1개를 슬롯으로 옮긴다.
+   * 검사를 모두 마친 뒤에만 옮긴다 (실패하면 아무것도 바뀌지 않는다). 전력·레시피·정지와 상관없이 설치할 수 있다
+   */
+  installModule(b: Building, storage: number, key: string): UseResult {
+    const no = this.moduleSupport(b);
+    if (no) return { ok: false, reason: no };
+    if (b.module) return { ok: false, reason: b.detach ? '분리 대기 중이에요' : '이미 설치돼 있어요' };
+    const st = this.buildings.get(storage);
+    const g = st?.type === 'storage' ? this.touchingStorageGroups(b).find((x) => x.group.includes(st)) : undefined;
+    if (!g || g.key !== key) return { ok: false, reason: '공급 창고를 다시 골라 주세요 (연결이 바뀌었어요)' };
+    const holder = this.groupHolder(g.group, 'module');
+    if (!holder) return { ok: false, reason: '창고에 쓸 수 있는 모듈이 없어요' };
+    addTo(holder.inBuf, 'module', -1);
+    b.module = { from: holder.id };
+    return { ok: true, from: holder.id };
+  }
+
+  /**
+   * 모듈 분리.
+   * - normal: 지금 배치가 모듈을 쓰는 중이면 "제작 완료 후 분리" 예약, 아니면 바로 현지 회수 더미로
+   * - cancel-request: 분리 예약 취소 (모듈·재료는 그대로)
+   * - force: 작업 취소 후 즉시 분리. 지금 배치에 실제 투입한 재료와 모듈만 현지 회수 (입력·출력 버퍼는 남는다)
+   */
+  detachModule(b: Building, mode: 'normal' | 'cancel-request' | 'force'): UseResult {
+    if (!this.regional) return { ok: false, reason: '이 세계에서는 설비 모듈을 쓰지 않아요' };
+    if (mode === 'cancel-request') {
+      if (!b.module || !b.detach) return { ok: false, reason: '분리 예약이 없어요' };
+      b.detach = false;
+      return { ok: true, note: 'cancelled' };
+    }
+    if (!b.module) return { ok: false, reason: '설치된 모듈이 없어요' };
+    const locked = b.crafting && b.modBatch;
+    if (mode === 'normal' && locked) {
+      if (b.detach) return { ok: false, reason: '이미 분리 예약했어요' };
+      b.detach = true;
+      return { ok: true, note: 'scheduled' };
+    }
+    const ev = this.nextPileEv++;
+    if (locked) {
+      // 이 배치에 실제로 넣은 재료만 돌려주고 진행도를 버린다 (완제품·완료 기록은 없다)
+      const r = this.recipeOf(b);
+      if (r) for (const i of r.inputs) this.addPile(this.idx(b.x, b.y), i.item, i.count, ev, 'cancel');
+      b.crafting = false;
+      b.modBatch = false;
+      b.progress = 0;
+    }
+    this.dropModule(b, 'module', ev);
+    return { ok: true };
+  }
+
+  /** 기계 화면에 보일 모듈 상태 */
+  moduleState(b: Building): 'none' | 'installed' | 'next' | 'detaching' {
+    if (!b.module) return 'none';
+    if (b.detach) return 'detaching';
+    return b.crafting && !b.modBatch ? 'next' : 'installed';
   }
 
   // ───────────────────────── 숲 ─────────────────────────
@@ -1395,6 +1687,8 @@ export class World {
     if (b.type === 'station') this.setStationMode(b, op.mode);
     this.revive(b, op.id, op.no);
     op.id = b.id;
+    // 철거 때 내려놓은 모듈이 그 회수분 그대로 남아 있을 때만 다시 장착한다 (이미 옮겨 쓴 모듈은 채우지 않는다)
+    if (op.mod && !this.moduleSupport(b) && this.takePile(this.idx(b.x, b.y), 'module', 1, op.mod)) b.module = { from: 0 };
     // 지하 컨베이어: 다시 지은 순서 때문에 입구·출구가 바뀌지 않게 원래 종류로 짝을 맞춘다
     if (b.type === 'underground' && op.ug && b.ugMode !== op.ug) {
       const old = this.partnerOf(b);
@@ -1425,7 +1719,7 @@ export class World {
       if (!this.canAfford(endlessCost(e, this.endlessLevel(id) + 1))) return { ok: false, reason: '재료 부족' };
       return { ok: true };
     }
-    const t = TECH_BY_ID[id];
+    const t = this.tech(id);
     if (!t) return { ok: false, reason: '없는 연구' };
     if (this.researched.has(id)) return { ok: false, reason: '완료됨' };
     if (!t.requires.every((r) => this.researched.has(r))) return { ok: false, reason: '선행 연구 필요' };
@@ -1443,7 +1737,7 @@ export class World {
       this.levels.set(id, level);
       return true;
     }
-    for (const c of TECH_BY_ID[id].cost) addTo(this.stock, c.item, -c.count);
+    for (const c of this.tech(id)!.cost) addTo(this.stock, c.item, -c.count);
     this.applyTech(id);
     return true;
   }
@@ -1455,7 +1749,7 @@ export class World {
 
   /** 연구 효과만 적용 (비용 없음). 불러오기에서도 쓴다. */
   applyTech(id: string): void {
-    const t = TECH_BY_ID[id];
+    const t = this.tech(id);
     if (!t || this.researched.has(id)) return;
     this.researched.add(id);
     t.unlockBuildings?.forEach((b) => this.unlockedBuildings.add(b));
@@ -1597,6 +1891,8 @@ export class World {
     }
     for (const i of r.inputs) addTo(b.inBuf, i.item, -i.count);
     b.crafting = true;
+    // 이 배치가 모듈을 쓰는지는 시작할 때 정한다 (도중에 설치해도 이 배치는 그대로)
+    b.modBatch = !!b.module;
   }
 
   private updatePower(): void {
@@ -1607,7 +1903,7 @@ export class World {
     const sun = this.solarOutput();
     const wind = this.windOutput();
     for (const b of this.buildings.values()) {
-      if (b.crafting && b.def.power > 0) demand += b.def.power;
+      if (b.crafting && b.def.power > 0) demand += this.workPower(b);
       if (b.type === 'solar' || b.type === 'wind') {
         b.load = b.type === 'solar' ? sun : wind;
         solar += b.load;
@@ -1682,6 +1978,10 @@ export class World {
     if (b.progress < time) return;
 
     this.finishCraft(b);
+    // 완료 → 분리 예약 처리 → 다음 시작 순서는 고정 (산출을 확정한 뒤 모듈을 한 번 내리고, 다음 배치는 모듈 없이)
+    if (b.modBatch) this.moduleBatches++;
+    if (b.detach) this.dropModule(b, 'module');
+    b.modBatch = false;
     b.crafting = false;
     b.progress -= time;
     // 남은 진행도를 이어받아 바로 다음 제작을 시작해야 정확한 생산 속도가 나온다.
@@ -1819,9 +2119,19 @@ export class World {
   private updateUnloader(b: Building): void {
     b.progress = Math.min(UNLOADER_INTERVAL, b.progress + DT);
     if (b.progress < UNLOADER_INTERVAL) return;
-    const src = this.buildingAt(b.x - DX[b.dir], b.y - DY[b.dir]);
+    const bx = b.x - DX[b.dir];
+    const by = b.y - DY[b.dir];
+    const src = this.buildingAt(bx, by);
+    // 뒤가 허브·창고가 아니면 뒤 칸의 현지 회수 더미에서 꺼낸다 (regional-v1)
+    const pile = src?.type !== 'hub' && src?.type !== 'storage' && this.inBounds(bx, by) ? this.idx(bx, by) : -1;
     const count = (item: ItemId) =>
-      src?.type === 'hub' ? this.stockOf(item) : src?.type === 'storage' ? this.storageCount(src, item) : 0;
+      src?.type === 'hub'
+        ? this.stockOf(item)
+        : src?.type === 'storage'
+          ? this.storageCount(src, item)
+          : pile >= 0 && this.piles.length
+            ? this.pileCount(pile, item)
+            : 0;
     // 고른 아이템, 없으면 다음 차례(b.cycle)부터 든 것 중 첫 번째
     let item = b.filter;
     if (!item) {
@@ -1838,8 +2148,9 @@ export class World {
     for (const t of this.targetsOf(b)) {
       const sent = this.insert(t, item, b, have);
       if (sent <= 0) continue;
-      if (src!.type === 'hub') addTo(this.stock, item, -sent);
-      else this.storageTake(src!, item, sent);
+      if (src?.type === 'hub') addTo(this.stock, item, -sent);
+      else if (src?.type === 'storage') this.storageTake(src, item, sent);
+      else this.takePile(pile, item, sent);
       if (!b.filter) b.cycle = (ITEM_IDS.indexOf(item) + 1) % ITEM_IDS.length;
       b.progress = 0;
       b.status = 'working';
@@ -1863,7 +2174,8 @@ export class World {
 
   /** 컨베이어가 아닌 건물이 아이템을 받는다. fromSide = 받는 건물에서 본 보내는 쪽 방향. count = 분배기·병합기가 통째로 들 개수 */
   private acceptItem(n: Building, item: ItemId, src: Building, fromSide: Dir, count = 1): boolean {
-    if (!acceptsFrom(n, fromSide)) return false;
+    // 지정 칸 입구가 있는 새 설비는 보내는 쪽이 입구 칸에 있어야 받는다
+    if (n.def.ports ? !this.portFrom(n, src) : !acceptsFrom(n, fromSide)) return false;
     switch (n.type) {
       case 'storage': {
         // 합쳐진 창고는 묶음 전체가 한 창고 (받은 칸에 쌓는다)
@@ -1887,6 +2199,10 @@ export class World {
       case 'separator':
       case 'electric-furnace':
       case 'sawmill':
+      case 'chem-reactor':
+      case 'refinery':
+      case 'electrolyzer':
+      case 'large-assembler':
         return this.machineAccept(n, item);
       case 'planter':
         if (item !== 'sapling' || countOf(n.inBuf, 'sapling') >= FOREST.planterCap) return false;
@@ -1921,7 +2237,7 @@ export class World {
   private machineAccept(n: Building, item: ItemId): boolean {
     let r = this.recipeOf(n);
     // 조립기는 직접 골라야 하고, 나머지는 처음 들어온 재료로 정한다
-    if (!r && n.type !== 'assembler') {
+    if (!r && !needsRecipeChoice(n.type)) {
       r = this.autoRecipe(n.type as MachineKind, item);
       if (r) n.recipe = r.id;
     }
@@ -1929,7 +2245,7 @@ export class World {
     // 쉬는 중이고, 들고 있는 재료와 새 재료를 다 쓰는 다른 레시피가 있으면 그것으로 바꾼다
     // (빈 기계는 바꾸지 않는다: 처음 들어온 재료로 정한 레시피가 섞인 컨베이어에서 오락가락하지 않게)
     const held = [...n.inBuf].filter(([, k]) => k > 0).map(([it]) => it);
-    if (r && n.type !== 'assembler' && !n.crafting && held.length && !r.inputs.some((i) => i.item === item)) {
+    if (r && !needsRecipeChoice(n.type) && !n.crafting && held.length && !r.inputs.some((i) => i.item === item)) {
       const alt = Object.values(RECIPES).find(
         (x) =>
           x.machine === n.type &&
@@ -2023,6 +2339,12 @@ export class World {
       return p ? [p.x + DX[p.dir], p.y + DY[p.dir]] : null;
     }
     return [b.x + DX[b.dir], b.y + DY[b.dir]];
+  }
+
+  /** src가 n(지정 칸 입구가 있는 새 설비)의 입구 칸에 있는지. 지하 입구는 아이템이 실제로 나오는 출구 자리로 본다 */
+  private portFrom(n: Building, src: Building): boolean {
+    const s = src.type === 'underground' && src.ugMode === 'in' ? (this.partnerOf(src) ?? src) : src;
+    return portTiles(n, 'in').some(([x, y]) => s.contains(x, y));
   }
 
   /** 컨베이어 끝에서 앞 칸으로 최대 count개 넘긴다. 넘긴 개수 */
@@ -2237,6 +2559,8 @@ export class World {
 
   /** 같은 노선을 도는 트럭을 하나 더 만든다 (노선에서 처음 들르는, 트럭을 만들 수 있는 정류장 옆에서 출발) */
   cloneTruck(v: Vehicle): Vehicle | null {
+    // 고급 트럭은 조립품 1개씩 따로 조립한다 (buildAdvancedTruck의 copy)
+    if (v.kind !== 'basic') return null;
     const i = v.stops.findIndex((s) => {
       const st = this.buildings.get(s.id);
       return st?.type === 'station' && this.canBuildTruck(st).ok;
@@ -2259,12 +2583,95 @@ export class World {
     return v;
   }
 
-  /** 트럭 철거: 만든 재료와 실은 짐을 허브로 돌려준다 */
+  /**
+   * 트럭 철거. 기본 트럭은 만든 재료를 허브로 돌려준다. 고급 트럭은 포함된 조립품 1개만 지금 칸의 회수 더미로 (기본 트럭 비용은 없다).
+   * 실은 짐은 예전 세계면 허브로, regional-v1이면 지금 칸의 회수 더미로. 고급 트럭 철거는 되돌리기 기록에 넣지 않는다
+   */
   removeVehicle(v: Vehicle): void {
-    this.record({ kind: 'truck-remove', id: v.id, tile: v.tile, stops: v.stops.map((s) => ({ ...s })) });
-    for (const c of TRUCK.cost) addTo(this.stock, c.item, c.count);
-    for (const [item, n] of v.cargo) addTo(this.stock, item, n);
+    if (v.kind === 'basic') this.record({ kind: 'truck-remove', id: v.id, tile: v.tile, stops: v.stops.map((s) => ({ ...s })) });
+    const ev = this.regional ? this.nextPileEv++ : 0;
+    if (v.kit) this.addPile(v.tile, v.kit.item, 1, ev, 'truck');
+    else for (const c of TRUCK.cost) addTo(this.stock, c.item, c.count);
+    for (const [item, n] of v.cargo) {
+      if (this.regional) this.addPile(v.tile, item, n, ev, 'truck');
+      else addTo(this.stock, item, n);
+    }
     this.vehicles.delete(v.id);
+  }
+
+  /** 고급 트럭을 조립할 수 있는지 (세계·연구·정류장·도로). 재료는 따로 본다 */
+  advTruckSupport(st: Building | undefined): string | null {
+    if (!this.regional) return '이 세계에서는 고급 트럭을 만들지 않아요';
+    if (!this.researched.has(TECH_ADVANCED_TRUCK)) return `연구 "${this.tech(TECH_ADVANCED_TRUCK)?.name}"이 필요해요`;
+    if (st?.type !== 'station') return '정류장이 없어요';
+    if (!this.stationStops(st).length) return '정류장 옆에 도로가 필요해요';
+    return null;
+  }
+
+  /** 정류장 자체 안의 조립품 (싣기 칸 + 내리기 칸) 중 예약되지 않은 수 */
+  private stationFree(st: Building, item: ItemId): number {
+    return Math.max(0, countOf(st.inBuf, item) + countOf(st.outBuf, item) - this.reservedAt(st, item));
+  }
+
+  /**
+   * 고급 트럭 조립: 정류장 자체 → 정류장에 직접 붙은 창고군(key = 명령을 낼 때 본 군의 구조, '' = 안 봄) 순으로
+   * 예약되지 않은 조립품 1개를 한 보관물에서 꺼내 고급 트럭 1대를 만든다. 검사를 모두 마친 뒤에만 바꾼다 (실패하면 id 순서도 그대로).
+   * 새 트럭: 화물 0·노선 없음·배터리 0kJ, 정류장 옆 도로 중 칸 번호가 가장 작은 곳. copy = 노선(설정)만 베낄 트럭
+   */
+  buildAdvancedTruck(st: Building | undefined, key: string, copy?: Vehicle): UseResult {
+    const no = this.advTruckSupport(st);
+    if (no) return { ok: false, reason: no };
+    const station = st!;
+    const kit = ADVANCED_TRUCK.kit;
+    const groups = this.touchingStorageGroups(station);
+    const g = key ? groups.find((x) => x.key === key) : undefined;
+    if (key && !g) return { ok: false, reason: '연결 창고가 바뀌었어요. 다시 확인해 주세요' };
+    let holder: Building | null = null;
+    if (this.stationFree(station, kit) >= 1) holder = station;
+    else if (g) holder = this.groupHolder(g.group, kit);
+    if (!holder) return { ok: false, reason: '이 정류장·연결 창고에 고급 트럭 조립품이 없어요' };
+    const tile = Math.min(...this.stationStops(station));
+    // 여기부터는 실패하지 않는다: 차감·차량 등록을 한 번에
+    if (holder === station) addTo(countOf(station.inBuf, kit) > 0 ? station.inBuf : station.outBuf, kit, -1);
+    else addTo(holder.inBuf, kit, -1);
+    const v = new Vehicle(this.nextVehicleId++, tile, this.width);
+    v.kind = 'advanced';
+    v.kit = { item: kit, from: holder.id };
+    v.home = station.id;
+    v.battery = 0;
+    if (copy) {
+      v.stops = copy.stops.map((s) => ({ ...s }));
+      v.stop = 0;
+    }
+    this.vehicles.set(v.id, v);
+    return { ok: true, vehicle: v.id, from: holder.id };
+  }
+
+  /** 트럭 한 번에 싣는 개수 */
+  truckCapacity(v?: Vehicle): number {
+    return v?.kind === 'advanced' ? ADVANCED_TRUCK.capacity : TRUCK.capacity;
+  }
+
+  /** 달리는 동안 쓰는 전력 (kW) */
+  private truckDrive(v: Vehicle): number {
+    return v.kind === 'advanced' ? ADVANCED_TRUCK.drive : TRUCK.drive;
+  }
+
+  /** 종류 기본 속도 (연구 전, 칸/초) */
+  private baseSpeed(v: Vehicle): number {
+    return v.kind === 'advanced' ? ADVANCED_TRUCK.speed : TRUCK.speed;
+  }
+
+  /** 한 칸 달리는 데 드는 전기 (kJ). 두 종류 모두 15kJ */
+  truckPerTile(v?: Vehicle): number {
+    return v ? this.truckDrive(v) / this.baseSpeed(v) : TRUCK.drive / TRUCK.speed;
+  }
+
+  /** 노선 없이 조립한 정류장 옆 도로에 서 있는 고급 트럭: 그 정류장에서 충전할 수 있다 */
+  private parkedAtHome(v: Vehicle): boolean {
+    if (v.kind !== 'advanced' || !v.home) return false;
+    const st = this.buildings.get(v.home);
+    return st?.type === 'station' && this.stationStops(st).includes(v.tile) && v.x === (v.tile % this.width) + 0.5 && v.y === Math.floor(v.tile / this.width) + 0.5;
   }
 
   /** 두 곳만 오가는 노선 (싣는 곳 → 내리는 곳) */
@@ -2441,22 +2848,24 @@ export class World {
    * updatePower(수요 계산)와 updateVehicle(실제 충전)이 같은 값을 쓰도록 한곳에서 정한다.
    */
   private chargeWant(v: Vehicle): number {
-    if (!this.routeOk(v) || this.batteryFull(v)) return 0;
-    const need = (this.truckBattery() - v.battery) / DT;
+    if (this.batteryFull(v)) return 0;
+    const need = (this.truckBattery(v) - v.battery) / DT;
+    if (!this.routeOk(v)) return this.parkedAtHome(v) ? Math.min(this.stationCharge(v), need) : 0;
     // 길 중간 충전기 앞에 선 트럭은 더 빨리
     if (v.charger) return Math.min(TRUCK.fastCharge, need);
     if (v.state !== 'loading' && v.state !== 'unloading') return 0;
-    return Math.min(this.stationCharge(), need);
+    return Math.min(this.stationCharge(v), need);
   }
 
-  /** 트럭 배터리 크기 (kJ). 연구 "고용량 배터리"와 끝없는 연구 "트럭 성능"으로 커진다 */
-  truckBattery(): number {
-    return TRUCK.battery * this.batteryTech() * this.boost('endless-truck');
+  /** 트럭 배터리 크기 (kJ). 차량 종류 기본값에 연구 "고용량 배터리"와 끝없는 연구 "트럭 성능"을 곱한다 */
+  truckBattery(v?: Vehicle): number {
+    const base = v?.kind === 'advanced' ? ADVANCED_TRUCK.battery : TRUCK.battery;
+    return base * this.batteryTech() * this.boost('endless-truck');
   }
 
   /** 정류장에 서 있을 때 충전 속도 (kW) */
-  stationCharge(): number {
-    return TRUCK.charge * this.batteryTech();
+  stationCharge(v?: Vehicle): number {
+    return (v?.kind === 'advanced' ? ADVANCED_TRUCK.charge : TRUCK.charge) * this.batteryTech();
   }
 
   private batteryTech(): number {
@@ -2485,28 +2894,28 @@ export class World {
   }
   private chargerCache: { ver: number; tiles: Set<number> } | null = null;
 
-  /** 트럭 속도 (칸/초). 끝없는 연구 "트럭 성능"으로 빨라진다 */
-  truckSpeed(): number {
-    return TRUCK.speed * this.boost('endless-truck');
+  /** 트럭 속도 (칸/초). 차량 종류 기본값에 끝없는 연구 "트럭 성능"을 곱한다 */
+  truckSpeed(v?: Vehicle): number {
+    return (v?.kind === 'advanced' ? ADVANCED_TRUCK.speed : TRUCK.speed) * this.boost('endless-truck');
   }
 
   /** 배터리가 다 찼는지 (더하고 나눌 때 생기는 아주 작은 오차는 봐준다) */
   private batteryFull(v: Vehicle): boolean {
-    return v.battery >= this.truckBattery() - 1e-6;
+    return v.battery >= this.truckBattery(v) - 1e-6;
   }
 
   private updateVehicle(v: Vehicle): void {
+    // 정류장에 서 있으면 충전 (전력이 모자라면 그 비율만큼만). 노선 없는 고급 트럭도 조립한 정류장 옆이면
+    const want = this.chargeWant(v);
+    if (want > 0) {
+      v.battery = Math.min(this.truckBattery(v), v.battery + want * this.power.satisfaction * DT);
+      if (this.batteryFull(v)) v.battery = this.truckBattery(v);
+    }
     if (!this.routeOk(v)) {
-      v.status = 'no-station';
+      v.status = want > 0 ? 'charging' : 'no-station';
       return;
     }
     const st = this.buildings.get(v.stopId)!;
-    // 정류장에 서 있으면 충전 (전력이 모자라면 그 비율만큼만)
-    const want = this.chargeWant(v);
-    if (want > 0) {
-      v.battery = Math.min(this.truckBattery(), v.battery + want * this.power.satisfaction * DT);
-      if (this.batteryFull(v)) v.battery = this.truckBattery();
-    }
     if (v.state === 'to-load' || v.state === 'to-unload') {
       if (!this.drive(v, st)) return;
       v.state = v.state === 'to-load' ? 'loading' : 'unloading';
@@ -2529,10 +2938,10 @@ export class World {
       }
     }
     const empty = v.battery <= 0;
-    const full = this.truckSpeed() * DT * (empty ? TRUCK.emptySpeed : 1);
+    const full = this.truckSpeed(v) * DT * (empty ? TRUCK.emptySpeed : 1);
     const [arrived, left] = this.move(v, st, full);
     // 한 칸에 drive / speed kJ (기본 속도 기준: 빨라져도 칸당 드는 전기는 같다)
-    v.battery = Math.max(0, v.battery - ((full - left) * TRUCK.drive) / TRUCK.speed);
+    v.battery = Math.max(0, v.battery - (full - left) * this.truckPerTile(v));
     if (empty && v.status === 'moving') v.status = 'no-battery';
     return arrived;
   }
@@ -2568,7 +2977,7 @@ export class World {
       }
       if (v.path.length === 0) return [true, step];
       // 충전기 옆 칸: 남은 길을 갈 배터리가 모자라면 서서 가득 채운다 (넉넉하면 그냥 지나간다)
-      if (v.battery < v.path.length * (TRUCK.drive / TRUCK.speed) && !this.batteryFull(v) && this.chargerTiles().has(v.tile)) {
+      if (v.battery < v.path.length * this.truckPerTile(v) && !this.batteryFull(v) && this.chargerTiles().has(v.tile)) {
         v.charger = true;
         v.status = 'charging';
         return [false, step];
@@ -2588,7 +2997,7 @@ export class World {
   }
 
   private canLoadNow(v: Vehicle, st: Building): boolean {
-    return v.load < TRUCK.capacity && this.loadableItem(st, v.stopItem) !== null;
+    return v.load < this.truckCapacity(v) && this.loadableItem(st, v.stopItem) !== null;
   }
 
   /**
@@ -2596,7 +3005,7 @@ export class World {
    * 빈 채로는 기다리지만, 노선의 다른 싣는 곳에 이 트럭이 실을 짐이 있으면 빈 채로 그리로 간다 (빈 바퀴는 돌지 않는다)
    */
   private loadTruck(v: Vehicle, st: Building): void {
-    if (v.load >= TRUCK.capacity) return this.leave(v);
+    if (v.load >= this.truckCapacity(v)) return this.leave(v);
     // 먼저 온 트럭부터 하나씩 채운다 (여럿이 나눠 실으면 모두 덜 찬 채로 떠나게 된다)
     for (const o of this.vehicles.values()) {
       if (o === v || o.state !== 'loading' || o.stopId !== v.stopId) continue;
@@ -2648,6 +3057,7 @@ export class World {
     addTo(v.cargo, item, -1);
     addTo(buf, item, 1);
     v.lapUnloaded++;
+    if (v.kind === 'advanced') this.advDelivered++;
     v.status = 'unloading';
   }
 
@@ -2687,9 +3097,10 @@ export class World {
     const res: OutTarget[] = [];
     const seen = new Set<number>();
     const isSplitter = isSplitterType(b.type);
+    const outs = b.def.ports ? portTiles(b, 'out') : null;
     for (const [nx, ny, out] of edgeNeighbors(b)) {
-      // 기계는 앞면(화살표)으로만, 분배기는 입구(뒤)를 뺀 세 면으로 내보낸다.
-      if (isSplitter ? out === opposite(b.dir) : out !== b.dir) continue;
+      // 기계는 앞면(화살표)으로만, 분배기는 입구(뒤)를 뺀 세 면으로, 새 설비는 지정 출구 칸으로만 내보낸다.
+      if (outs ? !outs.some(([px, py]) => px === nx && py === ny) : isSplitter ? out === opposite(b.dir) : out !== b.dir) continue;
       const n = this.buildingAt(nx, ny);
       if (!n || n === b) continue;
       const fromSide = opposite(out);
@@ -2698,7 +3109,7 @@ export class World {
         if (entryPos(n, fromSide) >= 0) res.push({ b: n, fromSide, out });
         continue;
       }
-      if (seen.has(n.id) || !acceptsFrom(n, fromSide)) continue;
+      if (seen.has(n.id) || (n.def.ports ? !this.portFrom(n, b) : !acceptsFrom(n, fromSide))) continue;
       seen.add(n.id);
       res.push({ b: n, fromSide, out });
     }
@@ -2807,6 +3218,10 @@ export class World {
         ...(b.filter ? { filter: b.filter } : {}),
         ...(b.ugMode ? { ug: b.ugMode, partner: b.partner } : {}),
         ...(b.type === 'station' ? { no: b.stationNo, ...(b.stationMode === 'unload' ? { mode: 'unload' as const } : {}) } : {}),
+        // 슬롯의 모듈 1개와 출처, 지금 배치가 모듈을 쓰는지, 분리 예약 (슬롯과 배치는 같은 한 개를 가리킨다)
+        ...(b.module ? { mod: b.module.from } : {}),
+        ...(b.modBatch ? { modBatch: true } : {}),
+        ...(b.detach ? { detach: true } : {}),
       })),
       nextStationNo: this.nextStationNo,
       vehicles: [...this.vehicles.values()].map((v) => ({
@@ -2827,7 +3242,15 @@ export class World {
         battery: v.battery,
         ...(v.charger ? { charger: true } : {}),
         ...(v.filter ? { filter: v.filter } : {}),
+        ...(v.kind !== 'basic' ? { kind: v.kind, kit: v.kit ?? undefined, home: v.home } : {}),
       })),
+      // 예전 세계는 모양을 그대로 (없으면 legacy-v042로 읽는다)
+      ...(this.rules !== 'legacy-v042' ? { rules: this.rules } : {}),
+      ...(this.piles.length || this.nextPileEv > 1
+        ? { piles: this.piles.map((p): [number, number, number, number, PileReason] => [p.tile, ITEM_IDS.indexOf(p.item), p.n, p.ev, p.why]), pileEv: this.nextPileEv }
+        : {}),
+      ...(this.doneCmds.size ? { cmds: [...this.doneCmds] } : {}),
+      ...(this.moduleBatches || this.advDelivered ? { counters: { moduleBatches: this.moduleBatches, advDelivered: this.advDelivered } } : {}),
     };
   }
 
@@ -2836,6 +3259,10 @@ export class World {
     const w = new World(data.width, data.height);
     w.seed = data.seed;
     w.time = data.time;
+    // 규칙 프로필이 없는 저장은 기존 세계. 모르는 프로필은 열지 않는다 (가격·규칙을 엉뚱하게 바꾸지 않게)
+    const rules = data.rules ?? 'legacy-v042';
+    if (!RULE_PROFILES.includes(rules)) throw new Error(`이 버전이 모르는 세계 규칙: ${rules}`);
+    w.rules = rules;
     for (const [i, itemIdx, a] of data.res) {
       w.resItem[i] = ITEM_IDS[itemIdx];
       w.resAmount[i] = a < 0 ? Infinity : a;
@@ -2880,6 +3307,10 @@ export class World {
       b.partner = s.partner ?? 0;
       b.stationNo = s.no ?? 0;
       b.stationMode = s.mode ?? 'load';
+      b.module = s.mod !== undefined ? { from: s.mod } : null;
+      // 슬롯이 비었는데 모듈 배치·분리 예약이 있는 손상 저장은 아이템을 만들어 맞추지 않고 효과만 버린다
+      b.modBatch = !!s.modBatch && !!b.module && b.crafting;
+      b.detach = !!s.detach && !!b.module;
       w.attach(b);
     }
     w.nextStationNo = data.nextStationNo ?? Math.max(0, ...w.stations().map((s) => s.stationNo)) + 1;
@@ -2912,9 +3343,23 @@ export class World {
       // 배터리가 생기기 전 저장이면 가득 찬 채로
       v.battery = s.battery ?? w.truckBattery();
       v.charger = s.charger ?? false;
+      // 종류가 없는 차량은 기존 기본 트럭
+      if (s.kind === 'advanced') {
+        v.kind = 'advanced';
+        v.kit = s.kit ?? null;
+        v.home = s.home ?? 0;
+      }
       w.vehicles.set(v.id, v);
       w.nextVehicleId = Math.max(w.nextVehicleId, v.id + 1);
     }
+    for (const [tile, itemIdx, n, ev, why] of data.piles ?? []) {
+      const item = ITEM_IDS[itemIdx];
+      if (item && n > 0) w.piles.push({ tile, item, n, ev, why });
+    }
+    w.nextPileEv = Math.max(data.pileEv ?? 1, ...w.piles.map((p) => p.ev + 1));
+    w.doneCmds = new Map(data.cmds ?? []);
+    w.moduleBatches = data.counters?.moduleBatches ?? 0;
+    w.advDelivered = data.counters?.advDelivered ?? 0;
     // v1은 입출구 방향이 없던 시절이라, 이어진 컨베이어를 보고 방향을 맞춰 준다.
     if (data.v === 1) for (const b of w.buildings.values()) w.orientLegacy(b);
     return w;
@@ -2989,6 +3434,9 @@ export class World {
   checksum(): number {
     const h = new Hasher();
     h.num(this.tickNo).num(this.nextId).num(this.nextVehicleId).num(this.time);
+    h.str(this.rules).num(this.nextPileEv).num(this.moduleBatches).num(this.advDelivered);
+    for (const p of this.piles) h.num(p.tile).str(p.item).num(p.n).num(p.ev);
+    for (const [rid, r] of this.doneCmds) h.str(rid).num(r.ok ? 1 : 0).num(r.vehicle ?? 0).num(r.from ?? 0);
     for (const [item, n] of this.stock) h.str(item).num(n);
     h.num(this.researched.size);
     for (const [id, n] of this.levels) h.str(id).num(n);
@@ -2998,13 +3446,14 @@ export class World {
       h.num(b.id).str(b.type).num(b.x).num(b.y).num(b.dir).str(b.recipe ?? '').str(b.filter ?? '');
       h.num(b.progress).num(b.crafting ? 1 : 0).num(b.outRR).num(b.mineIdx).num(b.fuel).num(b.energy);
       h.num(b.cycle).num(b.partner).num(b.heldFrom).str(b.held ?? '').num(b.heldN).str(b.stationMode);
+      h.num(b.module ? b.module.from + 1 : 0).num(b.modBatch ? 1 : 0).num(b.detach ? 1 : 0);
       for (const [item, n] of b.inBuf) h.str(item).num(n);
       for (const [item, n] of b.outBuf) h.str(item).num(n);
       for (const it of b.items) h.str(it.item).num(it.pos).num(it.n);
     }
     for (const v of this.vehicles.values()) {
       h.num(v.id).num(v.x).num(v.y).num(v.tile).str(v.state).num(v.timer).num(v.idle).num(v.battery).num(v.charger ? 1 : 0);
-      h.num(v.stop);
+      h.num(v.stop).str(v.kind).num(v.home).str(v.kit?.item ?? '').num(v.kit?.from ?? 0);
       for (const s of v.stops) h.num(s.id).str(s.act).str(s.item ?? '');
       for (const [item, n] of v.cargo) h.str(item).num(n);
     }
@@ -3068,6 +3517,10 @@ export interface SavedBuilding {
   /** 정류장만: 번호, 내리기면 'unload' (없으면 싣기) */
   no?: number;
   mode?: 'unload';
+  /** 장착 모듈의 출처 창고 id (있으면 슬롯에 모듈 1개). 지금 배치가 모듈을 쓰는지, 분리 예약 */
+  mod?: number;
+  modBatch?: boolean;
+  detach?: boolean;
 }
 
 export interface SavedVehicle {
@@ -3092,6 +3545,10 @@ export interface SavedVehicle {
   charger?: boolean;
   /** 싣는 아이템 (없으면 아무거나). 노선이 생기기 전 버전이 읽는 값 = 첫 싣는 곳의 것 */
   filter?: ItemId;
+  /** 차량 종류 (없으면 기본 트럭), 고급 트럭에 포함된 조립품과 출처, 조립한 정류장 */
+  kind?: TruckKind;
+  kit?: { item: ItemId; from: number };
+  home?: number;
 }
 
 export interface SaveData {
@@ -3120,6 +3577,15 @@ export interface SaveData {
   buildings: SavedBuilding[];
   nextStationNo?: number;
   vehicles?: SavedVehicle[];
+  /** 세계 규칙 프로필 (없으면 legacy-v042) */
+  rules?: RuleProfile;
+  /** 현지 회수 더미 [칸 번호, 아이템 번호, 개수, 회수 사건, 이유]와 다음 사건 번호 */
+  piles?: [number, number, number, number, PileReason][];
+  pileEv?: number;
+  /** 처리한 현지 실물 명령 [rid, 결과] (같은 명령을 다시 받아도 다시 실행하지 않게) */
+  cmds?: [string, UseResult][];
+  /** 목표 판정용 실제 사건 수 */
+  counters?: { moduleBatches: number; advDelivered: number };
 }
 
 export interface NetSnapshot {
@@ -3202,6 +3668,12 @@ export function acceptsFrom(n: Building, fromSide: Dir): boolean {
     case 'sawmill':
     case 'merger':
       return fromSide !== n.dir;
+    // 새 설비: 실제로는 지정 칸만 받는다 (portTiles). 면으로는 앞만 아니면 후보
+    case 'chem-reactor':
+    case 'refinery':
+    case 'electrolyzer':
+    case 'large-assembler':
+      return fromSide !== n.dir;
     case 'splitter':
     case 'overflow':
     case 'sorter':
@@ -3254,6 +3726,29 @@ function tileHash(n: number): number {
   let h = Math.imul(n ^ 0x9e3779b9, 0x85ebca6b);
   h = Math.imul(h ^ (h >>> 13), 0xc2b2ae35);
   return (h ^ (h >>> 16)) >>> 0;
+}
+
+/**
+ * 새 설비의 지정 입구·출구 칸 (맵 칸 좌표). 데이터는 앞면이 남쪽(dir 2)일 때 기준이라 방향만큼 시계 방향으로 돌린다
+ * (한 번 돌리면 (x, y) → (크기 - 1 - y, x))
+ */
+export function portTiles(b: { x: number; y: number; size: number; dir: Dir; def: { ports?: Ports } }, kind: 'in' | 'out'): [number, number][] {
+  const list = b.def.ports?.[kind] ?? [];
+  const turns = (b.dir - 2 + 4) % 4;
+  return list.map(([px, py]) => {
+    let x = px;
+    let y = py;
+    for (let k = 0; k < turns; k++) [x, y] = [b.size - 1 - y, x];
+    return [b.x + x, b.y + y];
+  });
+}
+
+/** 창고군의 구조 표시: 군에 든 창고 id들. 창고를 짓거나 철거해 군이 바뀌면 달라진다 */
+export function groupKey(group: Building[]): string {
+  return group
+    .map((s) => s.id)
+    .sort((a, b) => a - b)
+    .join(',');
 }
 
 /** 창고 묶음이 차지하는 칸 범위 (오른쪽·아래는 끝 칸 다음) */

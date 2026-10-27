@@ -27,6 +27,7 @@ const TAB_ICON: Record<Category, () => string> = {
   storage: () => buildingIconUrl('storage'),
   transport: truckIconUrl,
   forest: () => buildingIconUrl('lumberjack'),
+  industry: () => buildingIconUrl('large-assembler'),
 };
 
 const categoryOf = (type: BuildingType): Category | null =>
@@ -120,6 +121,8 @@ export class Toolbar {
   }
 
   private syncScrollbar: () => void = () => {};
+  /** 지금 세계가 regional-v1인지 (산업 탭을 보일지) */
+  private regional = false;
 
   /** 지금 탭의 i번째(0부터) 건물. 청사진 탭이면 i번째 청사진을 들고 null */
   slot(i: number): BuildingType | null {
@@ -143,19 +146,24 @@ export class Toolbar {
       return true;
     }
     const c = CATEGORIES.find((cat) => cat.key === key);
-    if (!c) return false;
+    if (!c || (c.id === 'industry' && !this.regional)) return false;
     this.setCategory(c.id);
     return true;
   }
 
   /** Tab / Shift+Tab */
   cycle(delta: number): void {
-    const tabs: Tab[] = [...CATEGORIES.map((c) => c.id), 'blueprints'];
+    const tabs: Tab[] = [...CATEGORIES.map((c) => c.id).filter((id) => id !== 'industry' || this.regional), 'blueprints'];
     const i = tabs.indexOf(this.category);
     this.setCategory(tabs[(i + delta + tabs.length) % tabs.length]);
   }
 
   update(w: World): void {
+    // 산업 탭은 지역 생산망 확장 세계에서만
+    const industry = document.querySelector<HTMLElement>('#tabs .tab[data-cat="industry"]');
+    this.regional = w.regional;
+    if (industry) industry.hidden = !w.regional;
+    if (!w.regional && this.category === 'industry') this.setCategory('production');
     const tool = this.input.tool;
     // 다른 탭의 건물을 들게 되면 그 탭을 보여 준다
     if (tool !== this.lastTool) {

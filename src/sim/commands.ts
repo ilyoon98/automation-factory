@@ -4,7 +4,7 @@ import { pasteBlueprint, type Blueprint } from './blueprint';
 import type { Building, StationMode } from './building';
 import type { Dir } from './dir';
 import { ROUTE_MAX, ROUTE_MIN, type RouteStop, type Vehicle } from './vehicle';
-import { World, type EditOp } from './world';
+import { World, applyOnce, type EditOp, type UseResult } from './world';
 
 /**
  * 플레이어가 월드를 바꾸는 일 전부. 마우스·버튼은 월드를 직접 고치지 않고 명령을 낸다.
@@ -32,6 +32,16 @@ export type Command =
   /** 트럭 노선 (정류장 ROUTE_MIN ~ ROUTE_MAX곳, 차례대로) */
   | { t: 'route'; id: number; stops: RouteStop[] }
   | { t: 'truck-filter'; id: number; item: ItemId | null }
+  /**
+   * 현지 실물을 쓰는 명령 (regional-v1). rid = 명령마다 새로 붙이는 고유 번호: 같은 rid는 한 번만 적용한다.
+   * 되돌리기(Ctrl+Z) 대상이 아니다. 설치의 반대는 분리, 고급 트럭 조립의 반대는 철거
+   */
+  /** 기계(id)에 닿은 창고(storage)가 속한 창고군(key = 그때 본 구조)의 모듈 1개를 슬롯으로 */
+  | { t: 'module-install'; rid: string; id: number; storage: number; key: string }
+  /** normal = 바로 또는 제작 완료 후 분리, cancel-request = 분리 예약 취소, force = 작업 취소 후 즉시 분리 */
+  | { t: 'module-detach'; rid: string; id: number; mode: 'normal' | 'cancel-request' | 'force' }
+  /** 정류장 자체 또는 직접 붙은 창고군(key, '' = 정류장만)의 조립품 1개로 고급 트럭. copy = 노선을 베낄 트럭 */
+  | { t: 'build-adv-truck'; rid: string; station: number; key: string; copy?: number }
   | { t: 'undo' }
   | { t: 'redo' };
 
@@ -65,6 +75,9 @@ export interface CommandResults {
   'remove-truck': boolean;
   route: void;
   'truck-filter': void;
+  'module-install': UseResult;
+  'module-detach': UseResult;
+  'build-adv-truck': UseResult;
   undo: { ops: EditOp[]; skipped: number } | null;
   redo: { ops: EditOp[]; skipped: number } | null;
 }
@@ -162,6 +175,24 @@ function run(w: World, c: Command): CommandResults[Command['t']] {
       if (v) w.setTruckFilter(v, c.item);
       return;
     }
+    case 'module-install':
+      return applyOnce(w, c.rid, () => {
+        const b = w.buildings.get(c.id);
+        if (!b) return { ok: false, reason: '기계가 없어요' };
+        return w.installModule(b, Number(c.storage), String(c.key ?? ''));
+      });
+    case 'module-detach':
+      return applyOnce(w, c.rid, () => {
+        const b = w.buildings.get(c.id);
+        if (!b) return { ok: false, reason: '기계가 없어요' };
+        if (c.mode !== 'normal' && c.mode !== 'cancel-request' && c.mode !== 'force') return { ok: false, reason: '잘못된 명령이에요' };
+        return w.detachModule(b, c.mode);
+      });
+    case 'build-adv-truck':
+      return applyOnce(w, c.rid, () => {
+        const copy = c.copy ? w.vehicles.get(c.copy) : undefined;
+        return w.buildAdvancedTruck(w.buildings.get(c.station), String(c.key ?? ''), copy);
+      });
     case 'undo':
       return w.undo();
     case 'redo':

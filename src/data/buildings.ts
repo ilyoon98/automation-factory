@@ -30,9 +30,14 @@ export type BuildingType =
   | 'solar'
   | 'hydro'
   | 'wind'
-  | 'electric-furnace';
+  | 'electric-furnace'
+  // 지역 생산망 확장 (regional-v1): 지정 칸으로만 받고 내보내는 새 생산 설비
+  | 'chem-reactor'
+  | 'refinery'
+  | 'electrolyzer'
+  | 'large-assembler';
 
-export type Category = 'logistics' | 'production' | 'power' | 'storage' | 'transport' | 'forest';
+export type Category = 'logistics' | 'production' | 'power' | 'storage' | 'transport' | 'forest' | 'industry';
 
 /**
  * 하단 툴바 카테고리. key로 탭을 바꾸고, 숫자 1~9로 items의 순서대로 고른다.
@@ -55,7 +60,18 @@ export const CATEGORIES: { id: Category; name: string; key: string; items: Build
   { id: 'storage', name: '보관', key: 'v', items: ['storage', 'unloader'] },
   { id: 'transport', name: '운송', key: 'b', items: ['road', 'station', 'charger'] },
   { id: 'forest', name: '숲', key: 'n', items: ['lumberjack', 'planter', 'sawmill'] },
+  // regional-v1 세계에서만 탭이 보인다
+  { id: 'industry', name: '산업', key: 'j', items: ['chem-reactor', 'refinery', 'electrolyzer', 'large-assembler'] },
 ];
+
+/**
+ * 지정 칸 입출구. 앞면이 남쪽(↓)일 때 몸체 왼쪽 위 (0,0) 기준 "몸체 바깥에 벨트를 놓는 칸".
+ * 건물을 돌리면 같이 돈다. 여기 없는 칸으로는 받지도 내보내지도 않는다
+ */
+export interface Ports {
+  in: [number, number][];
+  out: [number, number][];
+}
 
 export interface BuildingDef {
   type: BuildingType;
@@ -73,6 +89,8 @@ export interface BuildingDef {
   speed?: number;
   /** 컨베이어 한 칸에 쌓을 수 있는 개수 */
   stack?: number;
+  /** 있으면 면 전체가 아니라 이 칸들로만 입출력 (새 생산 설비) */
+  ports?: Ports;
 }
 
 export const BUILDINGS: Record<BuildingType, BuildingDef> = {
@@ -477,6 +495,98 @@ export const BUILDINGS: Record<BuildingType, BuildingDef> = {
       '석탄 없이 전기만으로 철판을 강철로 만든다 (철판 2 → 강철 1). 대신 전력을 많이 쓴다. 출구(노란 화살표)를 뺀 나머지 면으로 받는다.',
     placeable: true,
   },
+  'chem-reactor': {
+    type: 'chem-reactor',
+    name: '화학 반응기',
+    size: 2,
+    cost: [
+      { item: 'steel', count: 8 },
+      { item: 'gear', count: 6 },
+      { item: 'circuit', count: 4 },
+    ],
+    power: 180,
+    color: '#5f9a6a',
+    description: '수액을 고무로, 황과 물을 황산으로. 레시피를 골라야 한다. 뒤 두 칸과 왼쪽 위 한 칸으로 받고, 앞 오른쪽 한 칸으로 내보낸다.',
+    placeable: true,
+    ports: {
+      in: [
+        [0, -1],
+        [1, -1],
+        [-1, 0],
+      ],
+      out: [[1, 2]],
+    },
+  },
+  refinery: {
+    type: 'refinery',
+    name: '정유소',
+    size: 3,
+    cost: [
+      { item: 'steel', count: 20 },
+      { item: 'motor', count: 4 },
+      { item: 'circuit', count: 12 },
+    ],
+    power: 240,
+    color: '#6a5a4a',
+    description: '원유로 플라스틱·윤활유·연료 중 하나를 만든다. 레시피를 골라야 한다. 뒤 양 끝 두 칸으로 받고, 앞 가운데로 내보낸다.',
+    placeable: true,
+    ports: {
+      in: [
+        [0, -1],
+        [2, -1],
+      ],
+      out: [[1, 3]],
+    },
+  },
+  electrolyzer: {
+    type: 'electrolyzer',
+    name: '전해로',
+    size: 2,
+    cost: [
+      { item: 'steel', count: 16 },
+      { item: 'bronze', count: 8 },
+      { item: 'motor', count: 2 },
+      { item: 'brick', count: 12 },
+    ],
+    power: 500,
+    color: '#7a8fb0',
+    description: '보크사이트를 알루미늄판으로, 염수를 리튬으로 (물이 함께 필요). 레시피를 골라야 한다. 뒤 두 칸으로 받고, 앞 오른쪽 한 칸으로 내보낸다.',
+    placeable: true,
+    ports: {
+      in: [
+        [0, -1],
+        [1, -1],
+      ],
+      out: [[1, 2]],
+    },
+  },
+  'large-assembler': {
+    type: 'large-assembler',
+    name: '대형 조립소',
+    size: 3,
+    cost: [
+      { item: 'steel', count: 30 },
+      { item: 'frame', count: 8 },
+      { item: 'motor', count: 4 },
+      { item: 'controller', count: 4 },
+    ],
+    power: 300,
+    color: '#8a6fb0',
+    description:
+      '고급 트럭 조립품·자동화 설비 모듈을 만든다. 레시피를 골라야 한다. 뒤 두 칸·양옆 두 칸씩 여섯 곳으로 받고, 앞 가운데로 내보낸다.',
+    placeable: true,
+    ports: {
+      in: [
+        [0, -1],
+        [2, -1],
+        [-1, 0],
+        [-1, 2],
+        [3, 0],
+        [3, 2],
+      ],
+      out: [[1, 3]],
+    },
+  },
 };
 
 /** 정류장 하나에 쌓아 두는 아이템 수 */
@@ -527,8 +637,44 @@ export const crossesRoad = (tool: BuildingType, there: BuildingType) =>
 /** 땅(광맥·흙·물)에서 뽑아내는 건물 */
 export const isMinerType = (t: BuildingType) => t === 'miner' || t === 'miner-2' || t === 'pump';
 /** 레시피로 재료를 결과물로 바꾸는 건물 */
-export const RECIPE_MACHINES: BuildingType[] = ['smelter', 'assembler', 'crusher', 'washer', 'separator', 'electric-furnace', 'sawmill'];
+export const RECIPE_MACHINES: BuildingType[] = [
+  'smelter',
+  'assembler',
+  'crusher',
+  'washer',
+  'separator',
+  'electric-furnace',
+  'sawmill',
+  'chem-reactor',
+  'refinery',
+  'electrolyzer',
+  'large-assembler',
+];
 export const isRecipeMachine = (t: BuildingType) => RECIPE_MACHINES.includes(t);
+/** 처음 들어온 재료로 정하지 않고 플레이어가 레시피를 골라야 하는 기계 */
+export const needsRecipeChoice = (t: BuildingType) =>
+  t === 'assembler' || t === 'chem-reactor' || t === 'refinery' || t === 'electrolyzer' || t === 'large-assembler';
+/** 자동화 설비 모듈을 설치할 수 있는 레시피 기계 11종 (지금은 RECIPE_MACHINES 전부) */
+export const MODULE_MACHINES: BuildingType[] = RECIPE_MACHINES;
+
+/** 자동화 설비 모듈: 모듈을 쓰는 배치의 제작 속도·작업 전력 배율 (연구 적용값에 곱한다) */
+export const MODULE = { speed: 1.2, power: 1.25 };
+
+/** 차량 종류 */
+export type TruckKind = 'basic' | 'advanced';
+
+/**
+ * 고급 트럭: 정류장 현지의 고급 트럭 조립품 1개로 만든다 (허브 비용 없음).
+ * 연구 배율은 이 기본값 위에 곱한다. 칸당 전기는 기본 트럭과 같은 15kJ
+ */
+export const ADVANCED_TRUCK = {
+  capacity: 100,
+  speed: 5,
+  battery: 3600,
+  drive: 75,
+  charge: 400,
+  kit: 'truck-kit' as const,
+};
 /** 둘레의 나무를 다루는 건물 (벌목기·식목기) */
 export const isForestType = (t: BuildingType) => t === 'lumberjack' || t === 'planter';
 

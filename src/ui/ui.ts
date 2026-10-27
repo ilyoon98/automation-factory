@@ -150,6 +150,8 @@ const newRid = () => `${RID_PREFIX}-${++ridSeq}`;
 
 /** 심화 메달 네 단계 */
 const MEDAL = ['🥉', '🥈', '🥇', '💎'];
+/** Shift + 1~5 정보 보기 */
+const LAYER_KEYS: MapLayer[] = ['base', 'power', 'transport', 'resource', 'weather'];
 const ACH_TAB: Record<AchKind, string> = { first: '최초', deep: '심화', record: '기록', hidden: '숨은' };
 /** 메달 네 단계로 세는 업적 (심화·기록) */
 const tiered = (a: AchDef) => a.kind === 'deep' || a.kind === 'record';
@@ -449,6 +451,13 @@ export class UI {
       if (k === 'o') this.toggleModal('goals');
       if (k === 'j') this.toggleModal('ach');
       if (k === 'm') game.toggleMap();
+      // Shift + 1~5: 정보 보기 (숫자만 누르면 건물 고르기라 Shift와 함께. 키 배열과 상관없이 e.code로)
+      const n = /^Digit([1-5])$/.exec(e.code);
+      if (e.shiftKey && n && game.getWorld().regional) {
+        const l = LAYER_KEYS[Number(n[1]) - 1];
+        game.input.layer = game.input.layer === l && l !== 'base' ? 'base' : l;
+        this.update();
+      }
     });
     document.querySelectorAll('.modal').forEach((m) =>
       m.addEventListener('click', (e) => {

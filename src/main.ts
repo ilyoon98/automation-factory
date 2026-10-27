@@ -7,6 +7,8 @@ import { addForests, addLakes, generateWorld } from './sim/mapgen';
 import type { Command, PlaceResult, ResultOf } from './sim/commands';
 import { DT, World } from './sim/world';
 import { ITEM_IDS } from './data/items';
+import type { RuleProfile } from './data/tech';
+import { generateRegionalWorld } from './sim/regional-map';
 import { Chat } from './ui/chat';
 import { uiZoom } from './ui/crisp';
 import { Minimap } from './ui/minimap';
@@ -21,11 +23,11 @@ import { setupUpdateBanner } from './ui/update';
 const REGIONAL_DEV = new URLSearchParams(location.search).has('regional-dev');
 const SAVE_KEY = REGIONAL_DEV ? 'automation-game/save-regional-dev' : 'automation-game/save-v1';
 
-/** 새 세계 (개발용 regional-dev면 확장 규칙·연구 완료·재고) */
-function newWorld(): World {
-  const w = generateWorld((Math.random() * 2 ** 31) | 0);
+/** 새 세계 (개발용 regional-dev면 확장 지도에 연구 완료·재고) */
+function newWorld(rules: RuleProfile = REGIONAL_DEV ? 'regional-v1' : 'legacy-v042'): World {
+  const seed = (Math.random() * 2 ** 31) | 0;
+  const w = rules === 'regional-v1' ? generateRegionalWorld(seed) : generateWorld(seed);
   if (REGIONAL_DEV) {
-    w.rules = 'regional-v1';
     for (const t of w.techs) w.applyTech(t.id);
     for (const item of ITEM_IDS) w.stock.set(item, 500);
   }
@@ -187,13 +189,13 @@ const game: GameApi = {
     camera.y = y;
     camera.zoom = Math.max(camera.zoom, 28);
   },
-  newGame() {
+  newGame(rules?: RuleProfile) {
     if (session.role === 'guest') {
       ui.toast('새 게임은 호스트만 시작할 수 있어요');
       return;
     }
     backupWorld();
-    world = newWorld();
+    world = newWorld(rules);
     game.input.selectedId = null;
     game.input.tool = null;
     centerOnHub();

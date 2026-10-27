@@ -19,7 +19,7 @@ import {
 } from '../data/buildings';
 import { ITEMS, ITEM_IDS, type ItemId, type ItemStack } from '../data/items';
 import { RECIPES, recipesFor, type MachineKind } from '../data/recipes';
-import { ENDLESS_BY_ID, ENDLESS_REQUIRES, ENDLESS_TECHS, TECH_CATEGORIES, endlessCost, type TechCategory } from '../data/tech';
+import { ENDLESS_BY_ID, ENDLESS_REQUIRES, ENDLESS_TECHS, TECH_CATEGORIES, endlessCost, type RuleProfile, type TechCategory } from '../data/tech';
 import type { Input } from '../input/input';
 import { DAY_SEC, ambientEnabled, setAmbientEnabled, skyLabel } from '../render/ambient';
 import { lanRoomCheck, type Session } from '../net/session';
@@ -62,7 +62,7 @@ export interface GameApi {
   speed: number;
   setSpeed(s: number): void;
   save(): boolean;
-  newGame(): void;
+  newGame(rules?: RuleProfile): void;
   /** 지금 공장을 파일로 내려받는다 (다른 PC로 옮기거나 백업) */
   exportSave(): void;
   /** 파일 내용으로 공장을 바꾼다. 안 되면 이유, 되면 null */
@@ -92,6 +92,7 @@ const STATUS_COLOR: Record<Status, string> = {
   'no-filter': '#c0392b',
   'no-trees': '#8a7a66',
   'no-room': '#e8893a',
+  locked: '#c0392b',
 };
 
 const VEHICLE_STATUS_COLOR: Record<VehicleStatus, string> = {
@@ -160,6 +161,8 @@ const HAS_STATUS: BuildingType[] = [
   'refinery',
   'electrolyzer',
   'large-assembler',
+  'sap-extractor',
+  'drill',
 ];
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -288,8 +291,12 @@ export class UI {
     });
     onUiZoom(() => this.updateCrisp());
     this.updateCrisp();
-    $('btn-new').addEventListener('click', () => {
-      if (confirm('지금 공장을 버리고 새 게임을 시작할까요?')) game.newGame();
+    $('btn-new').addEventListener('click', () => ($('newgame').hidden = false));
+    $('newgame').addEventListener('click', (e) => {
+      const rules = (e.target as HTMLElement).closest<HTMLElement>('[data-rules]')?.dataset.rules;
+      if (!rules || !confirm('지금 공장을 버리고 새 게임을 시작할까요?')) return;
+      $('newgame').hidden = true;
+      game.newGame(rules as RuleProfile);
     });
 
     window.addEventListener('keydown', (e) => {

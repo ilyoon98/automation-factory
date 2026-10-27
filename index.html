@@ -64,6 +64,17 @@
     <div id="stats" class="modal" hidden></div>
     <div id="codex" class="modal" hidden></div>
 
+    <div id="newgame" class="modal" hidden>
+      <div class="panel">
+        <header><h2>새 게임</h2><button class="x" data-act="close-modal">×</button></header>
+        <p class="muted">지금 공장은 "바로 전 공장으로"로 한 번 되돌릴 수 있어요.</p>
+        <div class="actions" style="flex-direction: column; align-items: stretch">
+          <button data-rules="legacy-v042">기본 지도 <span class="muted">128×128 · 지금까지의 규칙</span></button>
+          <button data-rules="regional-v1">지역 생산망 확장 <span class="muted">256×256 · 지형 7종 · 특화 자원 · 지역 전력 (시제품)</span></button>
+        </div>
+      </div>
+    </div>
+
     <div id="help" class="modal" hidden>
       <div class="panel">
         <header><h2>자동화 공장</h2><button class="x" data-act="close-modal">×</button></header>

@@ -14,7 +14,8 @@ export type Status =
   | 'no-water'
   | 'no-filter'
   | 'no-trees'
-  | 'no-room';
+  | 'no-room'
+  | 'locked';
 
 export const STATUS_LABEL: Record<Status, string> = {
   idle: '대기',
@@ -29,6 +30,7 @@ export const STATUS_LABEL: Record<Status, string> = {
   'no-filter': '아이템 선택 안 함',
   'no-trees': '다 자란 나무 없음',
   'no-room': '심을 땅 없음',
+  locked: '연구 필요 (아직 캘 수 없는 자원)',
 };
 
 export type StationMode = 'load' | 'unload';

@@ -618,6 +618,31 @@ define('electrolyzer', 32, 32, 5, (p, f) => {
   mouth(p, 16, 20, 12, 5, f, ['#f2fbff', '#bfe6ff', '#6fb6f2']);
 });
 
+define('sap-extractor', 32, 32, 5, (p, f) => {
+  machine(p, ramp('#8fae6a'), PAL.wood);
+  // 수액 통과 관: 일하면 방울이 떨어진다
+  p.rect(5, 4, 10, 13, PAL.ink);
+  p.rect(6, 5, 8, 11, '#e8dcb0');
+  p.rect(6, 5, 8, 2, '#f6efd6');
+  p.rect(17, 7, 10, 3, PAL.ink);
+  p.rect(17, 8, 9, 1, PAL.metal.mid);
+  if (f) p.px(10, 7 + (f % 4) * 2, '#c9b27a');
+  for (const [x, y] of [[27, 3], [27, 15]]) bolt(p, x, y, IRON);
+});
+
+define('drill', 32, 32, 5, (p, f) => {
+  machine(p, ramp('#6a6a7a'), IRON);
+  // 시추 탑: 일하면 굴대가 오르내린다
+  p.rect(12, 1, 8, 17, PAL.ink);
+  p.rect(13, 2, 6, 15, PAL.metal.mid);
+  for (let y = 4; y < 16; y += 4) p.rect(13, y, 6, 1, PAL.metal.lo);
+  const up = f ? [0, 2, 3, 2, 0][f] : 0;
+  p.rect(15, 6 - up, 2, 10, PAL.brass.mid);
+  p.disc(8, 12, 3.5, PAL.ink);
+  p.disc(8, 12, 2.5, '#3b3431');
+  for (const [x, y] of [[3, 3], [27, 3], [27, 15]]) bolt(p, x, y, IRON);
+});
+
 define('refinery', 48, 48, 5, (p, f) => {
   bigMachine(p, ramp('#7a6a5a'), IRON);
   // 증류탑 셋과 이어진 관

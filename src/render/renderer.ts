@@ -9,6 +9,7 @@ import {
   type BuildingType,
 } from '../data/buildings';
 import { ITEMS, type ItemId } from '../data/items';
+import { TERRAIN, TERRAIN_IDS } from '../data/terrain';
 import { RECIPES } from '../data/recipes';
 import type { Presence } from '../net/session';
 import type { Blueprint } from '../sim/blueprint';
@@ -92,7 +93,7 @@ const STATUS_BADGE: Partial<Record<Status, string>> = {
 const ORE_LOW_BADGE = 'low';
 
 /** 광맥 그림이 있는 자원 */
-const ORE_TILES: ItemId[] = ['iron-ore', 'copper-ore', 'coal', 'stone'];
+const ORE_TILES: ItemId[] = ['iron-ore', 'copper-ore', 'coal', 'stone', 'tin-ore', 'bauxite', 'sulfur', 'sand'];
 /** 바닥은 이만큼(칸)씩 묶어 한 장으로 구워 둔다 */
 const CHUNK = 16;
 /** 그림 1픽셀이 화면 픽셀 이만큼보다 작아지면(멀리서 보면) 바닥을 칸마다 단색으로 */
@@ -745,6 +746,18 @@ export class Renderer {
     // 나무: 자람 정도에 따라 새싹·어린 나무·나무. 다 자란 나무는 바람에 살짝 흔들린다.
     // 칸마다 좌우를 섞어 뒤집어서 과수원처럼 줄 맞춰 보이지 않게
     const sway = world.time * 0.7;
+    if (world.terrain) {
+      // 고무나무 군락과 지열 분출구 (확장 지도)
+      const vents = new Set(world.vents);
+      for (let y = y0; y <= y1; y++) {
+        for (let x = x0; x <= x1; x++) {
+          const i = world.idx(x, y);
+          const [sx, sy] = cam.worldToScreen(x, y);
+          if (world.resItem[i] === 'sap') this.blit('rubber-tree', 0, sx, sy, (hash(i) & 8) !== 0);
+          else if (vents.has(i)) this.blit('vent', Math.floor(world.time * 2 + (i & 1)) % 2, sx, sy);
+        }
+      }
+    }
     for (let y = y0; y <= y1; y++) {
       for (let x = x0; x <= x1; x++) {
         const i = world.idx(x, y);
@@ -1001,6 +1014,14 @@ export class Renderer {
       case 'sawmill':
         this.blit('sawmill', anim(working, 12), sx, sy);
         plate(world.recipeOf(b)?.outputs[0].item);
+        break;
+      case 'sap-extractor':
+        this.blit(b.type, anim(working), sx, sy);
+        plate('sap');
+        break;
+      case 'drill':
+        this.blit(b.type, anim(working), sx, sy);
+        plate(world.resItem[b.mineTiles[0]]);
         break;
       case 'chem-reactor':
       case 'electrolyzer':
@@ -1704,7 +1725,9 @@ function groundSprite(world: World, i: number): string {
   const item = world.resItem[i];
   const h = hash(i);
   if (item && ORE_TILES.includes(item)) return `ore:${item}:${richness(world.resAmount[i])}:${(h >>> 3) & 3}`;
-  return `ground:${h & 7}`;
+  if (item === 'crude-oil' || item === 'brine') return `point:${item}:${world.resAmount[i] > 0 ? 0 : 1}`;
+  const t = world.terrain ? world.terrain[i] : 0;
+  return t ? `ground:${t}:${h & 3}` : `ground:${h & 7}`;
 }
 
 /** 나무 그림 단계: 0 새싹, 1 어린 나무, 2 다 자란 나무 */
@@ -1717,8 +1740,9 @@ function groundCode(world: World, i: number): number {
   const item = world.resItem[i];
   if (item === 'water') return 99;
   if (world.tree[i] > 0) return 200 + treeStage(world.tree[i]);
+  if (item === 'crude-oil' || item === 'brine') return 400 + (item === 'brine' ? 2 : 0) + (world.resAmount[i] > 0 ? 0 : 1);
   const k = item ? ORE_TILES.indexOf(item) : -1;
-  return k < 0 ? 0 : 1 + k * 4 + richness(world.resAmount[i]);
+  return k < 0 ? 300 + (world.terrain ? world.terrain[i] : 0) : 1 + k * 4 + richness(world.resAmount[i]);
 }
 
 /** 멀리서 볼 때 칸 색: 땅, 물, 광맥 바닥색 (매장량이 많으면 진하게, 적으면 옅게) */
@@ -1728,7 +1752,7 @@ function lodColor(world: World, i: number): string {
   const g = world.tree[i];
   if (g > 0) return treeStage(g) === 2 ? TREE_LEAF.lo : TREE_LEAF.hi;
   const base = item ? ORE_GROUND[item] : undefined;
-  if (!base) return PAL.ground[0];
+  if (!base) return world.terrain ? TERRAIN[TERRAIN_IDS[world.terrain[i]]].color : PAL.ground[0];
   const rich = richness(world.resAmount[i]);
   return rich === 3 ? tone(base, -0.12) : rich === 2 ? base : tone(base, 0.25);
 }

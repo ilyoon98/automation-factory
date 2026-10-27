@@ -1,5 +1,6 @@
 import { BUILDINGS, isBeltType, type BuildingType } from '../data/buildings';
 import { ITEMS } from '../data/items';
+import { TERRAIN, TERRAIN_IDS } from '../data/terrain';
 import type { Camera } from '../render/camera';
 import { ORE_GROUND, TREE_LEAF } from '../render/pixel';
 import { patchAlert, type World } from '../sim/world';
@@ -134,8 +135,9 @@ export class Minimap {
     const img = this.ctx.createImageData(w.width, w.height);
     const d = img.data;
     const ground = rgb(GROUND);
+    const terrain = TERRAIN_IDS.map((t) => rgb(TERRAIN[t].color));
     for (let i = 0; i < w.width * w.height; i++) {
-      let c = ground;
+      let c = w.terrain ? terrain[w.terrain[i]] : ground;
       const item = w.resItem[i];
       if (item === 'water') c = rgb(WATER);
       else if (item) {

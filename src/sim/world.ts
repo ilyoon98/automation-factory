@@ -23,6 +23,8 @@ import {
   isForestType,
   isMinerType,
   isRecipeMachine,
+  isExtractorType,
+  EXTRACT,
   needsRecipeChoice,
   type BuildingType,
   type Ports,
@@ -48,6 +50,8 @@ import { Building, addTo, countOf, type BeltItem, type StationMode } from './bui
 import { DX, DY, opposite, rotateCW, type Dir } from './dir';
 import { darkness, weatherMix } from './sky';
 import { ROUTE_MIN, Vehicle, type RouteStop, type VehicleState } from './vehicle';
+import { TERRAIN, TERRAIN_IDS, type TerrainKind } from '../data/terrain';
+import { WEATHER_FX, localWeather, type LocalWeather, type WeatherFx } from './weather-v1';
 
 export const TICK_RATE = 60;
 export const DT = 1 / TICK_RATE;
@@ -177,6 +181,19 @@ export interface UseResult {
   /** 실제로 차감한 보관물 (정류장·창고 건물 id) */
   from?: number;
 }
+
+/** 채굴·채취에 연구가 필요한 자원 (regional-v1). 원유·염수는 시추기, 수액은 수액 채취기 */
+const ORE_TECH: Partial<Record<ItemId, string>> = {
+  'tin-ore': 'alloy',
+  bauxite: 'electro-metal',
+  sulfur: 'sulfur-chem',
+  'crude-oil': 'oil-control',
+  brine: 'lithium-storage',
+  sap: 'industrial-motor',
+};
+
+/** 채굴기로는 캐지 않는 자원 칸 (시추기·수액 채취기 전용) */
+export const NOT_MINED: ItemId[] = ['water', 'sap', 'crude-oil', 'brine'];
 
 /** 저장해 두는 처리한 명령 결과 수 (오래된 것부터 잊는다) */
 const DONE_CMDS_MAX = 512;
@@ -343,6 +360,10 @@ export class World {
   seed = 0;
   /** 세계 규칙 프로필. 기존 저장은 legacy-v042로 읽고 자동으로 바꾸지 않는다 */
   rules: RuleProfile = 'legacy-v042';
+  /** 칸마다 지형 번호 (TERRAIN_IDS). 예전 지도는 null (지형 배율 없음) */
+  terrain: Uint8Array | null = null;
+  /** 지열 분출구 칸들 (분출구마다 지열 발전소 한 대) */
+  vents: number[] = [];
   /** 현지 회수 더미 (regional-v1). 칸 번호·아이템·회수 사건별 */
   piles: PileEntry[] = [];
   /** 다음 회수 사건 번호 */
@@ -399,6 +420,64 @@ export class World {
   /** 지역 생산망 확장 세계인지 */
   get regional(): boolean {
     return this.rules === 'regional-v1';
+  }
+
+  /** 칸의 지형 (예전 지도는 늘 초원) */
+  terrainAt(i: number): TerrainKind {
+    return this.terrain ? TERRAIN_IDS[this.terrain[i]] : 'grass';
+  }
+
+  /** 건물 기준 칸 (왼쪽 위에서 floor(크기/2)). 전력·지형 판정에 쓴다 */
+  refTile(b: { x: number; y: number; size: number }): number {
+    const h = Math.floor(b.size / 2);
+    return this.idx(b.x + h, b.y + h);
+  }
+
+  /** regional-v1: 그 칸 지형의 지금 날씨 효과 (틱마다 지형별로 한 번만 계산). 예전 세계는 맑음 */
+  weatherEffect(i: number): WeatherFx {
+    if (!this.regional) return WEATHER_FX.clear;
+    return this.localWeather(this.terrainAt(i)).fx;
+  }
+
+  /** regional-v1: 지형의 지금 날씨 */
+  localWeather(t: TerrainKind): { kind: LocalWeather; fx: WeatherFx; strength: number } {
+    if (this.wxTime !== this.time) {
+      this.wxTime = this.time;
+      this.wxCache.clear();
+    }
+    let w = this.wxCache.get(t);
+    if (!w) this.wxCache.set(t, (w = localWeather(this.seed, this.time, t)));
+    return w;
+  }
+  private wxTime = -1;
+  private wxCache = new Map<TerrainKind, { kind: LocalWeather; fx: WeatherFx; strength: number }>();
+
+  /** 수액 채취기 몸체에 상하좌우로 맞닿은 고무나무 군락 (광맥 번호, 가장 작은 것 하나) */
+  groveOf(b: { x: number; y: number; size: number }): number[] {
+    this.ensurePatches();
+    let best = 0;
+    for (const [nx, ny] of edgeNeighbors(b as Building)) {
+      if (!this.inBounds(nx, ny)) continue;
+      const i = this.idx(nx, ny);
+      if (this.resItem[i] !== 'sap') continue;
+      const p = this.patchOf[i];
+      if (p && (!best || p < best)) best = p;
+    }
+    return best ? [best] : [];
+  }
+
+  /** 고무나무 군락 하나에 붙은 수액 채취기 수 */
+  groveUsers(grove: number): number {
+    let n = 0;
+    for (const b of this.buildings.values()) if (b.type === 'sap-extractor' && b.minePatches[0] === grove) n++;
+    return n;
+  }
+
+  /** 이 아이템을 캘 연구가 있는지 (regional-v1의 주석·보크사이트·황). 없으면 필요한 연구 id */
+  oreLock(item: ItemId | null): string | null {
+    if (!item || !this.regional) return null;
+    const need = ORE_TECH[item];
+    return need && !this.researched.has(need) ? need : null;
   }
 
   /** 이 세계의 연구 목록 */
@@ -541,7 +620,8 @@ export class World {
     for (let dy = 0; dy < b.size; dy++) {
       for (let dx = 0; dx < b.size; dx++) {
         const p = this.patchOf[this.idx(b.x + dx, b.y + dy)];
-        if (p && this.patches.has(p)) ids.add(p);
+        const item = p ? this.patches.get(p)?.item : null;
+        if (p && this.patches.has(p) && !(item && NOT_MINED.includes(item))) ids.add(p);
       }
     }
     return [...ids];
@@ -707,6 +787,28 @@ export class World {
     const water = this.waterTilesUnder(x, y, def.size);
     if (type === 'pump' && water === 0) return { ok: false, reason: '호수 위에 놓아야 함' };
     if (type !== 'pump' && water > 0) return { ok: false, reason: '물 위에는 지을 수 없음' };
+    // 고무나무 위에는 짓지 않는다 (나무를 베지 않고 옆에서 수액을 받는다)
+    for (let dy = 0; dy < def.size; dy++) {
+      for (let dx = 0; dx < def.size; dx++) {
+        if (this.resItem[this.idx(x + dx, y + dy)] === 'sap') return { ok: false, reason: '고무나무 위에는 지을 수 없음' };
+      }
+    }
+    if (isMinerType(type) && type !== 'pump') {
+      for (let dy = 0; dy < def.size; dy++) {
+        for (let dx = 0; dx < def.size; dx++) {
+          const it = this.resItem[this.idx(x + dx, y + dy)];
+          if (it === 'crude-oil' || it === 'brine') return { ok: false, reason: '원유·염수 지점에는 시추기를 놓아요' };
+        }
+      }
+    }
+    if (type === 'sap-extractor' && !this.groveOf({ x, y, size: def.size }).length) return { ok: false, reason: '고무나무 군락에 맞닿게 놓아야 함' };
+    if (type === 'drill') {
+      const i = this.refTile({ x, y, size: def.size });
+      const item = this.resItem[i];
+      if (item !== 'crude-oil' && item !== 'brine') return { ok: false, reason: '오른쪽 아래 칸을 원유·염수 지점 위에 놓아야 함' };
+      const lock = this.oreLock(item);
+      if (lock) return { ok: false, reason: `연구 "${this.tech(lock)?.name}" 뒤에 ${item === 'brine' ? '염수' : '원유'}를 뽑아요` };
+    }
     if (
       isMinerType(type) &&
       type !== 'pump' &&
@@ -927,6 +1029,12 @@ export class World {
       this.ensurePatches();
       b.minePatches = this.patchesUnder(b);
     }
+    // 수액 채취기: 몸체에 맞닿은 고무나무 군락(광맥 번호), 시추기: 기준 칸의 원유·염수 지점
+    if (b.type === 'sap-extractor') {
+      this.ensurePatches();
+      b.minePatches = this.groveOf(b);
+    }
+    if (b.type === 'drill') b.mineTiles = [this.refTile(b)];
     if (b.type === 'hub') this.hub = b;
     if (b.type === 'road' || b.type === 'station' || b.type === 'charger') this.roadVersion++;
     if (b.type === 'storage') this.storagesDirty = true;
@@ -978,6 +1086,12 @@ export class World {
   /** 지금 하는 작업 1회에 걸리는 시간 (초) */
   craftTime(b: Building): number {
     if (isMinerType(b.type)) return 1 / ((b.def.speed ?? 1) * this.boost('endless-mining'));
+    if (b.type === 'drill') return EXTRACT.drillTime / this.boost('endless-mining');
+    if (b.type === 'sap-extractor') {
+      // 군락 하나에 채취기가 4대를 넘으면 군락 한도(분당 120개)를 나눠 받는다
+      const n = this.groveUsers(b.minePatches[0] ?? 0);
+      return (EXTRACT.sapTime * Math.max(1, n / EXTRACT.groveMax)) / this.boost('endless-mining');
+    }
     if (b.type === 'lumberjack') return FOREST.cut / this.boost('endless-mining');
     if (b.type === 'planter') return FOREST.plant;
     // 모듈을 쓰는 배치는 연구 적용값보다 1.2배 빠르다 (배치를 시작할 때 정해진다)
@@ -1011,6 +1125,10 @@ export class World {
             ? this.resItem[tile]
             : null
           : patchItem;
+      if (!item) return null;
+      maxOut = [{ item, count: 60 / this.craftTime(b) }];
+    } else if (isExtractorType(b.type)) {
+      const item = b.type === 'sap-extractor' ? 'sap' : this.resItem[b.mineTiles[0]];
       if (!item) return null;
       maxOut = [{ item, count: 60 / this.craftTime(b) }];
     } else if (b.type === 'lumberjack') {
@@ -1353,7 +1471,8 @@ export class World {
 
   /** 나무를 심을 수 있는 칸: 광맥·물·건물·나무가 없는 땅 (다 캔 광맥 자리 포함) */
   canPlant(i: number): boolean {
-    return !this.resItem[i] && !this.occ[i] && this.tree[i] === 0;
+    // 지형 성장 배율이 0인 곳(화산)에는 심지 못한다
+    return !this.resItem[i] && !this.occ[i] && this.tree[i] === 0 && TERRAIN[this.terrainAt(i)].tree > 0;
   }
 
   /** (x, y)에 나무를 놓는다. growth 1 = 다 자란 나무 (맵 만들 때), 그보다 작으면 거기서부터 자란다 */
@@ -1387,7 +1506,9 @@ export class World {
     const step = (DT * this.treeGrowth()) / FOREST.grow;
     let keep = 0;
     for (const i of this.growing) {
-      const g = Math.min(1, this.tree[i] + step);
+      // regional-v1: 지형·날씨에 따라 빨리 또는 느리게 자란다
+      const k = this.terrain ? TERRAIN[this.terrainAt(i)].tree * this.weatherEffect(i).tree : 1;
+      const g = Math.min(1, this.tree[i] + step * k);
       this.tree[i] = g;
       if (g >= 1) this.treesGrown++;
       else this.growing[keep++] = i;
@@ -1450,7 +1571,7 @@ export class World {
         const i = this.idx(x + dx, y + dy);
         const item = this.resItem[i];
         if (!item || this.resAmount[i] <= 0) continue;
-        if ((type === 'pump') === (item === 'water')) tiles.push(i);
+        if (type === 'pump' ? item === 'water' : !NOT_MINED.includes(item)) tiles.push(i);
       }
     }
     return tiles;
@@ -1856,6 +1977,24 @@ export class World {
       b.crafting = true;
       return;
     }
+    if (isExtractorType(b.type)) {
+      if (sumOf(b.outBuf) >= MINER_OUT_CAP) {
+        b.status = 'output-full';
+        return;
+      }
+      const tile = b.mineTiles[0];
+      const item = b.type === 'drill' ? (tile !== undefined ? this.resItem[tile] : null) : 'sap';
+      if (b.type === 'sap-extractor' ? !b.minePatches.length : !item || this.resAmount[tile] <= 0) {
+        b.status = 'depleted';
+        return;
+      }
+      if (this.oreLock(item)) {
+        b.status = 'locked';
+        return;
+      }
+      b.crafting = true;
+      return;
+    }
     if (isMinerType(b.type)) {
       let total = 0;
       for (const n of b.outBuf.values()) total += n;
@@ -1870,6 +2009,11 @@ export class World {
           : b.minePatches.some((p) => (this.patches.get(p)?.remaining ?? 0) > 0));
       if (!hasOre) {
         b.status = 'depleted';
+        return;
+      }
+      // regional-v1: 주석·보크사이트·황은 연구 뒤에 캔다
+      if (!b.mineDirt && b.type !== 'pump' && b.minePatches.every((p) => this.oreLock(this.patches.get(p)?.item ?? null))) {
+        b.status = 'locked';
         return;
       }
       b.crafting = true;
@@ -2011,12 +2155,24 @@ export class World {
       addTo(b.outBuf, 'dirt', 1);
       return;
     }
+    if (b.type === 'sap-extractor') {
+      addTo(b.outBuf, 'sap', 1);
+      return;
+    }
+    if (b.type === 'drill') {
+      const i = b.mineTiles[0];
+      const item = this.resItem[i];
+      if (!item || this.resAmount[i] <= 0) return;
+      this.resAmount[i] -= 1;
+      addTo(b.outBuf, item, 1);
+      return;
+    }
     if (isMinerType(b.type) && b.type !== 'pump') {
       // 광맥 전체에서 번갈아 캔다 (여러 광맥에 걸쳐 놓였으면 차례로)
       const n = b.minePatches.length;
       for (let k = 0; k < n; k++) {
         const p = this.patches.get(b.minePatches[(b.mineIdx + k) % n]);
-        const item = p ? this.takeFromPatch(p) : null;
+        const item = p && !this.oreLock(p.item) ? this.takeFromPatch(p) : null;
         if (!item) continue;
         addTo(b.outBuf, item, 1);
         b.mineIdx = (b.mineIdx + k + 1) % n;
@@ -3246,6 +3402,7 @@ export class World {
       })),
       // 예전 세계는 모양을 그대로 (없으면 legacy-v042로 읽는다)
       ...(this.rules !== 'legacy-v042' ? { rules: this.rules } : {}),
+      ...(this.terrain ? { terrain: runLength(this.terrain), vents: [...this.vents] } : {}),
       ...(this.piles.length || this.nextPileEv > 1
         ? { piles: this.piles.map((p): [number, number, number, number, PileReason] => [p.tile, ITEM_IDS.indexOf(p.item), p.n, p.ev, p.why]), pileEv: this.nextPileEv }
         : {}),
@@ -3263,6 +3420,12 @@ export class World {
     const rules = data.rules ?? 'legacy-v042';
     if (!RULE_PROFILES.includes(rules)) throw new Error(`이 버전이 모르는 세계 규칙: ${rules}`);
     w.rules = rules;
+    if (data.terrain) {
+      w.terrain = new Uint8Array(w.width * w.height);
+      let k = 0;
+      for (let j = 0; j < data.terrain.length; j += 2) w.terrain.fill(data.terrain[j], k, (k += data.terrain[j + 1]));
+      w.vents = [...(data.vents ?? [])];
+    }
     for (const [i, itemIdx, a] of data.res) {
       w.resItem[i] = ITEM_IDS[itemIdx];
       w.resAmount[i] = a < 0 ? Infinity : a;
@@ -3579,6 +3742,9 @@ export interface SaveData {
   vehicles?: SavedVehicle[];
   /** 세계 규칙 프로필 (없으면 legacy-v042) */
   rules?: RuleProfile;
+  /** 지형 [번호, 이어진 칸 수, 번호, 칸 수, …] (예전 지도는 없음)과 지열 분출구 칸들 */
+  terrain?: number[];
+  vents?: number[];
   /** 현지 회수 더미 [칸 번호, 아이템 번호, 개수, 회수 사건, 이유]와 다음 사건 번호 */
   piles?: [number, number, number, number, PileReason][];
   pileEv?: number;
@@ -3743,6 +3909,18 @@ export function portTiles(b: { x: number; y: number; size: number; dir: Dir; def
   });
 }
 
+/** [값, 이어진 개수] 쌍으로 줄인 배열 (지형 저장용) */
+function runLength(a: Uint8Array): number[] {
+  const out: number[] = [];
+  for (let i = 0; i < a.length; ) {
+    let j = i;
+    while (j < a.length && a[j] === a[i]) j++;
+    out.push(a[i], j - i);
+    i = j;
+  }
+  return out;
+}
+
 /** 창고군의 구조 표시: 군에 든 창고 id들. 창고를 짓거나 철거해 군이 바뀌면 달라진다 */
 export function groupKey(group: Building[]): string {
   return group
@@ -3774,7 +3952,7 @@ function firstItem(m: Map<ItemId, number>): ItemId | null {
 }
 
 function isCrafter(b: Building): boolean {
-  return isMinerType(b.type) || isRecipeMachine(b.type) || isForestType(b.type);
+  return isMinerType(b.type) || isRecipeMachine(b.type) || isForestType(b.type) || isExtractorType(b.type);
 }
 
 /** 건물 테두리 바깥 칸들과, 건물에서 그 칸으로 향하는 방향 */

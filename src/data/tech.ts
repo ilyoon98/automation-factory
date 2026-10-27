@@ -338,8 +338,7 @@ const REGIONAL_COSTS: Record<string, ItemStack[]> = {
 };
 
 /**
- * 산업 연구 T01~T08 (regional-v1에서만). 기획의 수액 채취기·시추기·전력 설비·주석 등 채굴 대상 해금은
- * 지도·지역 전력이 들어올 때 붙인다 (지금은 레시피와 생산 설비만)
+ * 산업 연구 T01~T08 (regional-v1에서만). 주석·보크사이트·황 채굴과 원유·염수 시추는 World.oreLock이 연구로 막는다
  */
 export const REGIONAL_TECHS: Tech[] = [
   {
@@ -347,7 +346,7 @@ export const REGIONAL_TECHS: Tech[] = [
     icon: '🥉',
     category: 'production',
     name: '합금 가공',
-    description: '주석판·청동·청동 구동부 레시피',
+    description: '주석광석 채굴, 주석판·청동·청동 구동부 레시피',
     cost: stacks({ steel: 40, circuit: 20 }),
     requires: ['vehicles'],
     unlockRecipes: ['tin-plate', 'bronze', 'bronze-drive'],
@@ -357,10 +356,10 @@ export const REGIONAL_TECHS: Tech[] = [
     icon: '🌀',
     category: 'production',
     name: '산업 전동기',
-    description: '화학 반응기, 고무·절연 전선·절연 모터 레시피',
+    description: '수액 채취기·화학 반응기, 고무·절연 전선·절연 모터 레시피',
     cost: stacks({ 'bronze-drive': 20, circuit: 30, wood: 60 }),
     requires: ['alloy', 'forestry'],
-    unlockBuildings: ['chem-reactor'],
+    unlockBuildings: ['sap-extractor', 'chem-reactor'],
     unlockRecipes: ['rubber', 'insulated-wire', 'motor'],
   },
   {
@@ -368,10 +367,10 @@ export const REGIONAL_TECHS: Tech[] = [
     icon: '🛢️',
     category: 'production',
     name: '석유와 제어',
-    description: '정유소, 플라스틱·고급 회로·산업 제어기·윤활유·정유 연료 레시피',
+    description: '시추기(원유)·정유소, 플라스틱·고급 회로·산업 제어기·윤활유·정유 연료 레시피',
     cost: stacks({ motor: 8, steel: 40, circuit: 30 }),
     requires: ['industrial-motor', 'electronics', 'soil-refining'],
-    unlockBuildings: ['refinery'],
+    unlockBuildings: ['drill', 'refinery'],
     unlockRecipes: ['plastic', 'adv-circuit', 'controller', 'lubricant', 'fuel'],
   },
   {
@@ -379,7 +378,7 @@ export const REGIONAL_TECHS: Tech[] = [
     icon: '🔋',
     category: 'production',
     name: '전해 금속',
-    description: '전해로, 알루미늄판·경량 프레임 레시피',
+    description: '보크사이트 채굴, 전해로, 알루미늄판·경량 프레임 레시피',
     cost: stacks({ motor: 8, bronze: 20, brick: 40 }),
     requires: ['industrial-motor', 'soil-refining'],
     unlockBuildings: ['electrolyzer'],
@@ -390,7 +389,7 @@ export const REGIONAL_TECHS: Tech[] = [
     icon: '🌋',
     category: 'production',
     name: '황 화학',
-    description: '강화 고무·강화 타이어·황산·고효율 모래 세척·고용량 케이블 레시피',
+    description: '황 채굴, 강화 고무·강화 타이어·황산·고효율 모래 세척·고용량 케이블 레시피',
     cost: stacks({ controller: 8, motor: 8, steel: 40 }),
     requires: ['oil-control', 'electro-metal'],
     unlockRecipes: ['hardened-rubber', 'tire', 'sulfuric-acid', 'acid-wash', 'hc-cable'],
@@ -400,7 +399,7 @@ export const REGIONAL_TECHS: Tech[] = [
     icon: '🧪',
     category: 'production',
     name: '리튬과 축전',
-    description: '리튬·배터리 팩·고급 윤활제 레시피',
+    description: '염수 시추, 리튬·배터리 팩·고급 윤활제 레시피',
     cost: stacks({ frame: 10, controller: 10, plastic: 40 }),
     requires: ['oil-control', 'electro-metal'],
     unlockRecipes: ['lithium', 'battery-pack', 'adv-lubricant'],

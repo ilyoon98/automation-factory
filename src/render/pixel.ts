@@ -1,4 +1,5 @@
 import { ITEMS, ITEM_IDS, type ItemId, type ItemShape } from '../data/items';
+import { TERRAIN, TERRAIN_IDS } from '../data/terrain';
 
 /**
  * 픽셀아트. 1칸 = 16픽셀. 모든 그림을 여기서 코드로 한 점씩 찍어 작은 캔버스에 구워 둔다.
@@ -412,6 +413,65 @@ function groundBase(p: Pen, v: number): void {
 
 for (let v = 0; v < 8; v++) define(`ground:${v}`, 16, 16, 1, (p) => groundBase(p, v));
 
+/** 확장 지도의 지형 바닥 (초원은 기본 바닥 그대로). ground:<지형 번호>:<변형> */
+TERRAIN_IDS.forEach((t, k) => {
+  if (k === 0) return;
+  const base = TERRAIN[t].color;
+  for (let v = 0; v < 4; v++) {
+    define(`ground:${k}:${v}`, 16, 16, 1, (p) => {
+      p.rect(0, 0, 16, 16, tone(base, (v - 1.5) * 0.02));
+      const h = hash(v * 7919 + k * 31);
+      for (let n = 0; n < 6; n++) {
+        const x = (h >>> (n * 5)) & 15;
+        const y = (hash(h + n) >>> 3) & 15;
+        p.px(x, y, n % 2 ? tone(base, -0.12) : tone(base, 0.15));
+      }
+      // 눈밭은 반짝, 화산은 갈라진 틈
+      if (t === 'volcano') p.rect((h >>> 4) & 11, (h >>> 9) & 13, 3, 1, '#7a3a2a');
+      if (t === 'salt') p.px((h >>> 7) & 15, (h >>> 11) & 15, '#ffffff');
+    });
+  }
+});
+
+/** 원유·염수 지점 (시추기 기준 칸). 다 뽑으면 빈 자국 */
+for (const [item, c] of [
+  ['crude-oil', ['#2a2420', '#4a3e36', '#7a6a5e']],
+  ['brine', ['#5f9aa0', '#8fc4c9', '#d8f0f2']],
+] as const) {
+  for (const empty of [0, 1]) {
+    define(`point:${item}:${empty}`, 16, 16, 1, (p) => {
+      p.disc(8, 8.5, 6, PAL.ink);
+      p.disc(8, 8.5, 5, empty ? '#b9a98f' : c[1]);
+      if (!empty) {
+        p.disc(8, 8.5, 3, c[0]);
+        p.px(6, 6, c[2]);
+        p.px(7, 6, c[2]);
+      }
+    });
+  }
+}
+
+/** 고무나무 (수액 칸): 줄기에 수액 받는 작은 통 */
+define('rubber-tree', 16, 16, 1, (p) => {
+  p.disc(8, 13.5, 6, 'rgba(60,40,20,0.25)');
+  p.rect(7, 8, 3, 7, PAL.ink);
+  p.rect(8, 9, 1, 5, '#8f5c2c');
+  p.disc(8, 6, 5.5, PAL.ink);
+  p.disc(8, 6, 4.5, '#3f7a3a');
+  p.disc(6.5, 4.5, 2, '#5f9a4e');
+  p.rect(9, 11, 3, 3, PAL.ink);
+  p.rect(10, 12, 1, 1, '#f3ead0');
+});
+
+/** 지열 분출구: 붉은 틈과 김 */
+define('vent', 16, 16, 2, (p, f) => {
+  p.disc(8, 9, 5, '#5a4a44');
+  p.rect(5, 8, 7, 2, PAL.ink);
+  p.rect(6, 8, 5, 1, '#e8643a');
+  p.px(8, 9, '#f6b13f');
+  for (let k = 0; k < 3; k++) p.px(6 + k * 2 + f, 5 - k + f, 'rgba(255,255,255,0.7)');
+});
+
 /** 광맥 칸: 바닥 위 돌덩이 (rich = 3 큰 돌, 2, 1). 돌 광맥은 회색 바위 */
 function oreRock(p: Pen, x: number, y: number, c: { hi: string; mid: string; lo: string }, big: boolean): void {
   if (big) {
@@ -436,9 +496,16 @@ export const ORE_GROUND: Partial<Record<ItemId, string>> = {
   'copper-ore': '#d6a27a',
   coal: '#8a847b',
   stone: '#cdc6b6',
+  'tin-ore': '#c8d2d6',
+  bauxite: '#c98a64',
+  sulfur: '#e6d77a',
+  sand: '#ecd59a',
+  'crude-oil': '#5a504a',
+  brine: '#b8d8dc',
+  sap: '#5f8f4e',
 };
 
-const ORE_TILES: ItemId[] = ['iron-ore', 'copper-ore', 'coal', 'stone'];
+const ORE_TILES: ItemId[] = ['iron-ore', 'copper-ore', 'coal', 'stone', 'tin-ore', 'bauxite', 'sulfur', 'sand'];
 for (const item of ORE_TILES) {
   for (let rich = 1; rich <= 3; rich++) {
     for (let v = 0; v < 4; v++) {

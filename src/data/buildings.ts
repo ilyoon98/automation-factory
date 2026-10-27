@@ -35,7 +35,9 @@ export type BuildingType =
   | 'chem-reactor'
   | 'refinery'
   | 'electrolyzer'
-  | 'large-assembler';
+  | 'large-assembler'
+  | 'sap-extractor'
+  | 'drill';
 
 export type Category = 'logistics' | 'production' | 'power' | 'storage' | 'transport' | 'forest' | 'industry';
 
@@ -61,7 +63,7 @@ export const CATEGORIES: { id: Category; name: string; key: string; items: Build
   { id: 'transport', name: '운송', key: 'b', items: ['road', 'station', 'charger'] },
   { id: 'forest', name: '숲', key: 'n', items: ['lumberjack', 'planter', 'sawmill'] },
   // regional-v1 세계에서만 탭이 보인다
-  { id: 'industry', name: '산업', key: 'j', items: ['chem-reactor', 'refinery', 'electrolyzer', 'large-assembler'] },
+  { id: 'industry', name: '산업', key: 'j', items: ['sap-extractor', 'drill', 'chem-reactor', 'refinery', 'electrolyzer', 'large-assembler'] },
 ];
 
 /**
@@ -560,6 +562,37 @@ export const BUILDINGS: Record<BuildingType, BuildingDef> = {
       out: [[1, 2]],
     },
   },
+  'sap-extractor': {
+    type: 'sap-extractor',
+    name: '수액 채취기',
+    size: 2,
+    cost: [
+      { item: 'iron-plate', count: 12 },
+      { item: 'gear', count: 6 },
+      { item: 'wood', count: 12 },
+    ],
+    power: 60,
+    color: '#8fae6a',
+    description: '몸체가 고무나무 군락에 맞닿게 놓으면 나무를 베지 않고 수액을 받는다 (분당 30개, 군락 하나에 분당 120개까지 나눠 받음). 앞 오른쪽 한 칸으로 내보낸다.',
+    placeable: true,
+    ports: { in: [], out: [[1, 2]] },
+  },
+  drill: {
+    type: 'drill',
+    name: '시추기',
+    size: 2,
+    cost: [
+      { item: 'steel', count: 12 },
+      { item: 'motor', count: 2 },
+      { item: 'circuit', count: 6 },
+    ],
+    power: 120,
+    color: '#6a6a7a',
+    description:
+      '오른쪽 아래 칸(기준 칸)을 원유 지점이나 염수 지점 위에 놓는다. 분당 60개. 원유는 "석유와 제어", 염수는 "리튬과 축전" 연구 뒤. 앞 오른쪽 한 칸으로 내보낸다.',
+    placeable: true,
+    ports: { in: [], out: [[1, 2]] },
+  },
   'large-assembler': {
     type: 'large-assembler',
     name: '대형 조립소',
@@ -675,6 +708,11 @@ export const ADVANCED_TRUCK = {
   charge: 400,
   kit: 'truck-kit' as const,
 };
+/** 땅에서 뽑지만 채굴기와 다른 규칙인 새 설비 (고무나무 옆 수액 채취기, 원유·염수 지점의 시추기) */
+export const isExtractorType = (t: BuildingType) => t === 'sap-extractor' || t === 'drill';
+/** 새 채취 설비: 수액 채취기 분당 30개, 고무나무 군락 하나에 분당 120개까지. 시추기 분당 60개 */
+export const EXTRACT = { sapTime: 2, groveMax: 4, drillTime: 1 };
+
 /** 둘레의 나무를 다루는 건물 (벌목기·식목기) */
 export const isForestType = (t: BuildingType) => t === 'lumberjack' || t === 'planter';
 

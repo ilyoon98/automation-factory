@@ -50,11 +50,12 @@ import {
 } from '../data/tech';
 import { Building, addTo, countOf, type BeltItem, type StationMode } from './building';
 import { DX, DY, opposite, rotateCW, type Dir } from './dir';
-import { darkness, weatherMix } from './sky';
+import { DAY_SEC, darkness, dayPhase, weatherAt, weatherMix } from './sky';
 import { ROUTE_MIN, Vehicle, type RouteStop, type VehicleState } from './vehicle';
 import { TERRAIN, TERRAIN_IDS, type TerrainKind } from '../data/terrain';
 import { WEATHER_FX, localWeather, type LocalWeather, type WeatherFx } from './weather-v1';
 import { PROJECT_GOAL, evaluateGoals } from './goals';
+import { AchState, SPECIALTY, evaluateAchievements } from './achievements';
 
 export const TICK_RATE = 60;
 export const DT = 1 / TICK_RATE;
@@ -531,6 +532,10 @@ export class World {
   goals = new Set<string>();
   /** 이룬 선택 도전 id */
   challenges = new Set<string>();
+  /** 업적 판정 상태 (모든 세계, 예전 세계는 기본 기능 업적만) */
+  ach = new AchState();
+  /** 이번 틱 최종 소비(작업·충전)에 쓰인 전기를 발전원별로 (kW): hub·solar·wind·geo·hydro·link·storage·coal·fuel */
+  powerSrc = new Map<string, number>();
   /** 운송 예약 (출고: 실제 보관물, 입고: 목적지 정류장 풀). 화물이 아니라 권리 표시라 실물 합계에 더하지 않는다 */
   reservations: Reservation[] = [];
   /** 처리한 현지 실물 명령: rid → 결과 (중복 수신은 이 결과만 돌려준다). 넣은 순서대로 오래된 것부터 잊는다 */
@@ -883,6 +888,8 @@ export class World {
     if (this.resAmount[i] <= 0) {
       this.resAmount[i] = 0;
       this.resItem[i] = null;
+      // 광맥의 마지막 칸 (H03)
+      if (p.remaining <= 0) this.ach.lastOre.add(i);
     }
     return p.item;
   }
@@ -1189,6 +1196,10 @@ export class World {
     if (isMinerType(type) && type !== 'pump' && b.mineTiles.length === 0) b.mineDirt = true;
     if (type === 'station') b.stationNo = this.nextStationNo++;
     this.assignZone(b);
+    if (type === 'wind' && !free) {
+      const kind = this.regional ? this.localWeather(this.terrainAt(this.refTile(b))).kind : weatherAt(this.seed, this.time).kind;
+      if (kind === 'cloudy' || kind === 'rain' || kind === 'storm') this.ach.num.set(`ww:${b.id}`, 1);
+    }
     // 지은 자리 둘레를 확인한 땅으로 (도로를 깔며 조금씩 나아갈 수 있게)
     if (this.revealed && !free) this.reveal(b.x + b.size / 2 - 0.5, b.y + b.size / 2 - 0.5, REVEAL_BUILD + b.size / 2);
     if (type === 'underground') {
@@ -1742,6 +1753,8 @@ export class World {
       if (g >= 1) {
         this.treesGrown++;
         this.stats.treesMatured++;
+        if (this.ach.trees.get(i) === 1) this.ach.trees.set(i, 2);
+        if (this.ach.lastOre.has(i)) this.ach.add('h03', 1);
       }
       else this.growing[keep++] = i;
     }
@@ -2142,8 +2155,11 @@ export class World {
 
     this.time += DT;
     this.tickNo++;
-    // 메인 목표는 시뮬레이션이 1초마다 판정해 고정 id로 남긴다 (화면을 열지 않아도)
-    if (this.regional && this.tickNo % TICK_RATE === 0) evaluateGoals(this);
+    // 메인 목표·업적은 시뮬레이션이 1초마다 판정해 고정 id로 남긴다 (화면을 열지 않아도)
+    if (this.tickNo % TICK_RATE === 0) {
+      if (this.regional) evaluateGoals(this);
+      this.achTick();
+    }
   }
 
   private pushMerger(b: Building): void {
@@ -2268,6 +2284,7 @@ export class World {
       return;
     }
     for (const i of r.inputs) addTo(b.inBuf, i.item, -i.count);
+    if (r.inputs.some((i) => i.item === 'iron-ore' || i.item === 'copper-ore' || i.item === 'coal')) this.ach.flags.add('ore');
     if (this.regional) {
       // 구역에서 제작에 실제로 쓴 재료 (공급선의 쓰임 확인)
       const z = this.zoneOfB.get(b.id);
@@ -2445,6 +2462,7 @@ export class World {
    */
   private updateGrid(): void {
     if (this.gridDirty) this.rebuildGrid();
+    this.powerSrc.clear();
     const sun = 1 - darkness(this.time);
     type Acc = {
       z: Zone;
@@ -2462,10 +2480,15 @@ export class World {
       fuelUsed: number;
       stored: number;
       geo: number;
+      solar: number;
+      wind: number;
+      local0: number;
+      recvGeo: number;
+      ren: Building[];
     };
     const st = new Map<number, Acc>();
     for (const z of this.zones) {
-      st.set(z.id, { z, demand: 0, charge: 0, free: z.hub ? HUB_BASE_POWER : 0, hydros: [], coal: [], fuel: [], accs: [], cap: this.zoneCap(z), recv: 0, sent: 0, discharge: 0, fuelUsed: 0, stored: 0, geo: 0 });
+      st.set(z.id, { z, demand: 0, charge: 0, free: z.hub ? HUB_BASE_POWER : 0, hydros: [], coal: [], fuel: [], accs: [], cap: this.zoneCap(z), recv: 0, sent: 0, discharge: 0, fuelUsed: 0, stored: 0, geo: 0, solar: 0, wind: 0, local0: 0, recvGeo: 0, ren: [] });
     }
     for (const b of this.buildings.values()) {
       const zid = this.zoneOfB.get(b.id);
@@ -2474,13 +2497,19 @@ export class World {
       if (b.type === 'solar' || b.type === 'wind') {
         b.load = s ? (b.type === 'solar' ? (sun > 0 ? this.solarAt(b) : 0) : this.windAt(b)) : 0;
         b.status = b.load > 0 ? 'working' : 'idle';
-        if (s) s.free += b.load;
+        if (s) {
+          s.free += b.load;
+          if (b.type === 'solar') s.solar += b.load;
+          else s.wind += b.load;
+          s.ren.push(b);
+        }
       } else if (b.type === 'geothermal') {
         b.load = s ? GRID.geothermal : 0;
         b.status = s ? 'working' : 'idle';
         if (s) {
           s.free += b.load;
           s.geo += b.load;
+          s.ren.push(b);
         }
       } else if (b.type === 'generator' || b.type === 'hydro' || b.type === 'fuel-generator') {
         const has = b.energy > 0 || b.fuel > 0 || countOf(b.inBuf, 'charcoal') > 0;
@@ -2548,7 +2577,10 @@ export class World {
       const need = Math.min(s.cap, s.demand + s.charge);
       let avail = nonfuel(s) + s.recv;
       let served = Math.min(need, avail);
+      s.local0 = served;
       avail -= served;
+      // 보내는 전기 중 지열 몫 (H09)
+      const geoShare = nonfuel(s) > 0 ? s.geo / nonfuel(s) : 0;
       for (const l of links) {
         if (l.from !== id) continue;
         const send = Math.min(l.out, avail, Math.max(0, s.cap - served - s.sent));
@@ -2556,6 +2588,7 @@ export class World {
         s.sent += send;
         l.send = send;
         st.get(l.to)!.recv += send * GRID.link.efficiency;
+        st.get(l.to)!.recvGeo += send * GRID.link.efficiency * geoShare;
       }
       // 모자라면 축전기 방전, 그래도 모자라면 석탄·연료 발전
       let deficit = need - served;
@@ -2568,6 +2601,15 @@ export class World {
         deficit -= d;
         served += d;
         s.discharge += d;
+        // H07: 맑은 낮 태양광으로 채운 몫이 모래 바람 중 작업에
+        if (this.terrainAt(this.refTile(a)) === 'sand' && this.localWeather('sand').kind === 'sandstorm' && this.localWeather('sand').strength >= 1 && s.demand > 0) {
+          const kept = this.ach.get(`acc:${a.id}`);
+          const use = Math.min(kept, d * DT);
+          if (use > 0) {
+            this.ach.add('h07', use);
+            this.ach.add(`acc:${a.id}`, -use);
+          }
+        }
       }
       const fuelCap = s.coal.length * GENERATOR_POWER + s.fuel.length * GRID.fuel.power;
       const burn = Math.min(fuelCap, Math.max(0, deficit));
@@ -2583,6 +2625,9 @@ export class World {
         const room = (GRID.accumulator.capacity - a.energy) / (DT * GRID.accumulator.efficiency);
         const c = Math.min(GRID.accumulator.rate, room, spare);
         a.energy += c * DT * GRID.accumulator.efficiency;
+        if (c > 0 && this.terrainAt(this.refTile(a)) === 'sand' && darkness(this.time) === 0 && this.localWeather('sand').kind === 'clear' && s.free > 0) {
+          this.ach.add(`acc:${a.id}`, c * DT * GRID.accumulator.efficiency * (s.solar / s.free));
+        }
         a.load = c;
         spare -= c;
         avail -= c;
@@ -2598,6 +2643,21 @@ export class World {
       this.stats.zoneWork.set(id, (this.stats.zoneWork.get(id) ?? 0) + work);
       this.stats.genWork += Math.max(0, work - (s.z.hub ? Math.min(HUB_BASE_POWER, nonfuel(s)) * DT : 0));
       if (s.cap > GRID.hub.cap) this.stats.formalWork += work;
+      this.ach.addWin(`zw:${id}`, work, this.time);
+      // 업적: 최종 소비를 발전원별로 (허브·태양광·풍력·지열 → 수력 → 수전 → 축전 → 연료)
+      const hub = s.z.hub ? HUB_BASE_POWER : 0;
+      const fuelCapNow = s.coal.length * GENERATOR_POWER + s.fuel.length * GRID.fuel.power;
+      const src = this.creditSources(s.local0, { hub, solar: s.solar, wind: s.wind, geo: s.geo }, hydroCap(s), s.recv, s.discharge, s.fuelUsed, fuelCapNow ? (s.coal.length * GENERATOR_POWER) / fuelCapNow : 0);
+      const total = s.demand + s.charge;
+      const workFrac = total > 0 ? s.demand / total : 0;
+      const day = Math.floor(this.time / DAY_SEC);
+      if ((src.get('link') ?? 0) > 0 && s.recv > 0 && TERRAIN_IDS[this.terrain ? this.terrain[this.idx(s.z.x, s.z.y)] : 0] === 'forest') {
+        this.ach.add('h09', (src.get('link')! * (s.recvGeo / s.recv)) * workFrac * DT);
+      }
+      if (this.isNight() && s.demand >= 100) this.ach.add(`d09:${id}:${day}`, (src.get('storage') ?? 0) * workFrac * DT);
+      this.achSolarWind(src, workFrac, s.wind, id, [...s.ren, ...s.hydros]);
+      for (const b of s.coal) this.ach.addWin(`tg:${this.terrainAt(this.refTile(b))}`, b.load * DT, this.time);
+      for (const b of s.fuel) this.ach.addWin(`tg:${this.terrainAt(this.refTile(b))}`, b.load * DT, this.time);
       // 선택 도전: 지열·수전·한밤 축전이 실제 작업에 준 몫, 구역 중심 지형의 지금 날씨별 작업 전기
       if (work > 0) {
         this.stats.geoWork += Math.min(work, s.geo * DT);
@@ -2633,6 +2693,7 @@ export class World {
     }
     // 화면용 합계
     let demand = 0;
+    this.ach.roll(this.time);
     let capacity = 0;
     let supply = 0;
     let charge = 0;
@@ -2643,6 +2704,60 @@ export class World {
       charge += z.charge;
     }
     this.power = { demand, capacity, supply, satisfaction: demand ? supply / demand : 1, charge };
+  }
+
+  /**
+   * 최종 소비(served) 중 앞부분 local0을 발전원 순서대로 나눈다: 허브·태양광·풍력·지열(나눠서) → 수력 → 수전,
+   * 그 뒤 축전 방전과 연료(석탄 몫 coalShare). 업적 누적(kJ)과 이번 틱 발전원별 kW에 더한다
+   */
+  private creditSources(local0: number, free: Record<'hub' | 'solar' | 'wind' | 'geo', number>, hydroCap: number, recv: number, discharge: number, fuel: number, coalShare: number): Map<string, number> {
+    const out = new Map<string, number>();
+    const freeTotal = free.hub + free.solar + free.wind + free.geo;
+    const f = Math.min(local0, freeTotal);
+    if (freeTotal > 0) for (const [k, v] of Object.entries(free)) out.set(k, (f * v) / freeTotal);
+    const h = Math.min(Math.max(0, local0 - f), hydroCap);
+    out.set('hydro', h);
+    out.set('link', Math.max(0, Math.min(recv, local0 - f - h)));
+    out.set('storage', discharge);
+    out.set('coal', fuel * coalShare);
+    out.set('fuel', fuel * (1 - coalShare));
+    for (const [k, v] of out) {
+      if (v <= 0) continue;
+      this.powerSrc.set(k, (this.powerSrc.get(k) ?? 0) + v);
+      this.ach.add(`e:${k}`, v * DT);
+    }
+    return out;
+  }
+
+  /**
+   * 업적: 풍력·태양광의 쓰임 (H04 비 오는 날 지은 풍력의 공급, H12 낮 태양광·한밤 풍력, 지형별 발전량).
+   * 구역 하나의 발전원별 kW(src), 그중 작업 몫, 그 구역 풍력 출력 합
+   */
+  private achSolarWind(src: Map<string, number>, workFrac: number, windOut: number, zone: number, ren: Building[]): void {
+    const day = Math.floor(this.time / DAY_SEC);
+    const sun = src.get('solar') ?? 0;
+    const wind = src.get('wind') ?? 0;
+    if (darkness(this.time) === 0 && sun > 0) this.ach.add(`h12d:${day}`, sun * workFrac * DT);
+    if (this.isNight() && wind > 0) this.ach.add(`h12n:${day}`, wind * workFrac * DT);
+    const frac = windOut > 0 ? wind / windOut : 0;
+    for (const b of ren) {
+      if (this.terrain && b.load > 0) this.ach.addWin(`tg:${this.terrainAt(this.refTile(b))}`, b.load * DT, this.time);
+      if (b.type === 'wind' && frac > 0 && this.ach.get(`ww:${b.id}`)) {
+        this.ach.add(`w:${b.id}`, b.load * frac * DT);
+        if (this.ach.get(`w:${b.id}`) >= 1000) this.ach.add('h04', 1);
+      }
+    }
+    // H14: 한밤에 이 구역 충전 중 풍력 몫
+    if (this.isNight() && wind > 0) {
+      let served = 0;
+      for (const v of src.values()) served += v;
+      for (const [vid, g] of this.chargeGrant) {
+        const v = this.vehicles.get(vid);
+        const spot = v ? this.chargeSpot(v) : null;
+        if (!spot || (this.regional && this.zoneOfB.get(spot.id) !== zone)) continue;
+        this.ach.add(`vw:${vid}:${day}`, g * (wind / Math.max(1, served)) * DT);
+      }
+    }
   }
 
   /** 송전 연결을 따라 상류 구역부터 (Kahn 순서, 같은 단계는 id 순). 연결이 없는 구역도 들어간다 */
@@ -2869,7 +2984,7 @@ export class World {
         r.n = 0;
         continue;
       }
-      this.markLoaded(v, this.buildings.get(v.stops[0].id) ?? h);
+      this.markLoaded(v, this.buildings.get(v.stops[0].id) ?? h, r.item);
       if (countOf(h.inBuf, r.item) > 0) addTo(h.inBuf, r.item, -1);
       else addTo(h.outBuf, r.item, -1);
       addTo(v.cargo, r.item, 1);
@@ -2951,6 +3066,7 @@ export class World {
     }
     v.nextDue = v.period > 0 ? Math.max(v.nextDue + v.period, this.time + 1) : this.time;
     v.loadTimer = -1;
+    this.ach.num.set(`tl:${v.id}`, v.load);
     this.goTo(v, 1);
   }
 
@@ -3046,6 +3162,9 @@ export class World {
     v.timer = Math.min(gap, v.timer + DT);
     const items = [...v.cargo.keys()].filter((i) => countOf(v.cargo, i) > 0);
     if (!items.length) {
+      // 정기편 한 편을 다 내렸으면 성공 1회 (출발지 → 목적지 조합마다)
+      if (v.period > 0 && this.ach.get(`tl:${v.id}`) >= 2) this.ach.add(`d27:${v.stops[0].id}>${st.id}`, 1);
+      this.ach.num.delete(`tl:${v.id}`);
       this.releaseReservations(v);
       v.loadTimer = -1;
       v.status = 'unloading';
@@ -3137,6 +3256,8 @@ export class World {
     if (this.regional) return this.updateGrid();
     let demand = 0;
     let solar = 0;
+    let sunAll = 0;
+    let windAll = 0;
     const gens: Building[] = [];
     const hydros: Building[] = [];
     const sun = this.solarOutput();
@@ -3146,6 +3267,8 @@ export class World {
       if (b.type === 'solar' || b.type === 'wind') {
         b.load = b.type === 'solar' ? sun : wind;
         solar += b.load;
+        if (b.type === 'solar') sunAll += b.load;
+        else windAll += b.load;
         b.status = b.load > 0 ? 'working' : 'idle';
       } else if (b.type === 'generator' || b.type === 'hydro') {
         if (b.energy > 0 || b.fuel > 0 || countOf(b.inBuf, 'charcoal') > 0) (b.type === 'hydro' ? hydros : gens).push(b);
@@ -3175,6 +3298,12 @@ export class World {
     this.burn(hydros, hydroLoad, WATER_ENERGY);
     this.burn(gens, genLoad, COAL_ENERGY);
     this.power = { demand, capacity, supply, satisfaction, charge };
+    // 업적: 최종 소비를 발전원별로 (허브·태양광·풍력 → 수력 → 석탄)
+    this.powerSrc.clear();
+    const src = this.creditSources(Math.min(supply, free + hydroLoad * hydros.length), { hub: HUB_BASE_POWER, solar: sunAll, wind: windAll, geo: 0 }, hydroLoad * hydros.length, 0, 0, genLoad * gens.length, 1);
+    const ren = [...hydros];
+    for (const b of this.buildings.values()) if (b.type === 'solar' || b.type === 'wind') ren.push(b);
+    this.achSolarWind(src, demand > 0 ? (demand - charge) / demand : 0, windAll, 0, ren);
   }
 
   /** 지금 태양광 패널 한 대의 출력 (kW): 해가 있는 만큼 × 날씨 */
@@ -3202,6 +3331,9 @@ export class World {
         } else if (g.fuel > 0) {
           g.fuel--;
           g.energy += unit;
+          if (g.type === 'generator') this.ach.flags.add('ore');
+          // H10: 사막 수력이 태운 물 (트럭으로 반입한 물과 대응)
+          if (g.type === 'hydro' && this.terrain && ['sand', 'rock'].includes(this.terrainAt(this.refTile(g)))) this.ach.add('h10burn', 1);
         } else break;
       }
       if (g.energy < 0) g.energy = 0;
@@ -3234,13 +3366,20 @@ export class World {
   private produce(b: Building, item: ItemId, n: number): void {
     addTo(b.outBuf, item, n);
     addTo(this.stats.made, item, n);
+    this.ach.addWin(`m:${item}`, n, this.time);
     const z = this.regional ? this.zoneOfB.get(b.id) : undefined;
-    if (z) this.stats.zoneMade.set(z, (this.stats.zoneMade.get(z) ?? 0) + n);
+    if (z) {
+      this.stats.zoneMade.set(z, (this.stats.zoneMade.get(z) ?? 0) + n);
+      this.ach.addWin(`zm:${z}`, n, this.time);
+    }
+    if (this.terrain) this.ach.addWin(`tm:${this.terrainAt(this.refTile(b))}`, n, this.time);
+    if (isMinerType(b.type) && (item === 'iron-ore' || item === 'copper-ore' || item === 'coal')) this.ach.flags.add('ore');
   }
 
   /** 트럭이 실은 곳(정류장·구역)과 다른 정류장에 내렸을 때 배송 실적 */
   private recordDelivery(v: Vehicle, st: Building, item: ItemId): void {
     if (!v.fromStation || v.fromStation === st.id) return;
+    this.achDelivery(v, st, item);
     const s = this.stats;
     s.delivered++;
     if (this.planned(v) && v.period > 0) s.scheduledDelivered++;
@@ -3256,9 +3395,208 @@ export class World {
   }
 
   /** 트럭이 이 정류장에서 실었다고 표시 (배송 실적의 출발지) */
-  private markLoaded(v: Vehicle, st: Building): void {
+  private markLoaded(v: Vehicle, st: Building, item?: ItemId): void {
     v.fromStation = st.id;
     v.fromZone = this.regional ? (this.zoneOfB.get(st.id) ?? 0) : 0;
+    // 업적: 실을 때 그 정류장의 날씨, 한 바퀴 안에서 정류장별로 실은 것 (H05·H06·H11)
+    this.ach.text.set(`tw:${v.id}`, this.stationWeather(st));
+    if (item === 'iron-ore' || item === 'copper-ore') this.ach.add(`ll:${v.id}:${st.id}:${item}`, 1);
+  }
+
+  /** 정류장 칸의 안정된 현지 날씨 (전환이 끝난 것만). 예전 세계는 '' */
+  private stationWeather(st: Building): string {
+    if (!this.regional) return '';
+    const lw = this.localWeather(this.terrainAt(this.refTile(st)));
+    return lw.strength >= 1 ? lw.kind : 'clear';
+  }
+
+  /** 업적용 배송 기록: 한 구간 20개마다 거리·날씨 확인, 지형 사이 교역, 한 바퀴 기록, 한밤 배송 */
+  private achDelivery(v: Vehicle, st: Building, item: ItemId): void {
+    const a = this.ach;
+    const from = this.buildings.get(v.fromStation);
+    const key = `${v.fromStation}>${st.id}`;
+    if (a.text.get(`tk:${v.id}`) !== key) {
+      a.text.set(`tk:${v.id}`, key);
+      a.num.set(`tn:${v.id}`, 0);
+    }
+    a.add(`tn:${v.id}`, 1);
+    if (item === 'iron-ore' || item === 'copper-ore') a.add(`ld:${v.id}:${st.id}:${item}`, 1);
+    const fromT = from && this.terrain ? this.terrainAt(this.refTile(from)) : null;
+    const toT = this.terrain ? this.terrainAt(this.refTile(st)) : null;
+    if (from && a.get(`tn:${v.id}`) === 20) {
+      const dist = Math.hypot(from.x + from.size / 2 - (st.x + st.size / 2), from.y + from.size / 2 - (st.y + st.size / 2));
+      a.num.set('d14', Math.max(a.get('d14'), Math.floor(dist)));
+      const wxFrom = a.text.get(`tw:${v.id}`) ?? '';
+      const wxTo = this.stationWeather(st);
+      if (dist >= 20 && wxFrom === 'fog' && wxTo === 'fog') a.add('h05', 1);
+      if (dist >= 20 && wxFrom === 'snow' && wxTo === 'snow' && fromT === 'snow' && toT === 'snow') a.add('h06', 1);
+    }
+    if (fromT && toT) {
+      a.addWin(`td:${fromT}`, 1, this.time);
+      if (toT !== fromT) a.addWin(`td:${toT}`, 1, this.time);
+      if (toT !== fromT && SPECIALTY[fromT].includes(item)) a.add(`d20:${fromT}`, 1);
+      if (item === 'water' && toT !== fromT && (toT === 'sand' || toT === 'rock')) a.add('h10water', 1);
+    }
+    const fz = v.fromZone;
+    const tz = this.regional ? (this.zoneOfB.get(st.id) ?? 0) : 0;
+    if (fz && tz && fz !== tz) a.addWin(`pw:${fz}>${tz}`, 1, this.time);
+    // H14: 한밤에 풍력으로 1MJ 넘게 충전한 트럭의 그 밤 배송
+    const day = Math.floor(this.time / DAY_SEC);
+    if (this.isNight() && a.get(`vw:${v.id}:${day}`) >= 1000) {
+      a.add(`vd:${v.id}:${day}`, 1);
+      if (a.get(`vd:${v.id}:${day}`) >= 20) a.add('h14', 1);
+    }
+  }
+
+  /** 노선 한 바퀴를 마칠 때: D15 정류장 수, H11 두 곳에서 실은 철·구리를 세 번째 정류장에 함께 납품 */
+  private achLap(v: Vehicle): void {
+    const a = this.ach;
+    if (v.lapUnloaded >= 20 && v.tripStart >= 0) a.num.set('d15', Math.max(a.get('d15'), new Set(v.stops.map((s) => s.id)).size));
+    const loads = new Map<string, Map<number, number>>();
+    const drops = new Map<number, Set<string>>();
+    for (const [k, n] of a.num) {
+      const m = /^(ll|ld):(\d+):(\d+):(.+)$/.exec(k);
+      if (!m || Number(m[2]) !== v.id) continue;
+      if (m[1] === 'll') {
+        let x = loads.get(m[4]);
+        if (!x) loads.set(m[4], (x = new Map()));
+        x.set(Number(m[3]), n);
+      } else {
+        let x = drops.get(Number(m[3]));
+        if (!x) drops.set(Number(m[3]), (x = new Set()));
+        x.add(m[4]);
+      }
+    }
+    const big = (item: string) => [...(loads.get(item) ?? [])].filter(([, n]) => n >= 10).map(([s]) => s);
+    for (const s1 of big('iron-ore')) {
+      for (const s2 of big('copper-ore')) {
+        if (s1 === s2) continue;
+        for (const [s3, items] of drops) if (s3 !== s1 && s3 !== s2 && items.has('iron-ore') && items.has('copper-ore')) a.add('h11', 1);
+      }
+    }
+    for (const k of [...a.num.keys()]) if (k.startsWith(`ll:${v.id}:`) || k.startsWith(`ld:${v.id}:`)) a.num.delete(k);
+  }
+
+  /** 업적의 1초 단위 처리: 날씨·밤 기록, 광석 안 쓴 시간(H15), 지하 건널목(H01), 화산 태양광(H08), 정리, 그리고 판정 */
+  private achTick(): void {
+    const a = this.ach;
+    const day = Math.floor(this.time / DAY_SEC);
+    // H15: 광맥 독립 뒤 철광석·구리광석·석탄을 한 번도 쓰지 않은 1초 (작업 수요가 있을 때)
+    const recipes = ['iron-plate-c', 'copper-plate-c', 'steel-e'];
+    const ok = this.researched.has('ore-independence') && this.power.demand - this.power.charge > 0 && !a.flags.has('ore');
+    if (ok) a.add('h15:secs', 1);
+    for (const r of recipes) {
+      const now = this.stats.recipeDone.get(r) ?? 0;
+      if (ok) a.add(`h15:${r}`, now - a.get(`h15last:${r}`));
+      a.num.set(`h15last:${r}`, now);
+    }
+    // D12: 가동 구역이 95% 이상으로 버틴 안정된 현지 날씨 종류
+    if (this.regional) {
+      const kinds = new Set<string>();
+      for (const z of this.zones) {
+        const s = this.zoneState.get(z.id);
+        if (!s || s.demand < 100 || s.satisfaction < 0.95) continue;
+        const lw = this.localWeather(this.terrainAt(this.idx(z.x, z.y)));
+        kinds.add(lw.strength >= 1 ? lw.kind : lw.strength <= 0 ? 'clear' : '');
+      }
+      for (const k of kinds) if (k) a.add(`wx:${k}`, 1);
+      // H08: 화산의 태양광
+      for (const b of this.buildings.values()) if (b.type === 'solar' && this.terrainAt(this.refTile(b)) === 'volcano' && b.load === 0) a.num.set('h08', 1);
+    }
+    // D09: 한 밤 안의 최대 축전 공급
+    for (const [k, v] of a.num) if (k.startsWith('d09:') && v > a.get('d09max')) a.num.set('d09max', v);
+    // H12: 같은 날 낮 태양광 5MJ와 한밤 풍력 5MJ
+    if (a.get(`h12d:${day}`) >= 5000 && a.get(`h12n:${day}`) >= 5000) a.num.set('h12', 1);
+    // H10: 사막 수력이 반입한 물로 낸 전기 (물 1개 = 300kJ)
+    a.num.set('h10', Math.min(a.get('h10burn'), a.get('h10water')) * WATER_ENERGY);
+    // H01: 60초 안에 같은 건널목 아래로 20개, 위로 트럭
+    for (const k of a.win.keys()) {
+      if (!k.startsWith('ug:')) continue;
+      const id = k.slice(3);
+      if (a.winSum(k, 60, this.time) >= 20 && a.winSum(`ugT:${id}`, 60, this.time) >= 1) a.num.set('h01', 1);
+    }
+    // 정리: 지난 날짜·없는 트럭의 기록 (1분마다)
+    if (this.tickNo % (TICK_RATE * 60) === 0) {
+      for (const k of [...a.num.keys()]) {
+        const m = /^(h12d|h12n|d09:\d+|vw:\d+|vd:\d+):(\d+)$/.exec(k);
+        if (m && Number(m[2]) < day - 1) a.num.delete(k);
+        const v = /^(tn|tl|vw|vd|ll|ld):(\d+)/.exec(k);
+        if (v && !this.vehicles.has(Number(v[2]))) a.num.delete(k);
+      }
+      for (const k of [...a.text.keys()]) if (!this.vehicles.has(Number(k.split(':')[1]))) a.text.delete(k);
+    }
+    evaluateAchievements(this);
+    a.flags.clear();
+  }
+
+  /** D02: 최근 60초 가동률 90% 이상인 생산 기계 수 (만든 지 60초 넘은 것) */
+  busyMachines(): number {
+    let n = 0;
+    for (const b of this.buildings.values()) {
+      if (!isCrafter(b) || b.def.power <= 0 || b.stats.age < 60) continue;
+      if ((this.machineStats(b)?.util ?? 0) >= 0.9) n++;
+    }
+    return n;
+  }
+
+  /** D18: 생산·발전 거점이 있는 지형 수 (건물 3개 이상, 최근 300초 제작 100개 또는 발전 5MJ) */
+  terrainBases(): number {
+    if (!this.terrain) return 0;
+    const count = new Map<string, number>();
+    for (const b of this.buildings.values()) {
+      if (!(isCrafter(b) && b.def.power > 0) && !isGeneratorType(b.type)) continue;
+      const t = this.terrainAt(this.refTile(b));
+      count.set(t, (count.get(t) ?? 0) + 1);
+    }
+    let n = 0;
+    for (const [t, c] of count) {
+      if (c < 3) continue;
+      if (this.ach.winSum(`tm:${t}`, 300, this.time) >= 100 || this.ach.winSum(`tg:${t}`, 300, this.time) >= 5000) n++;
+    }
+    return n;
+  }
+
+  /** D28: 한 조립 거점(구역)으로 최근 300초 재료가 이어진 가동 생산 거점 수 (최근 60초 생산 1개·작업 1MJ) */
+  supplyNetwork(): number {
+    const active = (z: number) => this.ach.winSum(`zm:${z}`, 60, this.time) >= 1 && this.ach.winSum(`zw:${z}`, 60, this.time) >= 1000;
+    const edges: [number, number][] = [];
+    for (const k of this.ach.win.keys()) {
+      if (!k.startsWith('pw:') || this.ach.winSum(k, 300, this.time) <= 0) continue;
+      const [f, t] = k.slice(3).split('>').map(Number);
+      edges.push([f, t]);
+    }
+    let best = 0;
+    for (const z of this.zones) {
+      if (!edges.some(([, t]) => t === z.id)) continue;
+      const seen = new Set<number>([z.id]);
+      const stack = [z.id];
+      while (stack.length) {
+        const cur = stack.pop()!;
+        for (const [f, t] of edges) if (t === cur && !seen.has(f) && active(f)) seen.add(f), stack.push(f);
+      }
+      const n = [...seen].filter(active).length;
+      best = Math.max(best, n);
+    }
+    return best;
+  }
+
+  /** H16: 허브 둘레 16칸 안에 심어 지금 다 자란 나무 수 */
+  gardenTrees(): number {
+    if (!this.hub) return 0;
+    const cx = this.hub.x + 1;
+    const cy = this.hub.y + 1;
+    let n = 0;
+    for (const [i, st] of this.ach.trees) {
+      if (st !== 2 || this.tree[i] < 1) continue;
+      if (Math.hypot((i % this.width) - cx, Math.floor(i / this.width) - cy) <= 16) n++;
+    }
+    return n;
+  }
+
+  /** 한밤 (하루의 0.7 ~ 0.9) */
+  private isNight(): boolean {
+    const p = dayPhase(this.time);
+    return p >= 0.7 && p < 0.9;
   }
 
   private finishCraft(b: Building): void {
@@ -3266,6 +3604,8 @@ export class World {
       // 범위에서 처음 찾은 다 자란 나무를 벤다 (그사이 누가 베었으면 다음 나무)
       const i = b.mineTiles.find((t) => this.tree[t] >= 1);
       if (i === undefined) return;
+      if (this.ach.trees.get(i) === 2) this.ach.trees.set(i, 3);
+      else this.ach.trees.delete(i);
       this.clearTree(i);
       this.produce(b, 'log', FOREST.logs);
       this.produce(b, 'sapling', 1);
@@ -3277,6 +3617,9 @@ export class World {
       addTo(b.inBuf, 'sapling', -1);
       // 아주 조금 자란 상태로 심는다 (0은 "나무 없음")
       this.setTree(i % this.width, Math.floor(i / this.width), 0.001);
+      if (this.ach.trees.get(i) === 3) this.ach.add('h02', 1);
+      this.ach.trees.set(i, 1);
+      this.ach.add('planted', 1);
       return;
     }
     if (b.mineDirt) {
@@ -3336,6 +3679,7 @@ export class World {
     }
     for (const o of r.outputs) this.produce(b, o.item, o.count);
     this.stats.recipeDone.set(r.id, (this.stats.recipeDone.get(r.id) ?? 0) + 1);
+    this.ach.addWin(`r:${r.id}`, 1, this.time);
   }
 
   private pushOutputs(b: Building): void {
@@ -3648,9 +3992,33 @@ export class World {
     const f = this.frontTile(b);
     const n = f ? this.buildingAt(f[0], f[1]) : null;
     if (!n) return 0;
-    if (isLineType(n.type)) return this.beltAccept(n, item, opposite(b.dir), count);
-    return this.acceptStack(n, item, count, b, opposite(b.dir));
+    const k = isLineType(n.type) ? this.beltAccept(n, item, opposite(b.dir), count) : this.acceptStack(n, item, count, b, opposite(b.dir));
+    if (k > 0 && b.type === 'underground' && this.ugCover().ids.has(b.id)) this.ach.addWin(`ug:${b.id}`, k, this.time);
+    return k;
   }
+
+  /** 도로 아래를 건너는 지하 컨베이어: 입구 id들과, 그 사이 도로 칸 → 입구 id (도로·배치가 바뀌면 다시) */
+  private ugCover(): { ids: Set<number>; tiles: Map<number, number> } {
+    const ver = `${this.roadVersion}:${this.nextId}:${this.buildings.size}`;
+    if (this.ugCache?.ver === ver) return this.ugCache;
+    const ids = new Set<number>();
+    const tiles = new Map<number, number>();
+    for (const b of this.buildings.values()) {
+      if (b.type !== 'underground' || b.ugMode !== 'in') continue;
+      const p = this.partnerOf(b);
+      if (!p) continue;
+      const len = Math.abs(p.x - b.x) + Math.abs(p.y - b.y);
+      for (let k = 1; k < len; k++) {
+        const i = this.idx(b.x + DX[b.dir] * k, b.y + DY[b.dir] * k);
+        if (!this.isRoad(i)) continue;
+        ids.add(b.id);
+        tiles.set(i, b.id);
+      }
+    }
+    this.ugCache = { ver, ids, tiles };
+    return this.ugCache;
+  }
+  private ugCache: { ver: string; ids: Set<number>; tiles: Map<number, number> } | null = null;
 
   // ───────────────────────── 창고 합치기 ─────────────────────────
 
@@ -4297,6 +4665,8 @@ export class World {
         return [false, 0];
       }
       v.tile = v.path.shift()!;
+      const ug = this.ugCover().tiles.get(v.tile);
+      if (ug) this.ach.addWin(`ugT:${ug}`, 1, this.time);
     }
   }
 
@@ -4340,7 +4710,7 @@ export class World {
       v.timer -= gap;
       addTo(st.inBuf, item, -1);
       addTo(v.cargo, item, 1);
-      this.markLoaded(v, st);
+      this.markLoaded(v, st, item);
       return;
     }
     v.idle += DT;
@@ -4384,6 +4754,7 @@ export class World {
     }
     const next = (v.stop + 1) % v.stops.length;
     if (next === 0) {
+      this.achLap(v);
       if (v.tripStart >= 0) {
         v.lastTrip = this.time - v.tripStart;
         v.lastLoad = v.lapUnloaded;
@@ -4571,7 +4942,10 @@ export class World {
       ...(this.revealed ? { fog: runLength(this.revealed), sites: { ...this.sites } } : {}),
       ...(this.zones.length ? { zones: this.zones.map((z) => ({ ...z })), nextZoneId: this.nextZoneId } : {}),
       ...(this.reservations.length ? { resv: this.reservations.map((r) => ({ ...r })) } : {}),
-      ...(this.regional ? { stats: saveStats(this.stats), goals: [...this.goals], challenges: [...this.challenges] } : {}),
+      // 실적은 업적 때문에 모든 세계에 남긴다 (목표·도전은 확장 세계만)
+      stats: saveStats(this.stats),
+      ach: this.ach.serialize(),
+      ...(this.regional ? { goals: [...this.goals], challenges: [...this.challenges] } : {}),
       ...(this.piles.length || this.nextPileEv > 1
         ? { piles: this.piles.map((p): [number, number, number, number, PileReason] => [p.tile, ITEM_IDS.indexOf(p.item), p.n, p.ev, p.why]), pileEv: this.nextPileEv }
         : {}),
@@ -4719,6 +5093,7 @@ export class World {
     if (data.stats) w.stats = loadStats(data.stats);
     w.goals = new Set(data.goals ?? []);
     w.challenges = new Set(data.challenges ?? []);
+    w.ach = AchState.from(data.ach);
     w.nextZoneId = data.nextZoneId ?? Math.max(0, ...w.zones.map((z) => z.id)) + 1;
     // 구역이 생기기 전의 확장 세계 저장이면 허브 구역을 만든다
     w.ensureHubZone();
@@ -4802,8 +5177,8 @@ export class World {
     h.str(this.rules).num(this.nextPileEv).num(this.moduleBatches).num(this.advDelivered).num(this.nextZoneId);
     for (const z of this.zones) h.num(z.id).num(z.x).num(z.y).num(z.creator).num(z.budget);
     for (const r of this.reservations) h.num(r.v).num(r.holder).str(r.item).num(r.n).str(r.dir);
-    // 실적은 확장 세계에서만 저장한다 (예전 세계는 저장 모양 그대로)
-    const st = this.regional ? this.stats : newStats();
+    const st = this.stats;
+    h.num(this.ach.digest());
     h.num(st.genWork).num(st.formalWork).num(st.delivered).num(st.scheduledDelivered).num(st.projectDelivered).num(st.projectOn ? 1 : 0).num(this.goals.size).num(this.challenges.size).num(st.geoWork).num(st.linkWork).num(st.nightStorage).num(st.treesMatured);
     for (const [item, n] of st.made) h.str(item).num(n);
     for (const [k, p] of st.pairs) h.str(k).num(p.n);
@@ -4989,6 +5364,8 @@ export interface SaveData {
   stats?: SavedStats;
   goals?: string[];
   challenges?: string[];
+  /** 업적 판정 상태 */
+  ach?: ReturnType<AchState['serialize']>;
   /** 현지 회수 더미 [칸 번호, 아이템 번호, 개수, 회수 사건, 이유]와 다음 사건 번호 */
   piles?: [number, number, number, number, PileReason][];
   pileEv?: number;

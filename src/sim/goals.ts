@@ -191,6 +191,62 @@ export const MAIN_GOALS: MainGoal[] = [
   },
 ];
 
+/**
+ * 선택형 도전 (메인 진행의 선행이 아니다). 진행 중 원하는 것 하나를 골라 추적한다.
+ * CG06(돌아오는 길의 화물)은 다중 정류장 양방향 배송이 가능한 빌드에서만 켠다는 기획에 따라 넣지 않았다
+ */
+export const CHALLENGES: MainGoal[] = [
+  {
+    id: 'CG01',
+    chapter: '선택 도전',
+    title: '다시 자라는 공장',
+    requires: [],
+    hint: '식목기로 심은 나무가 다 자라게 하고, 종이를 만들어요.',
+    checks: (w) => [['심은 나무가 다 자람', w.stats.treesMatured, 50], made(w, 'paper', 50, '종이')],
+  },
+  {
+    id: 'CG02',
+    chapter: '선택 도전',
+    title: '광맥 밖의 보조 공급',
+    requires: [],
+    hint: '흙 정제·광물 분리로 정광에서 철판·구리판을 만들고 콘크리트도.',
+    checks: (w) => [
+      ['정광으로 만든 철판', w.stats.recipeDone.get('iron-plate-c') ?? 0, 100],
+      ['정광으로 만든 구리판', w.stats.recipeDone.get('copper-plate-c') ?? 0, 100],
+      made(w, 'concrete', 20, '콘크리트'),
+    ],
+  },
+  {
+    id: 'CG03',
+    chapter: '선택 도전',
+    title: '지열과 송전',
+    requires: [],
+    hint: '지열 발전소로 기계를 돌리고, 송전으로 다른 구역 기계도 돌려요.',
+    checks: (w) => [
+      ['지열이 작업에 준 전기 (kJ)', Math.floor(w.stats.geoWork), 5000],
+      ['송전으로 받아 작업에 쓴 전기 (kJ)', Math.floor(w.stats.linkWork), 5000],
+    ],
+  },
+  {
+    id: 'CG04',
+    chapter: '선택 도전',
+    title: '저장해 둔 밤',
+    requires: [],
+    hint: '낮에 축전기에 모아 둔 전기로 한밤의 기계를 돌려요.',
+    checks: (w) => [['한밤에 축전기가 작업에 준 전기 (kJ)', Math.floor(w.stats.nightStorage), 5000]],
+  },
+  {
+    id: 'CG05',
+    chapter: '선택 도전',
+    title: '날씨에 맞춘 발전',
+    requires: [],
+    hint: '서로 다른 날씨 세 가지에서 각각 기계에 1MJ씩 전기를 대요.',
+    checks: (w) => [['1MJ 넘게 일한 날씨 종류', [...w.stats.weatherWork.values()].filter((k) => k >= 1000).length, 3]],
+  },
+];
+
+export const CHALLENGE_BY_ID: Record<string, MainGoal> = Object.fromEntries(CHALLENGES.map((g) => [g.id, g]));
+
 /** 허브 프로젝트의 납품 목표 */
 export const PROJECT_GOAL = 50;
 
@@ -210,6 +266,11 @@ export function evaluateGoals(w: World): string[] {
     w.goals.add(g.id);
     w.revealForGoal(g.id);
     got.push(g.id);
+  }
+  for (const c of CHALLENGES) {
+    if (w.challenges.has(c.id) || !goalMet(w, c)) continue;
+    w.challenges.add(c.id);
+    got.push(c.id);
   }
   return got;
 }

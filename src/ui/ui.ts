@@ -49,7 +49,7 @@ import {
 import { blueprintCode, blueprintPreview, defaultBlueprintName, saveBlueprint } from './blueprints';
 import { copyText } from './clipboard';
 import { GUIDE, findTarget, type GuideFocus } from './guide';
-import { MAIN_GOALS, PROJECT_GOAL, currentGoal } from '../sim/goals';
+import { CHALLENGES, CHALLENGE_BY_ID, MAIN_GOALS, PROJECT_GOAL, currentGoal } from '../sim/goals';
 import { Codex, depositName, type DepositId } from './codex';
 import { buildingIconUrl, depositIconUrl, itemIcon, itemLink, truckIconUrl, withBuildingIcons } from './icons';
 import { sound } from './sound';
@@ -205,6 +205,8 @@ export class UI {
   private guideFocus: GuideFocus | null = null;
   /** 확장 세계: 지난번에 본 이룬 목표 수, 완성 알림을 보였는지 */
   private goalCount = 0;
+  /** 회수 더미를 차례로 보여 줄 때 지금 차례 */
+  private pileCycle = -1;
   private finaleShown = false;
   /** 지금 목표가 맵에서 가리키는 곳 (건물을 들었을 때) */
   guideMark: { x: number; y: number; label: string } | null = null;
@@ -356,8 +358,36 @@ export class UI {
     letScrollbarDrag($('left'));
 
     // 목록이 다시 그려져도 놓치지 않게 click 대신 pointerdown
+    // 선택 도전 고르기 (개인 설정)
+    $('guide').addEventListener('change', (e) => {
+      const sel = e.target as HTMLSelectElement;
+      if (sel.dataset.act !== 'challenge') return;
+      try {
+        localStorage.setItem('automation-challenge', sel.value);
+      } catch {
+        // 저장 공간이 없으면 이번 실행 동안만
+      }
+      this.update();
+    });
+    // 운영 개요·회수 목록: 누르면 그 자리로
+    $('stats').addEventListener('pointerdown', (e) => {
+      const f = (e.target as HTMLElement).closest<HTMLElement>('[data-focus]')?.dataset.focus;
+      if (!f) return;
+      const [x, y] = f.split(',').map(Number);
+      $('stats').hidden = true;
+      game.focus(x + 0.5, y + 0.5);
+    });
     // 전력 구역 목록: 누르면 그 구역 중심으로
     $('power').addEventListener('pointerdown', (e) => {
+      if ((e.target as HTMLElement).closest('[data-piles]')) {
+        const tiles = [...game.getWorld().pileTiles().keys()];
+        if (!tiles.length) return;
+        this.pileCycle = (this.pileCycle + 1) % tiles.length;
+        const t = tiles[this.pileCycle];
+        const w0 = game.getWorld().width;
+        game.focus((t % w0) + 0.5, Math.floor(t / w0) + 0.5);
+        return;
+      }
       const id = Number((e.target as HTMLElement).closest<HTMLElement>('[data-zone]')?.dataset.zone);
       const z = id ? game.getWorld().zones.find((x) => x.id === id) : undefined;
       if (z) game.focus(z.x + 0.5, z.y + 0.5);
@@ -888,7 +918,11 @@ export class UI {
           <p class="muted power-src">수요 ${kw(need)} / 쓸 수 있는 ${kw(Math.max(supply, s.capacity))} kW${extra.length ? ` · ${extra.join(' · ')}` : ''}</p></div>`;
       })
       .join('');
+    const piles = w.pileTiles();
+    let pileN = 0;
+    for (const n of piles.values()) pileN += n;
     $('power').innerHTML = `<h3>전력 <span class="muted">구역 ${w.zones.length}곳</span></h3>${rows}
+      ${piles.size ? `<p class="muted power-src" data-piles title="누르면 회수 더미로 (누를 때마다 다음 곳)">📦 회수 대기 ${piles.size}곳 · ${pileN}개</p>` : ''}
       <p class="muted power-src">발전기를 공급 범위 밖에 놓으면 새 구역이 생겨요. 전봇대(12칸 이음·6칸 공급)·변전소로 넓혀요.</p>`;
   }
 
@@ -985,7 +1019,33 @@ export class UI {
     $('guide').innerHTML = `${head}
       <div class="now"><small class="muted">${g.chapter} · ${g.id}</small><b>${g.title}</b><p>${withBuildingIcons(g.hint)}</p></div>
       <ul class="steps">${checks}</ul>
-      ${opens.length ? `<p class="muted">이루면 지도에 열려요: ${opens.join(', ')}</p>` : ''}`;
+      ${opens.length ? `<p class="muted">이루면 지도에 열려요: ${opens.join(', ')}</p>` : ''}
+      ${this.challengeHtml(w)}`;
+  }
+
+  /** 선택 도전 하나를 골라 목표 카드 아래에 추적 (고른 것은 이 PC에만 기억, 이룬 기록은 공장에 저장) */
+  private challengeHtml(w: World): string {
+    const id = this.trackedChallenge();
+    const opts = CHALLENGES.map((c) => `<option value="${c.id}" ${c.id === id ? 'selected' : ''}>${w.challenges.has(c.id) ? '✓ ' : ''}${c.title}</option>`).join('');
+    let html = `<label class="recipe">선택 도전 <small>${w.challenges.size}/${CHALLENGES.length}</small>
+      <select data-act="challenge"><option value="">고르지 않음</option>${opts}</select></label>`;
+    const c = id ? CHALLENGE_BY_ID[id] : undefined;
+    if (c) {
+      const done = w.challenges.has(c.id);
+      html += `<p class="muted">${done ? '✓ 이룬 도전이에요. ' : ''}${c.hint}</p><ul class="steps">${c
+        .checks(w)
+        .map(([label, have, need]) => `<li class="${have >= need ? 'done' : ''}"><span class="mark">${have >= need ? '✓' : '·'}</span>${label} <b>${Math.min(have, need).toLocaleString()}/${need.toLocaleString()}</b></li>`)
+        .join('')}</ul>`;
+    }
+    return html;
+  }
+
+  private trackedChallenge(): string {
+    try {
+      return localStorage.getItem('automation-challenge') ?? '';
+    } catch {
+      return '';
+    }
   }
 
   /** 최종 납품을 마쳤을 때 한 번: 공장망 요약과 계속 건설 */
@@ -2280,6 +2340,7 @@ export class UI {
             ${land.spent ? ` · 다 캔 광맥 땅 ${land.spent}칸 중 <b>${land.revived}</b>칸에 다 자란 나무 <small>(숲 되살리기 ${Math.min(land.revived, FOREST.revive)}/${FOREST.revive})</small>` : ''}</p>`
         : '';
     $('stats').innerHTML = `<div class="panel stats-panel"><header><h2>공장 통계</h2><button class="x" data-act="close-modal">×</button></header>
+      ${w.regional ? this.overviewHtml(w) : ''}
       <p class="muted">분당 개수. "지금"은 기계마다 최근 15초 평균을 더한 것, "/" 뒤는 모든 기계가 100%로 돌 때.
         <b>100%일 때 남음</b>이 빨간 줄은 기계를 다 돌리면 모자라는 아이템이에요 (재료 기계를 늘리거나 쓰는 기계를 줄이기).</p>
       ${forest}
@@ -2287,6 +2348,87 @@ export class UI {
         <thead><tr><th>아이템</th><th>만들기</th><th>쓰기</th><th>지금 남음</th><th>100%일 때 남음</th><th>허브 입고</th><th>허브 재고</th><th title="게임 시간 10초마다 잰 허브 재고. 오른쪽이 지금">재고 흐름 (10분)</th></tr></thead>
         <tbody>${rows || '<tr><td colspan="8" class="muted">아직 아무것도 만들지 않아요</td></tr>'}</tbody>
       </table></div>`;
+  }
+
+  /**
+   * 확장 세계 운영 개요: 전력 구역(거점)마다 생산·작업 전기·전력 비율, 멈춘 기계의 원인별 수, 트럭 상태,
+   * 그리고 회수 더미 목록. 누르면 그곳으로 간다
+   */
+  private overviewHtml(w: World): string {
+    const causes: [Status, string][] = [
+      ['no-input', '재료 부족'],
+      ['output-full', '출력 막힘'],
+      ['low-power', '전력 부족'],
+      ['no-power', '전력 없음'],
+      ['locked', '연구 필요'],
+      ['no-recipe', '레시피 없음'],
+      ['depleted', '고갈'],
+    ];
+    type Row = { machines: number; working: number; stalled: Map<Status, number>; stations: number; trucks: Map<string, number> };
+    const rows = new Map<number, Row>();
+    const row = (z: number) => {
+      let r = rows.get(z);
+      if (!r) rows.set(z, (r = { machines: 0, working: 0, stalled: new Map(), stations: 0, trucks: new Map() }));
+      return r;
+    };
+    for (const b of w.buildings.values()) {
+      const z = w.zoneOf(b)?.id ?? 0;
+      if (b.type === 'station') row(z).stations++;
+      if (!HAS_STATUS.includes(b.type) || b.def.power <= 0) continue;
+      const r = row(z);
+      r.machines++;
+      if (b.status === 'working') r.working++;
+      else if (causes.some(([s]) => s === b.status)) r.stalled.set(b.status, (r.stalled.get(b.status) ?? 0) + 1);
+    }
+    for (const v of w.vehicles.values()) {
+      const st = w.buildings.get(v.stopId);
+      const r = row(st ? (w.zoneOf(st)?.id ?? 0) : 0);
+      const label = VEHICLE_STATUS_LABEL[v.status];
+      r.trucks.set(label, (r.trucks.get(label) ?? 0) + 1);
+    }
+    const ids = [...rows.keys()].sort((a, b) => (a || 1e9) - (b || 1e9));
+    const body = ids
+      .map((id) => {
+        const r = rows.get(id)!;
+        const z = w.zones.find((x) => x.id === id);
+        const s = z ? w.zoneState.get(id) : undefined;
+        const made = w.stats.zoneMade.get(id) ?? 0;
+        const work = (w.stats.zoneWork.get(id) ?? 0) / 1000;
+        const stalled = causes
+          .filter(([st]) => r.stalled.get(st))
+          .map(([st, name]) => `<span class="neg">${name} ${r.stalled.get(st)}</span>`)
+          .join(' · ');
+        const trucks = [...r.trucks].map(([k, n]) => `${k} ${n}`).join(' · ');
+        const name = z ? `구역 ${id}${z.hub ? ' (허브)' : ''}` : '<span class="neg">배전 범위 밖</span>';
+        const focus = z ? `data-focus="${z.x},${z.y}"` : '';
+        return `<tr ${focus} title="누르면 그 구역으로">
+          <td>${name}</td><td>${made.toLocaleString()}</td><td>${work.toFixed(1)}</td>
+          <td>${s ? `${Math.round(s.satisfaction * 100)}%` : '-'}</td>
+          <td>${r.working}/${r.machines}${stalled ? `<br><small>${stalled}</small>` : ''}</td>
+          <td>${r.stations}${trucks ? `<br><small>${trucks}</small>` : ''}</td></tr>`;
+      })
+      .join('');
+    const piles = [...w.pileTiles()].filter(([, n]) => n > 0);
+    const pileRows = piles
+      .slice(0, 12)
+      .map(([tile, n]) => {
+        const x = tile % w.width;
+        const y = Math.floor(tile / w.width);
+        const items = [...w.pileAt(tile)].map(([i, k]) => `${itemIcon(i)}${k}`).join(' ');
+        const why = [...new Set(w.piles.filter((p) => p.tile === tile).map((p) => PILE_REASON_LABEL[p.why]))].join(', ');
+        return `<tr data-focus="${x},${y}" title="누르면 그 자리로"><td>(${x}, ${y})</td><td>${items}</td><td><small>${why}</small></td><td>${n}</td></tr>`;
+      })
+      .join('');
+    return `<h3>거점 운영 개요</h3>
+      <table class="stats-table"><thead><tr><th>전력 구역</th><th>누적 생산</th><th>작업 전기 MJ</th><th>지금 전력</th><th>일하는 기계 / 멈춘 이유</th><th>정류장 / 트럭</th></tr></thead>
+      <tbody>${body || '<tr><td colspan="6" class="muted">아직 기계가 없어요</td></tr>'}</tbody></table>
+      <h3>회수 대기 ${piles.length}곳 · ${piles.reduce((a, [, n]) => a + n, 0)}개</h3>
+      ${
+        piles.length
+          ? `<table class="stats-table"><thead><tr><th>자리</th><th>물건</th><th>이유</th><th>개수</th></tr></thead><tbody>${pileRows}</tbody></table>
+             <p class="muted">철거·분리·반송으로 그 자리에 남은 실물이에요. 옆에 하역기를 놓으면 꺼낼 수 있어요.${piles.length > 12 ? ` (앞 12곳만)` : ''}</p>`
+          : '<p class="muted">회수 대기 물건이 없어요.</p>'
+      }`;
   }
 
   // ───────────────────────── 툴팁 ─────────────────────────

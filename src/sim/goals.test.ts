@@ -63,6 +63,31 @@ describe('메인 목표', () => {
   });
 });
 
+describe('선택 도전', () => {
+  it('지열이 기계를 돌리면 실적이 쌓이고, 조건이 차면 도전 기록 (메인 진행과 별개)', () => {
+    const w = regional();
+    for (const t of w.techs) w.applyTech(t.id);
+    for (const item of ['steel', 'bronze', 'motor', 'controller', 'concrete'] as const) w.stock.set(item, 100);
+    w.vents.push(w.idx(41, 21));
+    expect(w.place('geothermal', 40, 20, 0)).not.toBeNull();
+    const m = w.place('smelter', 44, 20, 0)!;
+    w.setRecipe(m, 'iron-plate');
+    for (let i = 0; i < 20 * TICK_RATE; i++) {
+      m.inBuf.set('iron-ore', 2);
+      m.outBuf.clear();
+      w.tick();
+    }
+    expect(w.stats.geoWork).toBeGreaterThan(90 * 19);
+    w.stats.linkWork = 5000;
+    w.stats.geoWork = 5000;
+    run(w, 1);
+    expect(w.challenges.has('CG03')).toBe(true);
+    expect(w.goals.has('CG03')).toBe(false);
+    const back = World.deserialize(JSON.parse(JSON.stringify(w.serialize())));
+    expect(back.challenges.has('CG03')).toBe(true);
+  });
+});
+
 describe('허브 프로젝트', () => {
   it('통합 자동화 뒤에 켜면 허브에 실제로 도착한 모듈만 50개까지 납품, 넘는 건 허브 재고로', () => {
     const w = regional();

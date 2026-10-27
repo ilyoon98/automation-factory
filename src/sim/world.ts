@@ -213,6 +213,13 @@ export interface FactoryStats {
   /** 허브 프로젝트: 납품을 켰는지, 누적 납품 모듈 */
   projectOn: boolean;
   projectDelivered: number;
+  /** 선택 도전용: 심은 나무가 다 자란 수, 레시피별 완료 수, 지열·수전·한밤 축전이 작업에 준 전기, 현지 날씨별 작업 전기 (kJ) */
+  treesMatured: number;
+  recipeDone: Map<string, number>;
+  geoWork: number;
+  linkWork: number;
+  nightStorage: number;
+  weatherWork: Map<string, number>;
 }
 
 export function newStats(): FactoryStats {
@@ -231,6 +238,12 @@ export function newStats(): FactoryStats {
     largeStarted: false,
     projectOn: false,
     projectDelivered: 0,
+    treesMatured: 0,
+    recipeDone: new Map(),
+    geoWork: 0,
+    linkWork: 0,
+    nightStorage: 0,
+    weatherWork: new Map(),
   };
 }
 
@@ -516,6 +529,8 @@ export class World {
   stats: FactoryStats = newStats();
   /** 이룬 메인 목표 id (regional-v1) */
   goals = new Set<string>();
+  /** 이룬 선택 도전 id */
+  challenges = new Set<string>();
   /** 운송 예약 (출고: 실제 보관물, 입고: 목적지 정류장 풀). 화물이 아니라 권리 표시라 실물 합계에 더하지 않는다 */
   reservations: Reservation[] = [];
   /** 처리한 현지 실물 명령: rid → 결과 (중복 수신은 이 결과만 돌려준다). 넣은 순서대로 오래된 것부터 잊는다 */
@@ -1724,7 +1739,10 @@ export class World {
       const k = this.terrain ? TERRAIN[this.terrainAt(i)].tree * this.weatherEffect(i).tree : 1;
       const g = Math.min(1, this.tree[i] + step * k);
       this.tree[i] = g;
-      if (g >= 1) this.treesGrown++;
+      if (g >= 1) {
+        this.treesGrown++;
+        this.stats.treesMatured++;
+      }
       else this.growing[keep++] = i;
     }
     this.growing.length = keep;
@@ -2437,10 +2455,11 @@ export class World {
       discharge: number;
       fuelUsed: number;
       stored: number;
+      geo: number;
     };
     const st = new Map<number, Acc>();
     for (const z of this.zones) {
-      st.set(z.id, { z, demand: 0, charge: 0, free: z.hub ? HUB_BASE_POWER : 0, hydros: [], coal: [], fuel: [], accs: [], cap: this.zoneCap(z), recv: 0, sent: 0, discharge: 0, fuelUsed: 0, stored: 0 });
+      st.set(z.id, { z, demand: 0, charge: 0, free: z.hub ? HUB_BASE_POWER : 0, hydros: [], coal: [], fuel: [], accs: [], cap: this.zoneCap(z), recv: 0, sent: 0, discharge: 0, fuelUsed: 0, stored: 0, geo: 0 });
     }
     for (const b of this.buildings.values()) {
       const zid = this.zoneOfB.get(b.id);
@@ -2453,7 +2472,10 @@ export class World {
       } else if (b.type === 'geothermal') {
         b.load = s ? GRID.geothermal : 0;
         b.status = s ? 'working' : 'idle';
-        if (s) s.free += b.load;
+        if (s) {
+          s.free += b.load;
+          s.geo += b.load;
+        }
       } else if (b.type === 'generator' || b.type === 'hydro' || b.type === 'fuel-generator') {
         const has = b.energy > 0 || b.fuel > 0 || countOf(b.inBuf, 'charcoal') > 0;
         if (!has || !s) {
@@ -2570,6 +2592,15 @@ export class World {
       this.stats.zoneWork.set(id, (this.stats.zoneWork.get(id) ?? 0) + work);
       this.stats.genWork += Math.max(0, work - (s.z.hub ? Math.min(HUB_BASE_POWER, nonfuel(s)) * DT : 0));
       if (s.cap > GRID.hub.cap) this.stats.formalWork += work;
+      // 선택 도전: 지열·수전·한밤 축전이 실제 작업에 준 몫, 구역 중심 지형의 지금 날씨별 작업 전기
+      if (work > 0) {
+        this.stats.geoWork += Math.min(work, s.geo * DT);
+        this.stats.linkWork += Math.min(work, s.recv * DT);
+        if (darkness(this.time) >= 0.99) this.stats.nightStorage += Math.min(work, s.discharge * DT);
+        const lw = this.localWeather(this.terrainAt(this.idx(s.z.x, s.z.y)));
+        const kind = lw.strength >= 0.5 ? lw.kind : 'clear';
+        this.stats.weatherWork.set(kind, (this.stats.weatherWork.get(kind) ?? 0) + work);
+      }
       this.zoneState.set(id, {
         demand: s.demand,
         charge: s.charge,
@@ -3298,6 +3329,7 @@ export class World {
       return;
     }
     for (const o of r.outputs) this.produce(b, o.item, o.count);
+    this.stats.recipeDone.set(r.id, (this.stats.recipeDone.get(r.id) ?? 0) + 1);
   }
 
   private pushOutputs(b: Building): void {
@@ -4533,7 +4565,7 @@ export class World {
       ...(this.revealed ? { fog: runLength(this.revealed), sites: { ...this.sites } } : {}),
       ...(this.zones.length ? { zones: this.zones.map((z) => ({ ...z })), nextZoneId: this.nextZoneId } : {}),
       ...(this.reservations.length ? { resv: this.reservations.map((r) => ({ ...r })) } : {}),
-      ...(this.regional ? { stats: saveStats(this.stats), goals: [...this.goals] } : {}),
+      ...(this.regional ? { stats: saveStats(this.stats), goals: [...this.goals], challenges: [...this.challenges] } : {}),
       ...(this.piles.length || this.nextPileEv > 1
         ? { piles: this.piles.map((p): [number, number, number, number, PileReason] => [p.tile, ITEM_IDS.indexOf(p.item), p.n, p.ev, p.why]), pileEv: this.nextPileEv }
         : {}),
@@ -4680,6 +4712,7 @@ export class World {
     w.reservations = (data.resv ?? []).map((r) => ({ ...r }));
     if (data.stats) w.stats = loadStats(data.stats);
     w.goals = new Set(data.goals ?? []);
+    w.challenges = new Set(data.challenges ?? []);
     w.nextZoneId = data.nextZoneId ?? Math.max(0, ...w.zones.map((z) => z.id)) + 1;
     // 구역이 생기기 전의 확장 세계 저장이면 허브 구역을 만든다
     w.ensureHubZone();
@@ -4765,7 +4798,7 @@ export class World {
     for (const r of this.reservations) h.num(r.v).num(r.holder).str(r.item).num(r.n).str(r.dir);
     // 실적은 확장 세계에서만 저장한다 (예전 세계는 저장 모양 그대로)
     const st = this.regional ? this.stats : newStats();
-    h.num(st.genWork).num(st.formalWork).num(st.delivered).num(st.scheduledDelivered).num(st.projectDelivered).num(st.projectOn ? 1 : 0).num(this.goals.size);
+    h.num(st.genWork).num(st.formalWork).num(st.delivered).num(st.scheduledDelivered).num(st.projectDelivered).num(st.projectOn ? 1 : 0).num(this.goals.size).num(this.challenges.size).num(st.geoWork).num(st.linkWork).num(st.nightStorage).num(st.treesMatured);
     for (const [item, n] of st.made) h.str(item).num(n);
     for (const [k, p] of st.pairs) h.str(k).num(p.n);
     for (const p of this.piles) h.num(p.tile).str(p.item).num(p.n).num(p.ev);
@@ -4949,6 +4982,7 @@ export interface SaveData {
   /** 공장 실적과 이룬 메인 목표 (regional-v1) */
   stats?: SavedStats;
   goals?: string[];
+  challenges?: string[];
   /** 현지 회수 더미 [칸 번호, 아이템 번호, 개수, 회수 사건, 이유]와 다음 사건 번호 */
   piles?: [number, number, number, number, PileReason][];
   pileEv?: number;
@@ -5131,6 +5165,12 @@ function saveStats(s: FactoryStats) {
     largeStarted: s.largeStarted,
     projectOn: s.projectOn,
     projectDelivered: s.projectDelivered,
+    treesMatured: s.treesMatured,
+    recipeDone: [...s.recipeDone],
+    geoWork: s.geoWork,
+    linkWork: s.linkWork,
+    nightStorage: s.nightStorage,
+    weatherWork: [...s.weatherWork],
   };
 }
 
@@ -5150,6 +5190,12 @@ function loadStats(d: Partial<ReturnType<typeof saveStats>>): FactoryStats {
     largeStarted: d.largeStarted ?? false,
     projectOn: d.projectOn ?? false,
     projectDelivered: d.projectDelivered ?? 0,
+    treesMatured: d.treesMatured ?? 0,
+    recipeDone: new Map(d.recipeDone ?? []),
+    geoWork: d.geoWork ?? 0,
+    linkWork: d.linkWork ?? 0,
+    nightStorage: d.nightStorage ?? 0,
+    weatherWork: new Map(d.weatherWork ?? []),
   };
 }
 

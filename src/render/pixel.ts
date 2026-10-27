@@ -433,6 +433,16 @@ TERRAIN_IDS.forEach((t, k) => {
   }
 });
 
+/** 아직 모르는 땅 (확장 지도): 어두운 양피지에 옅은 구름 무늬 */
+export const FOG_COLOR = '#5a4c3e';
+for (let v = 0; v < 4; v++) {
+  define(`fog:${v}`, 16, 16, 1, (p) => {
+    p.rect(0, 0, 16, 16, FOG_COLOR);
+    const h = hash(v * 977 + 5);
+    for (let n = 0; n < 5; n++) p.rect((h >>> (n * 5)) & 13, (hash(h + n) >>> 4) & 15, 3, 1, tone(FOG_COLOR, 0.12));
+  });
+}
+
 /** 원유·염수 지점 (시추기 기준 칸). 다 뽑으면 빈 자국 */
 for (const [item, c] of [
   ['crude-oil', ['#2a2420', '#4a3e36', '#7a6a5e']],

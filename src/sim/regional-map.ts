@@ -27,6 +27,9 @@ export const SITES = {
 } as const;
 export type SiteId = keyof typeof SITES;
 
+/** 처음 보이는 허브 둘레 반경 (첫 추가 광맥 25~36칸까지) */
+export const START_REVEAL = 40;
+
 /** 지형 씨앗 [x, y, 지형]. 첫 줄은 기준 배치 거점, 나머지는 두 번째 자원지와 넓이 맞추기용 */
 const SEEDS: [number, number, TerrainKind][] = [
   [128, 128, 'grass'],
@@ -175,6 +178,11 @@ export function generateRegionalWorld(seed: number): World {
   for (const s of ['B', 'C', 'D', 'E', 'F', 'G', 'H'] as SiteId[]) carve(w, hub, site(s));
   for (const s of Object.values(SECOND)) carve(w, hub, T(s));
 
+  // 확인한 땅: 처음엔 허브 둘레만 (시작 광맥·첫 추가 광맥·호수·숲까지). 목표를 이루면 거점이 열린다
+  for (const s of Object.keys(SITES) as SiteId[]) w.sites[s] = site(s);
+  for (const [k, p] of Object.entries(SECOND)) w.sites[`${k}2`] = T(p);
+  w.revealed = new Uint8Array(w.width * w.height);
+  w.reveal(hub[0], hub[1], START_REVEAL);
   for (const s of STARTING_STOCK) w.stock.set(s.item, s.count);
   return w;
 }

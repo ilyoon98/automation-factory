@@ -2,7 +2,7 @@ import { BUILDINGS, isBeltType, type BuildingType } from '../data/buildings';
 import { ITEMS } from '../data/items';
 import { TERRAIN, TERRAIN_IDS } from '../data/terrain';
 import type { Camera } from '../render/camera';
-import { ORE_GROUND, TREE_LEAF } from '../render/pixel';
+import { FOG_COLOR, ORE_GROUND, TREE_LEAF } from '../render/pixel';
 import { patchAlert, type World } from '../sim/world';
 
 /** 픽셀 맵과 같은 따뜻한 공방 색 */
@@ -136,8 +136,17 @@ export class Minimap {
     const d = img.data;
     const ground = rgb(GROUND);
     const terrain = TERRAIN_IDS.map((t) => rgb(TERRAIN[t].color));
+    const fog = rgb(FOG_COLOR);
     for (let i = 0; i < w.width * w.height; i++) {
       let c = w.terrain ? terrain[w.terrain[i]] : ground;
+      if (!w.isRevealed(i)) {
+        // 아직 모르는 땅
+        d[i * 4] = fog[0];
+        d[i * 4 + 1] = fog[1];
+        d[i * 4 + 2] = fog[2];
+        d[i * 4 + 3] = 255;
+        continue;
+      }
       const item = w.resItem[i];
       if (item === 'water') c = rgb(WATER);
       else if (item) {

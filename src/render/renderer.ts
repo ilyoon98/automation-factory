@@ -22,7 +22,7 @@ import { BELT_SPEED, World, isLineType, patchAlert, portTiles, storageBounds } f
 import { ambientEnabled, darkness, sunset, weatherAt } from './ambient';
 import type { Camera } from './camera';
 import { roundRect } from './draw-item';
-import { NUM_ADVANCE, ORE_GROUND, PAL, TILE, TREE_LEAF, hash, loadSpriteOverrides, sprite, spriteHalf, tone } from './pixel';
+import { FOG_COLOR, NUM_ADVANCE, ORE_GROUND, PAL, TILE, TREE_LEAF, hash, loadSpriteOverrides, sprite, spriteHalf, tone } from './pixel';
 import { MACHINE, MACHINE3 } from './pixel-buildings';
 
 /** 목표 표시 색 (진분홍: 모래·광맥·숲·호수 어디에도 없는 색이라 눈에 띈다. style.css .guide-pulse와 같게) */
@@ -745,7 +745,7 @@ export class Renderer {
     for (let y = y0; y <= y1; y++) {
       for (let x = x0; x <= x1; x++) {
         const i = world.idx(x, y);
-        if (world.resItem[i] !== 'water') continue;
+        if (world.resItem[i] !== 'water' || !world.isRevealed(i)) continue;
         const h = hash(i);
         const [sx, sy] = cam.worldToScreen(x, y);
         this.blit(`water:${h & 3}`, Math.floor(t + ((h >>> 4) & 3)), sx, sy);
@@ -760,6 +760,7 @@ export class Renderer {
       for (let y = y0; y <= y1; y++) {
         for (let x = x0; x <= x1; x++) {
           const i = world.idx(x, y);
+          if (!world.isRevealed(i)) continue;
           const [sx, sy] = cam.worldToScreen(x, y);
           if (world.resItem[i] === 'sap') this.blit('rubber-tree', 0, sx, sy, (hash(i) & 8) !== 0);
           else if (vents.has(i)) this.blit('vent', Math.floor(world.time * 2 + (i & 1)) % 2, sx, sy);
@@ -770,7 +771,7 @@ export class Renderer {
       for (let x = x0; x <= x1; x++) {
         const i = world.idx(x, y);
         const g = world.tree[i];
-        if (g <= 0) continue;
+        if (g <= 0 || !world.isRevealed(i)) continue;
         const stage = treeStage(g);
         const h = hash(i);
         const [sx, sy] = cam.worldToScreen(x, y);
@@ -1124,7 +1125,7 @@ export class Renderer {
         for (let x = x0; x <= x1; x++) {
           const i = world.idx(x, y);
           const item = world.resItem[i];
-          if (!item || item === 'water' || world.resAmount[i] <= 0) continue;
+          if (!item || item === 'water' || world.resAmount[i] <= 0 || !world.isRevealed(i)) continue;
           const [sx, sy] = cam.worldToScreen(x, y);
           ctx.fillStyle = ORE_GROUND[item] ?? ITEMS[item].color;
           ctx.fillRect(sx + 1, sy + 1, z - 2, z - 2);
@@ -1132,6 +1133,7 @@ export class Renderer {
       }
       for (const p of world.patchList()) {
         if (p.x < x0 - 4 || p.y < y0 - 4 || p.x > x1 + 4 || p.y > y1 + 4 || p.item === 'water') continue;
+        if (!world.isRevealed(world.idx(Math.round(p.x), Math.round(p.y)))) continue;
         const [sx, sy] = cam.worldToScreen(p.x + 0.5, p.y + 0.5);
         const left = p.remaining === Infinity ? '무한' : `${Math.round(p.remaining).toLocaleString()}`;
         this.text(`${ITEMS[p.item].name} ${left}`, sx, sy, '#fff7e8', 12);
@@ -1139,7 +1141,7 @@ export class Renderer {
       for (const v of world.vents) {
         const x = v % world.width;
         const y = Math.floor(v / world.width);
-        if (x < x0 || y < y0 || x > x1 || y > y1) continue;
+        if (x < x0 || y < y0 || x > x1 || y > y1 || !world.isRevealed(v)) continue;
         const [sx, sy] = cam.worldToScreen(x + 0.5, y + 0.5);
         this.text('지열 분출구', sx, sy - z, '#ffd7b0', 11);
       }
@@ -1910,6 +1912,7 @@ function richness(amount: number): number {
 function groundSprite(world: World, i: number): string {
   const item = world.resItem[i];
   const h = hash(i);
+  if (!world.isRevealed(i)) return `fog:${h & 3}`;
   if (item && ORE_TILES.includes(item)) return `ore:${item}:${richness(world.resAmount[i])}:${(h >>> 3) & 3}`;
   if (item === 'crude-oil' || item === 'brine') return `point:${item}:${world.resAmount[i] > 0 ? 0 : 1}`;
   const t = world.terrain ? world.terrain[i] : 0;
@@ -1923,6 +1926,7 @@ function treeStage(g: number): number {
 
 /** 바닥 칸 그림이 바뀌었는지 볼 번호 (멀리서 볼 때 나무 색도 바닥에 굽는다) */
 function groundCode(world: World, i: number): number {
+  if (!world.isRevealed(i)) return 999;
   const item = world.resItem[i];
   if (item === 'water') return 99;
   if (world.tree[i] > 0) return 200 + treeStage(world.tree[i]);
@@ -1933,6 +1937,7 @@ function groundCode(world: World, i: number): number {
 
 /** 멀리서 볼 때 칸 색: 땅, 물, 광맥 바닥색 (매장량이 많으면 진하게, 적으면 옅게) */
 function lodColor(world: World, i: number): string {
+  if (!world.isRevealed(i)) return FOG_COLOR;
   const item = world.resItem[i];
   if (item === 'water') return PAL.water.lo;
   const g = world.tree[i];

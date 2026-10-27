@@ -40,6 +40,7 @@ import {
   patchAlert,
   storageBounds,
   PILE_REASON_LABEL,
+  revealPreview,
   type MachineStats,
   type PatchReport,
   type UseResult,
@@ -958,7 +959,8 @@ export class UI {
     if (w === this.guideWorld && done > this.goalCount) {
       sound.play('goal');
       const last = MAIN_GOALS.filter((g) => w.goals.has(g.id)).at(-1);
-      if (last) this.toast(`목표 달성: ${last.title}`, 2500);
+      const opened = last ? revealPreview(last.id) : [];
+      if (last) this.toast(`목표 달성: ${last.title}${opened.length ? ` · 지도에 새로 열린 곳: ${opened.join(', ')}` : ''}`, opened.length ? 5000 : 2500);
       if (w.goals.has('MG36') && !this.finaleShown) this.showFinale(w);
     }
     this.goalCount = done;
@@ -978,9 +980,11 @@ export class UI {
         return `<li class="${ok ? 'done' : ''}"><span class="mark">${ok ? '✓' : '·'}</span>${label} <b>${Math.min(have, need).toLocaleString()}/${need.toLocaleString()}</b></li>`;
       })
       .join('');
+    const opens = w.revealed ? revealPreview(g.id) : [];
     $('guide').innerHTML = `${head}
       <div class="now"><small class="muted">${g.chapter} · ${g.id}</small><b>${g.title}</b><p>${withBuildingIcons(g.hint)}</p></div>
-      <ul class="steps">${checks}</ul>`;
+      <ul class="steps">${checks}</ul>
+      ${opens.length ? `<p class="muted">이루면 지도에 열려요: ${opens.join(', ')}</p>` : ''}`;
   }
 
   /** 최종 납품을 마쳤을 때 한 번: 공장망 요약과 계속 건설 */

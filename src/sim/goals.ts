@@ -208,6 +208,7 @@ export function evaluateGoals(w: World): string[] {
     if (w.goals.has(g.id) || !g.requires.every((r) => w.goals.has(r))) continue;
     if (!goalMet(w, g)) continue;
     w.goals.add(g.id);
+    w.revealForGoal(g.id);
     got.push(g.id);
   }
   return got;

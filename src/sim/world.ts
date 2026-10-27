@@ -278,6 +278,43 @@ const ORE_TECH: Partial<Record<ItemId, string>> = {
   sap: 'industrial-motor',
 };
 
+/** 메인 목표를 이루면 열리는 거점 ('*' = 지도 전체) */
+const REVEAL_ON_GOAL: Record<string, string[]> = {
+  MG07: ['B', 'H'],
+  MG11: ['C'],
+  MG14: ['D', 'E'],
+  MG19: ['F'],
+  MG20: ['G'],
+  MG28: ['tin2', 'bauxite2', 'oil2', 'brine2', 'sulfur2', 'rubber2'],
+  MG32: ['*'],
+};
+
+const SITE_LABEL: Record<string, string> = {
+  B: '눈밭 (주석)',
+  C: '숲 (고무나무)',
+  D: '모래사막 (원유)',
+  E: '바위사막 (보크사이트)',
+  F: '화산 (황·지열)',
+  G: '염호 (염수)',
+  H: '조립 부지',
+  tin2: '두 번째 주석',
+  bauxite2: '두 번째 보크사이트',
+  oil2: '두 번째 원유',
+  brine2: '두 번째 염수',
+  sulfur2: '두 번째 황·지열',
+  rubber2: '두 번째 고무나무',
+};
+
+/** 이 목표를 이루면 지도에 열리는 곳 이름들 (화면 안내용) */
+export function revealPreview(id: string): string[] {
+  const list = REVEAL_ON_GOAL[id];
+  if (!list) return [];
+  return list[0] === '*' ? ['지도 전체'] : list.map((k) => SITE_LABEL[k] ?? k);
+}
+
+/** 확인한 땅 가장자리에 지으면 둘레 이만큼 더 보인다 */
+const REVEAL_BUILD = 6;
+
 /** 채굴기로는 캐지 않는 자원 칸 (시추기·수액 채취기 전용) */
 export const NOT_MINED: ItemId[] = ['water', 'sap', 'crude-oil', 'brine'];
 
@@ -462,6 +499,15 @@ export class World {
   terrain: Uint8Array | null = null;
   /** 지열 분출구 칸들 (분출구마다 지열 발전소 한 대) */
   vents: number[] = [];
+  /**
+   * 확인한 땅 (regional-v1). null이면 모두 보인다 (예전 지도). 처음엔 허브 둘레만 보이고,
+   * 메인 목표를 이루면 다음 산업의 거점이 길과 함께 열린다. 확인한 땅 가장자리에 지으면 둘레 6칸이 더 보인다
+   */
+  revealed: Uint8Array | null = null;
+  /** 확인한 칸 수 (화면 알림·해시용) */
+  revealedCount = 0;
+  /** 지도 생성의 거점 자리 (A 시작 ~ H 조립 부지, 두 번째 자원지들). 목표를 이루면 여기를 연다 */
+  sites: Record<string, [number, number]> = {};
   /** 현지 회수 더미 (regional-v1). 칸 번호·아이템·회수 사건별 */
   piles: PileEntry[] = [];
   /** 다음 회수 사건 번호 */
@@ -524,6 +570,59 @@ export class World {
   /** 지역 생산망 확장 세계인지 */
   get regional(): boolean {
     return this.rules === 'regional-v1';
+  }
+
+  /** 이 칸을 확인했는지 (예전 지도는 늘 true) */
+  isRevealed(i: number): boolean {
+    return !this.revealed || this.revealed[i] === 1;
+  }
+
+  /** (cx, cy)에서 반지름 r 안을 확인한 땅으로 */
+  reveal(cx: number, cy: number, r: number): void {
+    if (!this.revealed) return;
+    for (let y = Math.max(0, Math.floor(cy - r)); y <= Math.min(this.height - 1, Math.ceil(cy + r)); y++) {
+      for (let x = Math.max(0, Math.floor(cx - r)); x <= Math.min(this.width - 1, Math.ceil(cx + r)); x++) {
+        if ((x - cx) ** 2 + (y - cy) ** 2 > r * r) continue;
+        const i = y * this.width + x;
+        if (!this.revealed[i]) {
+          this.revealed[i] = 1;
+          this.revealedCount++;
+        }
+      }
+    }
+  }
+
+  /** 허브에서 (x, y)까지 폭 7칸의 길 후보 띠 (가로 먼저, 그다음 세로) */
+  private revealRoad(x: number, y: number): void {
+    const a = this.sites.A;
+    if (!a) return;
+    const step = (fx: number, fy: number, tx: number, ty: number) => {
+      const n = Math.max(Math.abs(tx - fx), Math.abs(ty - fy));
+      for (let k = 0; k <= n; k += 2) this.reveal(fx + ((tx - fx) * k) / Math.max(1, n), fy + ((ty - fy) * k) / Math.max(1, n), 3.5);
+    };
+    step(a[0], a[1], x, a[1]);
+    step(x, a[1], x, y);
+  }
+
+  /** 목표를 이루면 열리는 거점 (기획의 생산 순서: 주석·조립 부지 → 숲 → 사막 → 화산·염호 → 두 번째 자원지 → 전체) */
+  revealForGoal(id: string): string[] {
+    if (!this.revealed) return [];
+    const list = REVEAL_ON_GOAL[id];
+    if (!list) return [];
+    if (list[0] === '*') {
+      this.revealed.fill(1);
+      this.revealedCount = this.revealed.length;
+      return ['지도 전체'];
+    }
+    const names: string[] = [];
+    for (const key of list) {
+      const s = this.sites[key];
+      if (!s) continue;
+      this.revealRoad(s[0], s[1]);
+      this.reveal(s[0], s[1], key.endsWith('2') ? 20 : 26);
+      names.push(SITE_LABEL[key] ?? key);
+    }
+    return names;
   }
 
   /** 칸의 지형 (예전 지도는 늘 초원) */
@@ -880,6 +979,7 @@ export class World {
     for (let dy = 0; dy < def.size; dy++) {
       for (let dx = 0; dx < def.size; dx++) {
         if (!this.inBounds(x + dx, y + dy)) return { ok: false, reason: '맵 밖' };
+        if (!this.isRevealed(this.idx(x + dx, y + dy))) return { ok: false, reason: '아직 모르는 땅 (목표를 이루거나 가장자리에 지어 넓혀요)' };
         const occupant = this.buildingAt(x + dx, y + dy);
         if (occupant && !(replacing && isBeltType(occupant.type))) return { ok: false, reason: '이미 건물이 있음' };
       }
@@ -1074,6 +1174,8 @@ export class World {
     if (isMinerType(type) && type !== 'pump' && b.mineTiles.length === 0) b.mineDirt = true;
     if (type === 'station') b.stationNo = this.nextStationNo++;
     this.assignZone(b);
+    // 지은 자리 둘레를 확인한 땅으로 (도로를 깔며 조금씩 나아갈 수 있게)
+    if (this.revealed && !free) this.reveal(b.x + b.size / 2 - 0.5, b.y + b.size / 2 - 0.5, REVEAL_BUILD + b.size / 2);
     if (type === 'underground') {
       const plan = this.undergroundPlan(x, y, dir);
       b.ugMode = plan.mode;
@@ -4355,6 +4457,7 @@ export class World {
       // 예전 세계는 모양을 그대로 (없으면 legacy-v042로 읽는다)
       ...(this.rules !== 'legacy-v042' ? { rules: this.rules } : {}),
       ...(this.terrain ? { terrain: runLength(this.terrain), vents: [...this.vents] } : {}),
+      ...(this.revealed ? { fog: runLength(this.revealed), sites: { ...this.sites } } : {}),
       ...(this.zones.length ? { zones: this.zones.map((z) => ({ ...z })), nextZoneId: this.nextZoneId } : {}),
       ...(this.reservations.length ? { resv: this.reservations.map((r) => ({ ...r })) } : {}),
       ...(this.regional ? { stats: saveStats(this.stats), goals: [...this.goals] } : {}),
@@ -4380,6 +4483,13 @@ export class World {
       let k = 0;
       for (let j = 0; j < data.terrain.length; j += 2) w.terrain.fill(data.terrain[j], k, (k += data.terrain[j + 1]));
       w.vents = [...(data.vents ?? [])];
+    }
+    if (data.fog) {
+      w.revealed = new Uint8Array(w.width * w.height);
+      let k = 0;
+      for (let j = 0; j < data.fog.length; j += 2) w.revealed.fill(data.fog[j], k, (k += data.fog[j + 1]));
+      w.revealedCount = w.revealed.reduce((a, b) => a + b, 0);
+      w.sites = { ...(data.sites ?? {}) };
     }
     for (const [i, itemIdx, a] of data.res) {
       w.resItem[i] = ITEM_IDS[itemIdx];
@@ -4575,6 +4685,7 @@ export class World {
   checksum(): number {
     const h = new Hasher();
     h.num(this.tickNo).num(this.nextId).num(this.nextVehicleId).num(this.time);
+    h.num(this.revealedCount);
     h.str(this.rules).num(this.nextPileEv).num(this.moduleBatches).num(this.advDelivered).num(this.nextZoneId);
     for (const z of this.zones) h.num(z.id).num(z.x).num(z.y).num(z.creator).num(z.budget);
     for (const r of this.reservations) h.num(r.v).num(r.holder).str(r.item).num(r.n).str(r.dir);
@@ -4752,6 +4863,9 @@ export interface SaveData {
   /** 지형 [번호, 이어진 칸 수, 번호, 칸 수, …] (예전 지도는 없음)과 지열 분출구 칸들 */
   terrain?: number[];
   vents?: number[];
+  /** 확인한 땅 [0/1, 이어진 칸 수, …]과 거점 자리 (없으면 모두 보임) */
+  fog?: number[];
+  sites?: Record<string, [number, number]>;
   /** 지역 전력 구역과 다음 구역 번호 */
   zones?: Zone[];
   nextZoneId?: number;

@@ -41,12 +41,11 @@ export type BuildingType =
   // 지역 전력 (regional-v1)
   | 'pole'
   | 'substation'
-  | 'terminal'
   | 'accumulator'
   | 'fuel-generator'
   | 'geothermal';
 
-export type Category = 'logistics' | 'production' | 'power' | 'storage' | 'transport' | 'forest' | 'industry' | 'grid';
+export type Category = 'logistics' | 'production' | 'power' | 'storage' | 'transport' | 'forest' | 'industry';
 
 /**
  * 하단 툴바 카테고리. key로 탭을 바꾸고, 숫자 1~9로 items의 순서대로 고른다.
@@ -65,14 +64,33 @@ export const CATEGORIES: { id: Category; name: string; key: string; items: Build
     key: 'x',
     items: ['miner', 'smelter', 'assembler', 'miner-2', 'crusher', 'washer', 'separator', 'pump', 'electric-furnace'],
   },
-  { id: 'power', name: '전력', key: 'c', items: ['generator', 'solar', 'hydro', 'wind'] },
+  // 기존 발전 4종의 순서·번호는 그대로, 확장 세계에서 발전·전력망·저장을 뒤에 더한다 (별도 배전 탭 없음)
+  { id: 'power', name: '전력', key: 'c', items: ['generator', 'solar', 'hydro', 'wind', 'fuel-generator', 'geothermal', 'pole', 'substation', 'accumulator'] },
   { id: 'storage', name: '보관', key: 'v', items: ['storage', 'unloader'] },
   { id: 'transport', name: '운송', key: 'b', items: ['road', 'station', 'charger'] },
   { id: 'forest', name: '숲', key: 'n', items: ['lumberjack', 'planter', 'sawmill'] },
   // regional-v1 세계에서만 탭이 보인다
   { id: 'industry', name: '산업', key: 'l', items: ['sap-extractor', 'drill', 'chem-reactor', 'refinery', 'electrolyzer', 'large-assembler'] },
-  { id: 'grid', name: '배전', key: 'u', items: ['pole', 'substation', 'terminal', 'accumulator', 'fuel-generator', 'geothermal'] },
 ];
+
+/** 지역 생산망 확장 세계에서만 쓰는 건물 (예전 세계의 탭·도감에는 보이지 않는다) */
+export const REGIONAL_ONLY = new Set<BuildingType>([
+  ...CATEGORIES.find((c) => c.id === 'industry')!.items,
+  'fuel-generator',
+  'geothermal',
+  'pole',
+  'substation',
+  'accumulator',
+]);
+
+/** 탭의 건물 (숫자 키 순서). 예전 세계는 확장 전용 건물을 뺀다 */
+export function categoryItems(id: Category, regional: boolean): BuildingType[] {
+  const items = CATEGORIES.find((c) => c.id === id)?.items ?? [];
+  return regional ? items : items.filter((t) => !REGIONAL_ONLY.has(t));
+}
+
+/** 전력 탭 안의 묶음 (확장 세계): 그 묶음의 첫 건물 앞에 이름을 붙인다 */
+export const POWER_GROUP: Partial<Record<BuildingType, string>> = { generator: '발전', pole: '전력망', accumulator: '저장' };
 
 /**
  * 지정 칸 입출구. 앞면이 남쪽(↓)일 때 몸체 왼쪽 위 (0,0) 기준 "몸체 바깥에 벨트를 놓는 칸".
@@ -611,7 +629,7 @@ export const BUILDINGS: Record<BuildingType, BuildingDef> = {
     ],
     power: 0,
     color: '#8f6a3a',
-    description: '같은 전력 구역의 허브·발전기·변전소·전봇대에서 12칸 안에 놓으면 둘레 6칸에 전기를 보낸다. 구역 중심에서 너무 멀면(확장 한계) 닿지 않는다.',
+    description: '허브·발전기·변전소·다른 전봇대와 12칸 안이면 전선으로 저절로 이어져 한 전력망이 된다 (전선 비용·손실 없음). 둘레 6칸에 전기를 보낸다.',
     placeable: true,
   },
   substation: {
@@ -626,22 +644,7 @@ export const BUILDINGS: Record<BuildingType, BuildingDef> = {
     ],
     power: 0,
     color: '#5a6a8a',
-    description: '전력 구역을 정식 구역으로: 처리 전력 6MW, 둘레 18칸 공급, 확장 한계 36칸(허브 구역은 40칸).',
-    placeable: true,
-  },
-  terminal: {
-    type: 'terminal',
-    name: '송전 터미널',
-    size: 2,
-    cost: [
-      { item: 'steel', count: 16 },
-      { item: 'aluminum-plate', count: 8 },
-      { item: 'hc-cable', count: 6 },
-      { item: 'controller', count: 2 },
-    ],
-    power: 0,
-    color: '#7a5a9a',
-    description: '다른 구역의 터미널과 한 방향으로 잇는다 (최대 128칸·2MW·효율 95%). 이을 때 고용량 케이블을 거리÷8 올림 개 더 쓴다.',
+    description: '둘레 18칸에 전봇대 없이 전기를 보낸다. 12칸 안의 노드와 전선으로 이어진다. 발전량을 늘리지는 않는다.',
     placeable: true,
   },
   accumulator: {
@@ -812,16 +815,15 @@ export const EXTRACT = { sapTime: 2, groveMax: 4, drillTime: 1 };
 
 /** 지역 전력 (regional-v1, docs/지형-운송-전력-상세기획.md §9~11) */
 export const GRID = {
-  /** 허브 구역: 직접 공급 반경·확장 한계·처리 전력 */
-  hub: { radius: 24, limit: 40, cap: 3000 },
-  /** 첫 발전기로 만든 현지 구역 */
-  local: { radius: 10, limit: 28, cap: 3000 },
-  /** 변전소로 정식화한 구역 (허브 구역의 한계 40칸은 그대로) */
-  formal: { radius: 18, limit: 36, cap: 6000 },
+  /** 전력망 노드의 직접 공급 반경 (기준 칸 체비쇼프). 노드끼리는 link칸 안이면 전선으로 저절로 이어진다 */
+  hub: { radius: 24 },
+  generator: { radius: 10 },
+  substation: { radius: 18 },
   pole: { radius: 6, link: 12 },
-  /** 구역 차량 충전 예산 기본값 (kW) */
+  /** 거점: 새 허브·발전기·변전소가 기존 거점 기준 칸에서 맨해튼 이만큼 안이면 그 거점에 묶는다 */
+  siteJoin: 20,
+  /** 거점 차량 충전 예산 기본값 (kW) */
   charge: 400,
-  link: { range: 128, cap: 2000, efficiency: 0.95, perCable: 8, maxPerZone: 3 },
   accumulator: { capacity: 10000, rate: 200, efficiency: 0.95, floor: 0.1 },
   fuel: { power: 1500, energy: 6000, cap: 30 },
   geothermal: 1800,

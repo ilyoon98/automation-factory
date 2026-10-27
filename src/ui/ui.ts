@@ -478,7 +478,7 @@ export class UI {
       $('stats').hidden = true;
       game.focus(x + 0.5, y + 0.5);
     });
-    // 전력 구역 목록: 누르면 그 구역 중심으로
+    // 전력망 목록: 누르면 그 망의 첫 노드로
     $('power').addEventListener('pointerdown', (e) => {
       if ((e.target as HTMLElement).closest('[data-piles]')) {
         const tiles = [...game.getWorld().pileTiles().keys()];
@@ -489,9 +489,9 @@ export class UI {
         game.focus((t % w0) + 0.5, Math.floor(t / w0) + 0.5);
         return;
       }
-      const id = Number((e.target as HTMLElement).closest<HTMLElement>('[data-zone]')?.dataset.zone);
-      const z = id ? game.getWorld().zones.find((x) => x.id === id) : undefined;
-      if (z) game.focus(z.x + 0.5, z.y + 0.5);
+      const id = Number((e.target as HTMLElement).closest<HTMLElement>('[data-net]')?.dataset.net);
+      const n = id ? game.getWorld().buildings.get(id) : undefined;
+      if (n) game.focus(n.x + n.size / 2, n.y + n.size / 2);
     });
     $('ore-alerts').addEventListener('pointerdown', (e) => {
       const id = Number((e.target as HTMLElement).closest<HTMLElement>('[data-patch]')?.dataset.patch);
@@ -562,6 +562,13 @@ export class UI {
       if (sel.dataset.act === 'station-dock') {
         game.exec({ t: 'station-dock', id: b.id, storage: Number(sel.value) });
         this.update();
+        return;
+      }
+      if (sel.dataset.act === 'power-node') {
+        game.exec({ t: 'power-node', id: b.id, node: Number(sel.value) }, (r) => {
+          if (!r.ok) this.toast(r.reason ?? '할 수 없어요', 3000);
+          this.update();
+        });
         return;
       }
       if (sel.dataset.act === 'zone-budget') {
@@ -1149,36 +1156,38 @@ export class UI {
     };
   }
 
-  /** regional-v1: 전력 구역마다 수요·공급·송전·축전·충전 (누르면 그 구역으로) */
+  /** regional-v1: 전력망마다 요청·공급·축전·충전 (누르면 그 망의 첫 노드로). 일하는 망부터 */
   private updateZones(w: World): void {
     const kw = (n: number) => Math.round(n).toLocaleString();
-    const rows = w.zones
-      .map((z) => {
-        const s = w.zoneState.get(z.id);
-        if (!s) return '';
+    const nets = [...w.netState.entries()]
+      .filter(([, s]) => s.demand + s.charge > 0 || s.storeMax > 0)
+      .sort(([a, p], [b, q]) => q.demand + q.charge - (p.demand + p.charge) || a - b);
+    const hubNet = w.hub ? w.netOf(w.hub) : 0;
+    const shown = nets.slice(0, 6);
+    const rows = shown
+      .map(([id, s]) => {
         const sat = s.satisfaction;
-        const color = sat >= 1 ? '#3f8a3a' : sat >= 0.6 ? '#b7791f' : '#c0392b';
+        const color = !s.source ? '#7a7a7a' : sat >= 1 ? '#3f8a3a' : sat >= 0.6 ? '#b7791f' : '#c0392b';
         const need = s.demand + s.charge;
-        const supply = s.nonfuel + s.received + s.fuel + s.discharge;
-        const kind = z.hub ? '허브' : w.zoneCap(z) > 3000 ? '정식' : '현지';
+        const supply = s.nonfuel + s.fuel + s.discharge;
         const extra = [
-          s.received ? `수전 ${kw(s.received)}` : '',
-          s.sent ? `송전 ${kw(s.sent)}` : '',
           s.storeMax ? `축전 ${(s.stored / 1000).toFixed(1)}/${s.storeMax / 1000}MJ` : '',
-          s.charge ? `충전 ${kw(s.charge)}/${z.budget}` : '',
+          s.charge ? `충전 ${kw(s.charge)}` : '',
+          s.sites.length > 1 ? `거점 ${s.sites.length}곳 공유` : s.sites.length ? `거점 ${s.sites[0]}` : '',
         ].filter(Boolean);
-        return `<div class="zone-row" data-zone="${z.id}" title="누르면 이 구역으로">
-          <div class="row"><span>구역 ${z.id} <span class="muted">${kind}</span></span><b style="color:${color}">${Math.round(sat * 100)}%</b></div>
+        return `<div class="zone-row" data-net="${id}" title="누르면 이 망으로">
+          <div class="row"><span>전력망 ${id} <span class="muted">${id === hubNet ? '허브' : s.source ? '' : '공급원 없음'}</span></span><b style="color:${color}">${Math.round(sat * 100)}%</b></div>
           <div class="bar"><div style="width:${Math.min(100, (need / Math.max(1, s.capacity)) * 100)}%;background:${color}"></div></div>
-          <p class="muted power-src">수요 ${kw(need)} / 쓸 수 있는 ${kw(Math.max(supply, s.capacity))} kW${extra.length ? ` · ${extra.join(' · ')}` : ''}</p></div>`;
+          <p class="muted power-src">요청 ${kw(need)} / 쓸 수 있는 ${kw(Math.max(supply, s.capacity))} kW${extra.length ? ` · ${extra.join(' · ')}` : ''}</p></div>`;
       })
       .join('');
     const piles = w.pileTiles();
     let pileN = 0;
     for (const n of piles.values()) pileN += n;
-    $('power').innerHTML = `<h3>전력 <span class="muted">구역 ${w.zones.length}곳</span></h3>${rows}
+    $('power').innerHTML = `<h3>전력 <span class="muted">일하는 망 ${nets.length}개 · 거점 ${w.zones.length}곳</span></h3>${rows}
+      ${nets.length > shown.length ? `<p class="muted power-src">외 ${nets.length - shown.length}개 망</p>` : ''}
       ${piles.size ? `<p class="muted power-src" data-piles title="누르면 회수 더미로 (누를 때마다 다음 곳)">📦 회수 대기 ${piles.size}곳 · ${pileN}개</p>` : ''}
-      <p class="muted power-src">발전기를 공급 범위 밖에 놓으면 새 구역이 생겨요. 전봇대(12칸 이음·6칸 공급)·변전소로 넓혀요.</p>`;
+      <p class="muted power-src">허브·발전기·변전소·전봇대는 12칸 안이면 전선으로 이어져 한 망이 돼요. 같은 망은 전기를 함께 쓰고, 모자라면 멀리 있는 공장도 같이 느려져요.</p>`;
   }
 
   private updateStock(w: World): void {
@@ -1631,7 +1640,7 @@ export class UI {
       if (w.regional) html += this.budgetBlock(w, b);
       if (w.regional) html += this.dockBlock(w, b);
     }
-    if (b.type === 'terminal' && w.regional) html += this.terminalBlock(w, b);
+    if (w.regional && w.isPowerUser(b)) html += this.powerNodeBlock(w, b);
     if (b.type === 'charger' && w.regional) html += this.budgetBlock(w, b);
     if (isRecipeMachine(b.type)) {
       const options = recipesFor(b.type as MachineKind)
@@ -1763,81 +1772,74 @@ export class UI {
     return html;
   }
 
-  /** 정류장·충전기가 속한 구역의 차량 충전 예산 고르기 */
+  /** 정류장·충전기가 속한 거점의 차량 충전 예산 고르기 */
   private budgetBlock(w: World, b: Building): string {
-    const z = w.zoneOf(b);
+    const z = w.siteOf(b);
     if (!z) return '';
     const opts = [0, 100, 200, 300, 400, 500, 600, 700, 800]
       .map((k) => `<option value="${k}" ${k === z.budget ? 'selected' : ''}>${k} kW${k === GRID.charge ? ' (기본)' : ''}</option>`)
       .join('');
-    return `<label class="recipe">구역 ${z.id} 충전 예산 <select data-act="zone-budget" data-zone="${z.id}">${opts}</select></label>
-      <p class="muted">이 구역의 모든 정류장·충전기가 나눠 써요. 먼저 온 트럭부터 받고, 남은 트럭은 기다려요.</p>`;
+    return `<label class="recipe">거점 ${z.id} 충전 예산 <select data-act="zone-budget" data-zone="${z.id}">${opts}</select></label>
+      <p class="muted">이 거점의 모든 정류장·충전기가 나눠 써요. 먼저 온 트럭부터 받고, 남은 트럭은 기다려요. 전기는 정류장이 접속한 망에서 받아요.</p>`;
   }
 
-  /** 송전 터미널: 이어진 곳과 끊기, 또는 받을 터미널 고르기 (거리·케이블 수) */
-  private terminalBlock(w: World, b: Building): string {
-    const at = (t: Building) => {
-      const i = w.refTile(t);
-      return [i % w.width, Math.floor(i / w.width)];
-    };
-    const dist = (t: Building) => {
-      const [ax, ay] = at(b);
-      const [bx, by] = at(t);
-      return Math.abs(ax - bx) + Math.abs(ay - by);
-    };
-    const z = w.zoneOf(b);
-    if (b.partner) {
-      const o = w.buildings.get(b.partner)!;
-      const oz = w.zoneOf(o);
-      return `<div class="row"><span>${b.send ? '보내는 곳' : '받는 곳에서'}</span><b>터미널 #${o.id} (구역 ${oz?.id ?? '?'}, ${dist(o)}칸)</b></div>
-        <div class="actions"><button data-act="link-cut">연결 끊기 <span class="muted">케이블 ${(b.send ? b : o).cable}개 돌려받음</span></button></div>`;
-    }
-    if (!z) return '<p class="muted">전력 구역 안에 놓아야 이을 수 있어요.</p>';
-    const list = [...w.buildings.values()].filter((t) => t.type === 'terminal' && t !== b && !t.partner && w.zoneOf(t) && w.zoneOf(t) !== z);
-    if (!list.length) return '<p class="muted">다른 구역에 이을 송전 터미널을 하나 더 지어 주세요.</p>';
-    const opts = list
-      .map((t) => {
-        const d = dist(t);
-        return `<option value="${t.id}" ${d > GRID.link.range ? 'disabled' : ''}>구역 ${w.zoneOf(t)!.id} 터미널 #${t.id} · ${d}칸 · 케이블 ${Math.ceil(d / GRID.link.perCable)}개</option>`;
-      })
+  /** 전기를 받는 건물: 공급 범위 안 노드가 여럿이면 접속할 노드를 고른다 (다른 망이면 그 망에서 받는다) */
+  private powerNodeBlock(w: World, b: Building): string {
+    const choices = w.nodeChoices(b);
+    if (choices.length < 2) return '';
+    const opts = choices
+      .map((c) => `<option value="${c.id}" ${c.id === b.node ? 'selected' : ''}>${BUILDINGS[c.type].name} #${c.id} · 전력망 ${c.net}${w.netHasSource(c.net) ? '' : ' (공급원 없음)'} · ${c.dist}칸</option>`)
       .join('');
-    return `<label class="recipe">보낼 곳 <select data-act="link-target">${opts}</select></label>
-      <div class="actions"><button data-act="link-go">⚡ 이 터미널에서 보내기</button></div>
-      <p class="muted">한 방향으로만 보내요 (최대 2MW, 95% 도착). 받는 구역이 실제로 모자란 만큼만 보내요.</p>`;
+    return `<label class="recipe">접속 노드 <select data-act="power-node">${opts}</select></label>`;
   }
 
-  /** regional-v1: 이 건물의 전력 구역과 송전·축전 상태 */
+  /** regional-v1: 이 건물의 전력망·거점과 축전 상태. 노드면 철거했을 때 끊길 것 */
   private gridLines(w: World, b: Building): string[] {
-    const powered = b.def.power > 0 || isGeneratorType(b.type) || ['station', 'charger', 'pole', 'substation', 'terminal', 'accumulator'].includes(b.type);
-    if (!powered) return [];
-    const z = w.zoneOf(b);
+    const node = w.nodeRadius(b) > 0;
+    if (!node && !w.isPowerUser(b)) return [];
     const lines: string[] = [];
-    if (!z) {
-      lines.push(`<div class="row"><span>전력 구역</span><b style="color:#c0392b">배전 범위 밖</b></div>`);
-      if (b.type === 'pole' || b.type === 'substation') lines.push('<p class="muted">같은 구역의 허브·발전기·변전소·전봇대에서 12칸 안에 놓아야 이어져요.</p>');
-      return lines;
+    const net = w.netOf(b);
+    const s = net ? w.netState.get(net) : undefined;
+    if (!net || !w.netHasSource(net)) {
+      lines.push(`<div class="row"><span>전력망</span><b style="color:#c0392b">${net ? `전력망 ${net} · 공급원 없음` : '공급 범위 밖'}</b></div>`);
+      lines.push(
+        node
+          ? '<p class="muted">허브·발전기가 있는 망의 노드와 12칸 안이면 전선으로 이어져요.</p>'
+          : '<p class="muted">노드의 공급 범위 안에 놓아야 해요 (허브 24칸·변전소 18칸·발전기 10칸·전봇대 6칸).</p>',
+      );
+    } else {
+      lines.push(`<div class="row"><span>전력망</span><b>전력망 ${net} · ${Math.round((s?.satisfaction ?? 1) * 100)}%</b></div>`);
+      if (s && s.sites.length > 1) lines.push(`<p class="muted">거점 ${s.sites.join(', ')}이 이 망을 함께 써요. 모자라면 모두 같이 느려져요.</p>`);
     }
-    const s = w.zoneState.get(z.id);
-    lines.push(`<div class="row"><span>전력 구역</span><b>구역 ${z.id} · ${Math.round((s?.satisfaction ?? 1) * 100)}%</b></div>`);
+    if (!node && b.node) {
+      const n = w.buildings.get(b.node);
+      if (n) lines.push(`<div class="row"><span>접속</span><b>${BUILDINGS[n.type].name} #${n.id}</b></div>`);
+    }
+    const site = w.siteOf(b);
+    if (site) lines.push(`<div class="row"><span>거점</span><b>거점 ${site.id}${site.hub ? ' (허브)' : ''}</b></div>`);
     if (b.type === 'accumulator') {
       const pct = b.energy / GRID.accumulator.capacity;
       lines.push(`<div class="row"><span>저장</span><b>${(b.energy / 1000).toFixed(2)} / ${GRID.accumulator.capacity / 1000} MJ <span class="muted">${b.load > 0 ? `충전 ${Math.round(b.load)}kW` : b.load < 0 ? `방전 ${Math.round(-b.load)}kW` : ''}</span></b></div>`);
       lines.push(`<div class="bar"><div style="width:${pct * 100}%;background:#3f8a6a"></div></div>`);
     }
-    if (b.type === 'terminal' && b.partner) {
-      const flow = w.linkFlow.get(b.send ? b.id : b.partner) ?? 0;
-      lines.push(`<div class="row"><span>${b.send ? '보내는 중' : '받는 중'}</span><b>${Math.round(b.send ? flow : flow * GRID.link.efficiency)} kW</b></div>`);
-    }
-    if (b.type === 'station' || b.type === 'charger') {
-      lines.push(`<div class="row"><span>구역 충전</span><b>${Math.round(s?.charge ?? 0)} / ${z.budget} kW 예산</b></div>`);
+    if ((b.type === 'station' || b.type === 'charger') && site) {
+      lines.push(`<div class="row"><span>거점 충전</span><b>${Math.round(w.siteState.get(site.id)?.charge ?? 0)} / ${site.budget} kW 예산</b></div>`);
     }
     if (isGeneratorType(b.type) && b.load > 0) lines.push(`<div class="row"><span>지금 출력</span><b>${Math.round(b.load)} kW</b></div>`);
+    const cut = node ? w.removalPreview(b) : null;
+    if (cut && cut.cut) {
+      lines.push(`<p class="muted">철거하면: 전선 ${cut.cut}가닥 끊김${cut.split > 1 ? ` · 망이 ${cut.split}개로 나뉨` : ''}${cut.lost ? ` · 전기가 끊길 설비 ${cut.lost}대` : ''}</p>`);
+    }
     return lines;
   }
 
   /** 정보창을 다시 그려야 하는 현지 실물 상태 (모듈 슬롯·공급 창고 수량·고급 트럭 재료·처리 중 명령) */
   private useSig(w: World, b: Building): string {
     if (!w.regional) return '';
+    return `${w.isPowerUser(b) ? `${b.node}>${w.nodeChoices(b).map((c) => `${c.id}:${c.net}`).join(',')}|` : ''}${this.useSigLocal(w, b)}`;
+  }
+
+  private useSigLocal(w: World, b: Building): string {
     const busy = [...this.useBusy].filter((k) => k.endsWith(`:${b.id}`)).join(',');
     const groups = (item: ItemId) =>
       w
@@ -1847,13 +1849,10 @@ export class UI {
     if (isRecipeMachine(b.type)) {
       return `${w.moduleState(b)}${b.crafting && b.modBatch ? 'L' : ''}|${w.moduleSupport(b) ?? ''}|${groups('module')}|${this.moduleSrc.get(b.id) ?? ''}|${busy}`;
     }
-    if (b.type === 'terminal') {
-      return `${b.partner}|${w.zoneOf(b)?.id}|${[...w.buildings.values()].filter((t) => t.type === 'terminal' && !t.partner).map((t) => `${t.id}:${w.zoneOf(t)?.id}`).join(',')}`;
-    }
-    if (b.type === 'charger') return `${w.zoneOf(b)?.id}:${w.zoneOf(b)?.budget}`;
+    if (b.type === 'charger') return `${b.zone}:${w.siteOf(b)?.budget}`;
     if (b.type === 'station') {
       const kit = countOf(b.inBuf, 'truck-kit') + countOf(b.outBuf, 'truck-kit');
-      return `${w.advTruckSupport(b) ?? ''}|${kit}|${groups('truck-kit')}|${this.kitSrc.get(b.id) ?? ''}|${busy}|${w.zoneOf(b)?.id}:${w.zoneOf(b)?.budget}|${b.dock}|${[...b.targets].join(';')}`;
+      return `${w.advTruckSupport(b) ?? ''}|${kit}|${groups('truck-kit')}|${this.kitSrc.get(b.id) ?? ''}|${busy}|${b.zone}:${w.siteOf(b)?.budget}|${b.dock}|${[...b.targets].join(';')}`;
     }
     return '';
   }
@@ -2476,14 +2475,6 @@ export class UI {
         this.update();
       });
     }
-    if (act === 'link-go' || act === 'link-cut') {
-      const target = act === 'link-go' ? Number(document.querySelector<HTMLSelectElement>('#info select[data-act="link-target"]')?.value) : 0;
-      const src = act === 'link-cut' && !b.send && b.partner ? b.partner : b.id;
-      this.game.exec({ t: 'power-link', id: src, target }, (r) => {
-        this.toast(r.ok ? (target ? '송전을 이었어요' : '송전을 끊었어요 (케이블은 허브로)') : (r.reason ?? '할 수 없어요'), 3000);
-        this.update();
-      });
-    }
     if (act === 'adv-truck') {
       const w = this.game.getWorld();
       const groups = w.touchingStorageGroups(b);
@@ -2711,7 +2702,7 @@ export class UI {
   }
 
   /**
-   * 확장 세계 운영 개요: 전력 구역(거점)마다 생산·작업 전기·전력 비율, 멈춘 기계의 원인별 수, 트럭 상태,
+   * 확장 세계 운영 개요: 거점마다 생산·작업 전기·전력 비율, 멈춘 기계의 원인별 수, 트럭 상태,
    * 그리고 회수 더미 목록. 누르면 그곳으로 간다
    */
   private overviewHtml(w: World): string {
@@ -2732,7 +2723,7 @@ export class UI {
       return r;
     };
     for (const b of w.buildings.values()) {
-      const z = w.zoneOf(b)?.id ?? 0;
+      const z = b.zone;
       if (b.type === 'station') row(z).stations++;
       if (!HAS_STATUS.includes(b.type) || b.def.power <= 0) continue;
       const r = row(z);
@@ -2742,7 +2733,7 @@ export class UI {
     }
     for (const v of w.vehicles.values()) {
       const st = w.buildings.get(v.stopId);
-      const r = row(st ? (w.zoneOf(st)?.id ?? 0) : 0);
+      const r = row(st ? st.zone : 0);
       const label = VEHICLE_STATUS_LABEL[v.status];
       r.trucks.set(label, (r.trucks.get(label) ?? 0) + 1);
     }
@@ -2751,7 +2742,7 @@ export class UI {
       .map((id) => {
         const r = rows.get(id)!;
         const z = w.zones.find((x) => x.id === id);
-        const s = z ? w.zoneState.get(id) : undefined;
+        const s = z ? w.siteState.get(id) : undefined;
         const made = w.stats.zoneMade.get(id) ?? 0;
         const work = (w.stats.zoneWork.get(id) ?? 0) / 1000;
         const stalled = causes
@@ -2759,11 +2750,11 @@ export class UI {
           .map(([st, name]) => `<span class="neg">${name} ${r.stalled.get(st)}</span>`)
           .join(' · ');
         const trucks = [...r.trucks].map(([k, n]) => `${k} ${n}`).join(' · ');
-        const name = z ? `구역 ${id}${z.hub ? ' (허브)' : ''}` : '<span class="neg">배전 범위 밖</span>';
+        const name = z ? `거점 ${id}${z.hub ? ' (허브)' : ''}` : '<span class="neg">거점 없음</span>';
         const focus = z ? `data-focus="${z.x},${z.y}"` : '';
-        return `<tr ${focus} title="누르면 그 구역으로">
+        return `<tr ${focus} title="누르면 그 거점으로">
           <td>${name}</td><td>${made.toLocaleString()}</td><td>${work.toFixed(1)}</td>
-          <td>${s ? `${Math.round(s.satisfaction * 100)}%` : '-'}</td>
+          <td>${s && s.demand > 0 ? `${Math.round((s.work / s.demand) * 100)}%` : '-'}</td>
           <td>${r.working}/${r.machines}${stalled ? `<br><small>${stalled}</small>` : ''}</td>
           <td>${r.stations}${trucks ? `<br><small>${trucks}</small>` : ''}</td></tr>`;
       })
@@ -2780,7 +2771,7 @@ export class UI {
       })
       .join('');
     return `<h3>거점 운영 개요</h3>
-      <table class="stats-table"><thead><tr><th>전력 구역</th><th>누적 생산</th><th>작업 전기 MJ</th><th>지금 전력</th><th>일하는 기계 / 멈춘 이유</th><th>정류장 / 트럭</th></tr></thead>
+      <table class="stats-table"><thead><tr><th>거점</th><th>누적 생산</th><th>작업 전기 MJ</th><th>지금 전력</th><th>일하는 기계 / 멈춘 이유</th><th>정류장 / 트럭</th></tr></thead>
       <tbody>${body || '<tr><td colspan="6" class="muted">아직 기계가 없어요</td></tr>'}</tbody></table>
       <h3>회수 대기 ${piles.length}곳 · ${piles.reduce((a, [, n]) => a + n, 0)}개</h3>
       ${

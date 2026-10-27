@@ -42,8 +42,8 @@ export type Command =
   | { t: 'module-detach'; rid: string; id: number; mode: 'normal' | 'cancel-request' | 'force' }
   /** 정류장 자체 또는 직접 붙은 창고군(key, '' = 정류장만)의 조립품 1개로 고급 트럭. copy = 노선을 베낄 트럭 */
   | { t: 'build-adv-truck'; rid: string; station: number; key: string; copy?: number }
-  /** 송전: 보내는 터미널 id → 받는 터미널 target (0 = 끊기) */
-  | { t: 'power-link'; id: number; target: number }
+  /** 전력망: 기계·정류장·충전기·축전기가 접속할 노드를 공급 범위 안에서 고른다 */
+  | { t: 'power-node'; id: number; node: number }
   /** 계획 운송: 품목별 1회 상한, 정기편 주기(초, 0 = 예전 방식), 조기 출발 */
   | { t: 'truck-plan'; id: number; plan: { item: ItemId; cap: number }[]; period: number; early: boolean }
   /** 계획 운송 노선 일시정지 (새 편을 싣지 않음) */
@@ -94,7 +94,7 @@ export interface CommandResults {
   'module-install': UseResult;
   'module-detach': UseResult;
   'build-adv-truck': UseResult;
-  'power-link': UseResult;
+  'power-node': UseResult;
   'zone-budget': boolean;
   project: boolean;
   'truck-plan': boolean;
@@ -217,9 +217,9 @@ function run(w: World, c: Command): CommandResults[Command['t']] {
         const copy = c.copy ? w.vehicles.get(c.copy) : undefined;
         return w.buildAdvancedTruck(w.buildings.get(c.station), String(c.key ?? ''), copy);
       });
-    case 'power-link': {
+    case 'power-node': {
       const b = w.buildings.get(c.id);
-      return b ? w.linkTerminals(b, Number(c.target) || 0) : { ok: false, reason: '터미널이 없어요' };
+      return b ? w.setPowerNode(b, Number(c.node) || 0) : { ok: false, reason: '건물이 없어요' };
     }
     case 'truck-plan': {
       const v = w.vehicles.get(c.id);

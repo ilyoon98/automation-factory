@@ -1,4 +1,4 @@
-import { BUILDINGS, CATEGORIES, type BuildingType, type Category } from '../data/buildings';
+import { BUILDINGS, CATEGORIES, POWER_GROUP, categoryItems, type BuildingType, type Category } from '../data/buildings';
 import type { Input } from '../input/input';
 import type { World } from '../sim/world';
 import type { Blueprint } from '../sim/blueprint';
@@ -29,11 +29,10 @@ const TAB_ICON: Record<Category, () => string> = {
   transport: truckIconUrl,
   forest: () => buildingIconUrl('lumberjack'),
   industry: () => buildingIconUrl('large-assembler'),
-  grid: () => buildingIconUrl('substation'),
 };
 
 /** 지역 생산망 확장 세계에서만 보이는 탭 */
-const REGIONAL_TABS: Category[] = ['industry', 'grid'];
+const REGIONAL_TABS: Category[] = ['industry'];
 
 const categoryOf = (type: BuildingType): Category | null =>
   CATEGORIES.find((c) => c.items.includes(type))?.id ?? null;
@@ -84,7 +83,7 @@ export class Toolbar {
       thumb.style.width = `${w}px`;
       thumb.style.left = `${(palette.scrollLeft / max) * (bar.clientWidth - w)}px`;
       // 지금 반 이상 보이는 카드 범위 (번호는 원래 목록 순서 그대로)
-      const cards = [...palette.children] as HTMLElement[];
+      const cards = [...palette.children].filter((c) => !c.classList.contains('pal-group')) as HTMLElement[];
       const left = palette.scrollLeft;
       const right = left + palette.clientWidth;
       const seen = cards.map((c, i) => [i, Math.min(right, c.offsetLeft + c.offsetWidth) - Math.max(left, c.offsetLeft) >= c.offsetWidth / 2] as const).filter(([, v]) => v);
@@ -151,7 +150,7 @@ export class Toolbar {
       if (s) this.input.startPaste(s.bp, s.name);
       return null;
     }
-    const type = CATEGORIES.find((c) => c.id === this.category)?.items[i] ?? null;
+    const type = categoryItems(this.category, this.regional)[i] ?? null;
     if (type) this.reveal(type);
     return type;
   }
@@ -183,7 +182,11 @@ export class Toolbar {
   update(w: World): void {
     // 산업 탭은 지역 생산망 확장 세계에서만
 
-    this.regional = w.regional;
+    // 확장 세계면 전력 탭에 발전·전력망·저장이 더 붙는다
+    if (this.regional !== w.regional) {
+      this.regional = w.regional;
+      if (this.category === 'power') this.renderPalette();
+    }
     for (const id of REGIONAL_TABS) {
       const tab = document.querySelector<HTMLElement>(`#tabs .tab[data-cat="${id}"]`);
       if (tab) tab.hidden = !w.regional;
@@ -293,9 +296,16 @@ export class Toolbar {
       this.renderBlueprints(palette);
       return;
     }
-    const items = CATEGORIES.find((c) => c.id === this.category)?.items ?? [];
+    const items = categoryItems(this.category, this.regional);
     items.forEach((type, i) => {
       const def = BUILDINGS[type];
+      const group = this.category === 'power' && this.regional ? POWER_GROUP[type] : undefined;
+      if (group) {
+        const tag = document.createElement('span');
+        tag.className = 'pal-group';
+        tag.textContent = group;
+        palette.appendChild(tag);
+      }
       const btn = document.createElement('button');
       btn.className = 'pal';
       btn.dataset.codexBuilding = type; // 우클릭: 도감

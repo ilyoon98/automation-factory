@@ -105,8 +105,8 @@ export const MAIN_GOALS: MainGoal[] = [
     chapter: '숲과 금속의 연결',
     title: '현지 배전 정리',
     requires: ['MG14'],
-    hint: '변전소로 구역을 정식화하고 그 구역 기계를 돌려요.',
-    checks: (w) => [['정식 구역에서 기계에 준 전기 (kJ)', Math.floor(w.stats.formalWork), 1000]],
+    hint: '변전소를 지어 둘레 18칸의 기계를 전봇대 없이 돌려요.',
+    checks: (w) => [['변전소에 접속한 기계에 준 전기 (kJ)', Math.floor(w.stats.formalWork), 1000]],
   },
   // ───── 제어와 경량 금속 ─────
   { id: 'MG17', chapter: '제어와 경량 금속', title: '정제 설비의 기초', requires: ['MG06'], hint: '흙 정제를 연구하고 진흙으로 벽돌을 구워요.', checks: (w) => [tech(w, 'soil-refining'), made(w, 'brick', 120, '벽돌')] },
@@ -219,12 +219,12 @@ export const CHALLENGES: MainGoal[] = [
   {
     id: 'CG03',
     chapter: '선택 도전',
-    title: '지열과 송전',
+    title: '지열로 잇는 공장',
     requires: [],
-    hint: '지열 발전소로 기계를 돌리고, 송전으로 다른 구역 기계도 돌려요.',
+    hint: '지열 발전소로 기계를 돌리고, 전봇대로 이어 20칸 넘게 떨어진 다른 생산 거점 기계도 돌려요.',
     checks: (w) => [
       ['지열이 작업에 준 전기 (kJ)', Math.floor(w.stats.geoWork), 5000],
-      ['송전으로 받아 작업에 쓴 전기 (kJ)', Math.floor(w.stats.linkWork), 5000],
+      ['다른 생산 거점 작업에 준 지열 전기 (kJ)', Math.floor(w.stats.linkWork), 5000],
     ],
   },
   {

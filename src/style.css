@@ -779,6 +779,16 @@ h3 small {
   /* 건물이 적으면 너비를 채우고, 많으면 최소 너비로 두고 스크롤 */
   flex: 1 0 auto;
 }
+/* 전력 탭 안의 묶음 이름 (발전 · 전력망 · 저장) */
+.pal-group {
+  align-self: center;
+  writing-mode: vertical-rl;
+  font: 10px var(--font-s);
+  color: var(--muted);
+  padding: 0 2px;
+  border-left: 1px dashed var(--muted);
+  flex: 0 0 auto;
+}
 .pal img {
   grid-row: span 2;
   width: 32px;

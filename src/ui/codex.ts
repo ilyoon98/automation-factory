@@ -1,4 +1,4 @@
-import { BUILDINGS, CATEGORIES, FOREST, TRUCK, isMinerType, isRecipeMachine, type BuildingType } from '../data/buildings';
+import { BUILDINGS, CATEGORIES, FOREST, categoryItems, TRUCK, isMinerType, isRecipeMachine, type BuildingType } from '../data/buildings';
 import { ITEMS, type ItemId } from '../data/items';
 import { RECIPES, recipesFor, type MachineKind, type Recipe } from '../data/recipes';
 import { ENDLESS_GROWTH, ENDLESS_TECHS, REGIONAL_TECHS, TECHS } from '../data/tech';
@@ -281,8 +281,8 @@ export class Codex {
         )
         .join('')}</div>`,
     ).join('');
-    const buildings = CATEGORIES.filter((c) => (c.id !== 'industry' && c.id !== 'grid') || w.regional).map(
-      (c) => `<h3>건물 · ${c.name}</h3><div class="codex-grid">${c.items
+    const buildings = CATEGORIES.filter((c) => c.id !== 'industry' || w.regional).map(
+      (c) => `<h3>건물 · ${c.name}</h3><div class="codex-grid">${categoryItems(c.id, w.regional)
         .map(
           (b) => `<div class="codex-card" data-building="${b}">
             <img src="${buildingIconUrl(b)}" alt=""><b>${BUILDINGS[b].name}</b>

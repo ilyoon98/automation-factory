@@ -1,7 +1,6 @@
 import {
   BUILDINGS,
   FOREST,
-  GRID as POWER_GRID,
   STATION_CAPACITY,
   TRUCK,
   UNDERGROUND_MAX_GAP,
@@ -397,6 +396,7 @@ export class Renderer {
           this.outline(bx, by, hb.size * z, hb.size * z, SELECT, true);
         } else {
           this.drawGhost(world, view.tool, view.toolDir, view.hover.x, view.hover.y, true, view.toolSetting);
+          if (world.regional && world.nodeRadius({ type: view.tool }) > 0) this.drawNodePreview(world, view.tool, view.hover.x, view.hover.y);
         }
       } else {
         const [sx, sy] = cam.worldToScreen(view.hover.x, view.hover.y);
@@ -1020,8 +1020,7 @@ export class Renderer {
         if (b.type === 'accumulator') this.drawBar(sx, sy, b.energy / 10000, '#4aa36a');
         break;
       case 'substation':
-      case 'terminal':
-        this.blit(b.type, b.type === 'terminal' && b.partner ? Math.floor(t * 2) % 2 : 0, sx, sy);
+        this.blit(b.type, 0, sx, sy);
         break;
       case 'fuel-generator':
       case 'geothermal':
@@ -1089,7 +1088,7 @@ export class Renderer {
       for (let y = y0; y <= y1; y++) {
         let run = -1;
         for (let x = x0; x <= x1 + 1; x++) {
-          const off = x <= x1 && !cover[y * world.width + x];
+          const off = x <= x1 && cover[y * world.width + x] !== 1;
           if (off && run < 0) run = x;
           if (!off && run >= 0) {
             const [sx, sy] = cam.worldToScreen(run, y);
@@ -1098,19 +1097,20 @@ export class Renderer {
           }
         }
       }
-      // 전기가 필요한데 범위 밖인 건물, 어느 망에도 닿지 않은 전봇대·변전소: 더 짙은 회색과 빨간 끊긴 테두리
+      // 전기가 필요한데 공급원 있는 망에 닿지 않은 건물, 허브·발전기 없는 망의 전봇대·변전소: 짙은 회색과 빨간 끊긴 테두리
       ctx.setLineDash([4, 3]);
       ctx.strokeStyle = 'rgba(192,57,43,0.9)';
       ctx.lineWidth = 2;
       for (const b of world.buildings.values()) {
         if (b.x + b.size < x0 || b.y + b.size < y0 || b.x > x1 || b.y > y1) continue;
         const node = b.type === 'pole' || b.type === 'substation';
-        if (node ? b.zone : b.def.power <= 0 || world.zoneOf(b)) continue;
+        if (!node && !world.isPowerUser(b)) continue;
+        if (world.netHasSource(world.netOf(b))) continue;
         const [sx, sy] = cam.worldToScreen(b.x, b.y);
         ctx.fillStyle = 'rgba(60,60,60,0.55)';
         ctx.fillRect(sx, sy, b.size * z, b.size * z);
         ctx.strokeRect(sx, sy, b.size * z, b.size * z);
-        this.text(node ? '끊김' : '미연결', sx + (b.size * z) / 2, sy - 4, '#c0392b', 11);
+        this.text(node ? '공급원 없음' : '미연결', sx + (b.size * z) / 2, sy - 4, '#c0392b', 11);
       }
       ctx.setLineDash([]);
       return;
@@ -1192,18 +1192,17 @@ export class Renderer {
     for (const [, [sx, sy, label]] of seen) this.text(label, sx + 80, sy + 14, '#2b2119', 12);
   }
 
-  /** 전봇대 사이 전선: 이어 준 노드에서 전봇대 꼭대기로, 길이에 따라 살짝 처진다 */
+  /** 노드 사이 전선: 전봇대는 가로대에, 허브·발전기·변전소는 기준 칸 가운데에. 길이에 따라 살짝 처진다 */
   private drawWires(world: World, x0: number, y0: number, x1: number, y1: number): void {
     const ctx = this.ctx;
     const z = this.cam.zoom;
-    // 전봇대는 가로대(위쪽), 허브·발전기·변전소는 기준 칸 가운데
     const end = (x: number, y: number, pole: boolean) => this.cam.worldToScreen(x + (pole ? 0.53 : 0.5), y + (pole ? 0.22 : 0.5));
     ctx.save();
     ctx.lineWidth = Math.max(1, z / 16);
-    for (const [ax, ay, r, bx, by] of world.powerWires()) {
+    for (const [ax, ay, bx, by, poles] of world.powerWires()) {
       if (Math.max(ax, bx) < x0 - 1 || Math.min(ax, bx) > x1 + 1 || Math.max(ay, by) < y0 - 1 || Math.min(ay, by) > y1 + 1) continue;
-      const [sx, sy] = end(ax, ay, r === POWER_GRID.pole.radius);
-      const [ex, ey] = end(bx, by, true);
+      const [sx, sy] = end(ax, ay, (poles & 1) !== 0);
+      const [ex, ey] = end(bx, by, (poles & 2) !== 0);
       const sag = Math.hypot(ex - sx, ey - sy) * 0.06;
       ctx.strokeStyle = 'rgba(30,22,16,0.75)';
       ctx.beginPath();
@@ -1217,52 +1216,56 @@ export class Renderer {
   /** 배전 범위를 보여 줄 때: 전력 건물을 들었거나, 전력에 관련된 건물을 골랐을 때 */
   private showGrid(world: World, view: ViewState): boolean {
     const t = view.tool;
-    if (t && (isGeneratorType(t) || ['pole', 'substation', 'terminal', 'accumulator'].includes(t) || BUILDINGS[t].power > 0)) return true;
+    if (t && (isGeneratorType(t) || ['pole', 'substation', 'accumulator'].includes(t) || BUILDINGS[t].power > 0)) return true;
     const b = view.selectedId ? world.buildings.get(view.selectedId) : undefined;
-    return !!b && (isGeneratorType(b.type) || ['pole', 'substation', 'terminal', 'accumulator', 'station', 'charger'].includes(b.type));
+    return !!b && (isGeneratorType(b.type) || ['pole', 'substation', 'accumulator', 'station', 'charger'].includes(b.type));
   }
 
-  /** 전력 구역마다 노드 공급 범위(옅은 색)와 확장 한계(점선) */
+  /** 전력망마다 노드 공급 범위 (망마다 색, 허브·발전기 없는 망은 회색)와 망 이름 */
   private drawGridCoverage(world: World): void {
     const ctx = this.ctx;
     const z = this.cam.zoom;
-    for (const zone of world.zones) {
-      const hue = (zone.id * 67) % 360;
-      const lim = world.zoneLimit(zone);
-      const [lx, ly] = this.cam.worldToScreen(zone.x - lim, zone.y - lim);
-      ctx.save();
-      // 확장 한계 밖은 칠하지 않는다
-      ctx.beginPath();
-      ctx.rect(lx, ly, (lim * 2 + 1) * z, (lim * 2 + 1) * z);
-      ctx.clip();
-      ctx.fillStyle = `hsla(${hue}, 70%, 55%, 0.12)`;
-      for (const [nx, ny, r] of world.zoneNodes(zone)) {
-        const [sx, sy] = this.cam.worldToScreen(nx - r, ny - r);
-        ctx.fillRect(sx, sy, (r * 2 + 1) * z, (r * 2 + 1) * z);
+    const named = new Set<number>();
+    for (const [nx, ny, r, net] of world.powerNodes()) {
+      const live = world.netHasSource(net);
+      const hue = (net * 67) % 360;
+      ctx.fillStyle = live ? `hsla(${hue}, 70%, 55%, 0.12)` : 'rgba(90,90,90,0.14)';
+      const [sx, sy] = this.cam.worldToScreen(nx - r, ny - r);
+      ctx.fillRect(sx, sy, (r * 2 + 1) * z, (r * 2 + 1) * z);
+      // 망 이름은 망 id인 노드(가장 먼저 지은 노드) 자리에 한 번
+      if (!named.has(net) && world.buildings.get(net)) {
+        const nb = world.buildings.get(net)!;
+        if (nb.x === nx - Math.floor(nb.size / 2) && nb.y === ny - Math.floor(nb.size / 2)) {
+          named.add(net);
+          const [cx, cy] = this.cam.worldToScreen(nx + 0.5, ny + 0.5);
+          this.text(live ? `전력망 ${net}` : `전력망 ${net} · 공급원 없음`, cx, cy - z, live ? `hsl(${hue}, 60%, 30%)` : '#5a5a5a', 12);
+        }
       }
-      ctx.restore();
-      ctx.strokeStyle = `hsla(${hue}, 60%, 40%, 0.6)`;
-      ctx.setLineDash([6, 4]);
-      ctx.lineWidth = 1.5;
-      ctx.strokeRect(lx, ly, (lim * 2 + 1) * z, (lim * 2 + 1) * z);
-      ctx.setLineDash([]);
-      const [cx, cy] = this.cam.worldToScreen(zone.x + 0.5, zone.y + 0.5);
-      this.text(`구역 ${zone.id}`, cx, cy - z, `hsl(${hue}, 60%, 30%)`, 12);
     }
-    // 송전선
-    ctx.strokeStyle = 'rgba(122, 90, 154, 0.85)';
-    ctx.lineWidth = 2;
-    for (const b of world.buildings.values()) {
-      if (b.type !== 'terminal' || !b.send || !b.partner) continue;
-      const o = world.buildings.get(b.partner);
-      if (!o) continue;
-      const [ax, ay] = this.cam.worldToScreen(b.x + 1, b.y + 1);
-      const [bx, by] = this.cam.worldToScreen(o.x + 1, o.y + 1);
+  }
+
+  /** 노드를 놓으려 할 때: 12칸 안에서 이어질 노드로 점선, 둘 이상의 망이면 합쳐진다고 알린다 */
+  private drawNodePreview(world: World, type: BuildingType, x: number, y: number): void {
+    const size = BUILDINGS[type].size;
+    const rx = x + Math.floor(size / 2);
+    const ry = y + Math.floor(size / 2);
+    const { links, nets } = world.nodePreview(rx, ry);
+    const ctx = this.ctx;
+    const [ax, ay] = this.cam.worldToScreen(rx + 0.5, ry + 0.3);
+    ctx.save();
+    ctx.setLineDash([5, 4]);
+    ctx.strokeStyle = 'rgba(30,22,16,0.7)';
+    ctx.lineWidth = 1.5;
+    for (const [nx, ny] of links) {
+      const [bx, by] = this.cam.worldToScreen(nx + 0.5, ny + 0.3);
       ctx.beginPath();
       ctx.moveTo(ax, ay);
       ctx.lineTo(bx, by);
       ctx.stroke();
     }
+    ctx.restore();
+    const label = !links.length ? '이어질 노드 없음 (12칸 안)' : nets.length > 1 ? `전력망 ${nets.join(' + ')} 합쳐짐` : `전력망 ${nets[0]}에 이어짐`;
+    this.text(label, ax, ay - this.cam.zoom * (size / 2 + 0.6), nets.length > 1 ? '#7a3fb0' : '#3b2716', 12);
   }
 
   /** 현지 회수 더미: 칸 오른쪽 아래에 상자와 가장 많은 아이템 (건물 위에 덧그려 가려지지 않게) */

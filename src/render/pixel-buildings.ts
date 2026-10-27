@@ -670,18 +670,6 @@ define('substation', 32, 32, 2, (p, f) => {
   p.px(16, 23, PAL.ink);
 });
 
-define('terminal', 32, 32, 2, (p, f) => {
-  machine(p, ramp('#7a5a9a'), IRON, false);
-  // 송전탑 머리
-  p.rect(14, 1, 4, 17, PAL.ink);
-  p.rect(15, 2, 2, 15, PAL.metal.hi);
-  p.rect(6, 4, 20, 3, PAL.ink);
-  p.rect(7, 5, 18, 1, PAL.metal.mid);
-  for (const x of [7, 24]) p.disc(x + 0.5, 8.5, 1.5, f ? '#bfe6ff' : '#e8dcb0');
-  p.rect(9, 21, 14, 4, PAL.ink);
-  p.rect(10, 22, 12, 2, '#b48cf2');
-});
-
 define('accumulator', 32, 32, 1, (p) => {
   machine(p, ramp('#3f8a6a'), IRON, false);
   for (const x of [5, 13, 21]) {

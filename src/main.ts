@@ -296,6 +296,7 @@ function replaceWorld(w: World): void {
   game.save();
   session.worldReplaced();
   ui.update();
+  if (w.loadNote) ui.toast(w.loadNote, 9000);
 }
 
 game.input = new Input(canvas, camera, {
@@ -413,6 +414,7 @@ document.addEventListener('visibilitychange', () => {
 });
 
 if (!loaded) ui.showHelp();
+else if (world.loadNote) ui.toast(world.loadNote, 9000);
 ui.update();
 
 // 개발 중 콘솔에서 상태를 살펴볼 수 있게

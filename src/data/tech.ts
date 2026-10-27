@@ -389,10 +389,10 @@ export const REGIONAL_TECHS: Tech[] = [
     icon: '🌋',
     category: 'production',
     name: '황 화학',
-    description: '황 채굴, 송전 터미널·지열 발전소, 강화 고무·강화 타이어·황산·고효율 모래 세척·고용량 케이블 레시피',
+    description: '황 채굴, 지열 발전소, 강화 고무·강화 타이어·황산·고효율 모래 세척·고용량 케이블 레시피',
     cost: stacks({ controller: 8, motor: 8, steel: 40 }),
     requires: ['oil-control', 'electro-metal'],
-    unlockBuildings: ['terminal', 'geothermal'],
+    unlockBuildings: ['geothermal'],
     unlockRecipes: ['hardened-rubber', 'tire', 'sulfuric-acid', 'acid-wash', 'hc-cable'],
   },
   {

@@ -70,7 +70,7 @@ export const CATEGORIES: { id: Category; name: string; key: string; items: Build
   { id: 'transport', name: '운송', key: 'b', items: ['road', 'station', 'charger'] },
   { id: 'forest', name: '숲', key: 'n', items: ['lumberjack', 'planter', 'sawmill'] },
   // regional-v1 세계에서만 탭이 보인다
-  { id: 'industry', name: '산업', key: 'j', items: ['sap-extractor', 'drill', 'chem-reactor', 'refinery', 'electrolyzer', 'large-assembler'] },
+  { id: 'industry', name: '산업', key: 'l', items: ['sap-extractor', 'drill', 'chem-reactor', 'refinery', 'electrolyzer', 'large-assembler'] },
   { id: 'grid', name: '배전', key: 'u', items: ['pole', 'substation', 'terminal', 'accumulator', 'fuel-generator', 'geothermal'] },
 ];
 

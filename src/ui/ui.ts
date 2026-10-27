@@ -23,7 +23,7 @@ import { ITEMS, ITEM_IDS, type ItemId, type ItemStack } from '../data/items';
 import { RECIPES, recipesFor, type MachineKind } from '../data/recipes';
 import { ENDLESS_BY_ID, ENDLESS_REQUIRES, ENDLESS_TECHS, TECH_CATEGORIES, endlessCost, type RuleProfile, type TechCategory } from '../data/tech';
 import type { Input } from '../input/input';
-import { DAY_SEC, ambientEnabled, setAmbientEnabled, skyLabel } from '../render/ambient';
+import { DAY_SEC, ambientEnabled, dayPhase, setAmbientEnabled, skyLabel } from '../render/ambient';
 import type { MapLayer } from '../render/renderer';
 import { TERRAIN } from '../data/terrain';
 import { LOCAL_WEATHER_LABEL } from '../sim/weather-v1';
@@ -56,7 +56,8 @@ import { buildingIconUrl, depositIconUrl, itemIcon, itemLink, truckIconUrl, with
 import { sound } from './sound';
 import { crispTarget, crispText, onUiZoom, setCrispText, uiZoom } from './crisp';
 import { letScrollbarDrag } from './left-scroll';
-import { Toolbar } from './toolbar';
+import { Toolbar, blockReason, buildState } from './toolbar';
+import { topbar } from './topbar';
 
 export interface GameApi {
   getWorld(): World;
@@ -68,8 +69,12 @@ export interface GameApi {
   readonly net: Session;
   input: Input;
   speed: number;
+  /** 정지 전 배속 (계속을 누르면 이 배속으로) */
+  readonly lastSpeed: number;
   setSpeed(s: number): void;
   save(): boolean;
+  /** 마지막 저장이 됐는지(ok), 그 뒤로 내가 공장을 바꿨는지(dirty) */
+  readonly saveState: { ok: boolean; dirty: boolean };
   newGame(rules?: RuleProfile): void;
   /** 지금 공장을 파일로 내려받는다 (다른 PC로 옮기거나 백업) */
   exportSave(): void;
@@ -221,6 +226,11 @@ export class UI {
   /** 회수 더미를 차례로 보여 줄 때 지금 차례 */
   private pileCycle = -1;
   private finaleShown = false;
+  /** 위쪽 바: 줄 배치·팝오버 */
+  private topbar = topbar;
+  /** 목표판(O)을 마지막으로 그린 상태 */
+  private goalsKey = '';
+  private noticeTimer = 0;
   /** 지금 목표가 맵에서 가리키는 곳 (건물을 들었을 때) */
   guideMark: { x: number; y: number; label: string } | null = null;
   private mouse = { x: 0, y: 0 };
@@ -268,9 +278,32 @@ export class UI {
     document.querySelectorAll<HTMLButtonElement>('#topbar [data-speed]').forEach((btn) =>
       btn.addEventListener('click', () => game.setSpeed(Number(btn.dataset.speed))),
     );
+    // 정지 ↔ 계속 (계속은 직전 배속으로)
+    $('btn-pause').addEventListener('click', () => game.setSpeed(game.speed === 0 ? game.lastSpeed : 0));
+    // 위쪽 팝오버: 시간(버튼 왼쪽 맞춤) · 메뉴 · 함께 하기(오른쪽 맞춤). 채팅은 chat.ts가 등록
+    this.topbar.register('time', $('time-pop'), $('clock'), 'left', () => this.updateTimePop(game.getWorld()));
+    this.topbar.register('menu', $('menu-pop'), $('btn-menu'), 'right');
+    this.topbar.register('players', $('players'), $('net'), 'right', () => {
+      this.playersKey = '';
+      this.update();
+    });
+    $('clock').addEventListener('click', () => this.topbar.toggle('time'));
+    $('btn-menu').addEventListener('click', () => this.topbar.toggle('menu'));
+    // 메뉴 안 항목을 고르면 메뉴는 닫는다 (소리 켜기·끄기는 결과를 보도록 남긴다)
+    $('menu-pop').addEventListener('click', (e) => {
+      if ((e.target as HTMLElement).closest('#btn-new, #btn-help')) this.topbar.close(false);
+    });
     $('btn-research').addEventListener('click', () => this.toggleModal('research'));
     $('btn-stats').addEventListener('click', () => this.toggleModal('stats'));
     $('btn-ach').addEventListener('click', () => this.toggleModal('ach'));
+    $('btn-goals').addEventListener('click', () => this.toggleModal('goals'));
+    $('notice').addEventListener('click', (e) => {
+      if ((e.target as HTMLElement).closest('.x')) this.hideNotice();
+    });
+    // 툴바에서 잠긴 건물을 눌렀을 때 상세 줄의 "연구 보기"
+    $('holding').addEventListener('click', (e) => {
+      if ((e.target as HTMLElement).closest('[data-act="open-research"]') && $('research').hidden) this.toggleModal('research');
+    });
     // 업적 창: 탭·필터·추적 (개인 설정)
     $('ach').addEventListener('click', (e) => {
       const t = e.target as HTMLElement;
@@ -307,8 +340,15 @@ export class UI {
     $('btn-rates').addEventListener('click', () => this.toggleRates());
     $('btn-undo').addEventListener('click', () => game.input.undoRedo(false));
     $('btn-redo').addEventListener('click', () => game.input.undoRedo(true));
-    $('btn-codex').addEventListener('click', () => this.codex.toggle());
-    $('btn-save').addEventListener('click', () => this.toast(game.save() ? '저장했어요' : '저장 실패'));
+    $('btn-codex').addEventListener('click', () => {
+      if (!this.codex.isOpen) this.closeWindows();
+      this.codex.toggle();
+      this.update();
+    });
+    $('btn-save').addEventListener('click', () => {
+      this.toast(game.save() ? '저장했어요' : '저장하지 못했어요 (저장 공간이 꽉 찼을 수 있어요)');
+      this.update();
+    });
     // 공장 파일: 도움말 창 아래 버튼
     $('btn-export').addEventListener('click', () => game.exportSave());
     $('btn-import').addEventListener('click', () => $<HTMLInputElement>('import-file').click());
@@ -366,26 +406,47 @@ export class UI {
       game.newGame(rules as RuleProfile);
     });
 
+    // Esc는 위에 떠 있는 것부터 하나씩: 알림 카드 → 팝오버 → 창 → (input.ts) 선택·건설 도구.
+    // 캡처 단계라 input.ts보다 먼저 받고, 닫은 게 있으면 거기서 멈춘다
+    window.addEventListener(
+      'keydown',
+      (e) => {
+        if (e.key !== 'Escape' || isTyping(e.target)) return;
+        let used = false;
+        if (!$('notice').hidden) used = this.hideNotice();
+        else if (this.topbar.close(true)) used = true;
+        else if (this.codex.isOpen) {
+          this.codex.close();
+          used = true;
+        } else if (!$('newgame').hidden) used = !!($('newgame').hidden = true);
+        else used = this.closeWindows();
+        if (!used) return;
+        e.stopImmediatePropagation();
+        this.update();
+      },
+      true,
+    );
     window.addEventListener('keydown', (e) => {
-      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLSelectElement) return;
+      if (isTyping(e.target)) return;
       const k = e.key.toLowerCase();
       // 툴바 탭: Tab / Shift+Tab 으로 돌리기, Z X C V 로 바로 가기 (Ctrl+C 같은 조합은 무시)
       if (k === 'tab') {
         e.preventDefault();
         this.toolbar.cycle(e.shiftKey ? -1 : 1);
       } else if (!e.ctrlKey && !e.metaKey && !e.altKey) this.toolbar.selectByKey(k);
+      if (e.ctrlKey || e.metaKey || e.altKey) return;
       if (k === 't') this.toggleModal('research');
       if (k === 'h') this.toggleModal('help');
       if (k === 'i') this.toggleRates();
-      if (k === 'g') this.codex.toggle();
-      if (k === 'p' && !e.ctrlKey && !e.metaKey) this.toggleModal('stats');
-      if (k === 'm' && !e.ctrlKey && !e.metaKey) game.toggleMap();
-      if (k === 'escape') {
-        $('research').hidden = true;
-        $('help').hidden = true;
-        $('stats').hidden = true;
-        this.codex.close();
+      if (k === 'g') {
+        if (!this.codex.isOpen) this.closeWindows();
+        this.codex.toggle();
+        this.update();
       }
+      if (k === 'p') this.toggleModal('stats');
+      if (k === 'o') this.toggleModal('goals');
+      if (k === 'j') this.toggleModal('ach');
+      if (k === 'm') game.toggleMap();
     });
     document.querySelectorAll('.modal').forEach((m) =>
       m.addEventListener('click', (e) => {
@@ -534,7 +595,7 @@ export class UI {
         if (!ok) return;
         // 끝없는 연구는 TECH_BY_ID에 없다 (단계로 알린다)
         const e = ENDLESS_BY_ID[id];
-        this.toast(
+        this.notice(
           e
             ? `연구 완료: ${e.icon} ${e.name} ${game.getWorld().endlessLevel(id)}단계`
             : `연구 완료: ${game.getWorld().tech(id)?.icon} ${game.getWorld().tech(id)?.name}`,
@@ -544,7 +605,7 @@ export class UI {
     });
 
     // 같이 하기: 위쪽 버튼을 누르면 방 창 (만들기·참가·주소 복사·접속자 목록)
-    $('net').addEventListener('click', () => this.showPlayers($('players').hidden === true));
+    $('net').addEventListener('click', () => this.topbar.toggle('players'));
     $('players').addEventListener('click', (e) => {
       const t = (e.target as HTMLElement).closest<HTMLElement>('[data-act], [data-goto]');
       if (!t) return;
@@ -558,7 +619,7 @@ export class UI {
       if (act === 'create') net.createRoom();
       if (act === 'join') net.joinRoom();
       if (act === 'join-lan' && t.dataset.room) net.joinLan(t.dataset.room);
-      if (act === 'solo') $('players').hidden = true;
+      if (act === 'solo') this.topbar.close(true);
       if (act === 'leave' && (net.role !== 'host' || confirm('방을 닫을까요? 손님들은 각자 자기 공장으로 돌아가요.'))) net.leaveRoom();
       if (act === 'copy') {
         void copyText(net.inviteUrl).then((ok) =>
@@ -571,36 +632,33 @@ export class UI {
       const el = e.target as HTMLInputElement;
       if (el.dataset.act === 'rename') game.net.rename(el.value);
     });
-    window.addEventListener('pointerdown', (e) => {
-      const t = e.target as HTMLElement;
-      // 도움말 같은 창을 닫느라 누른 건 빼고 (exe를 처음 켜면 도움말과 방 창이 같이 뜬다)
-      if (!t.closest('#players') && !t.closest('#net') && !t.closest('.modal')) $('players').hidden = true;
-    });
   }
 
   showHelp(): void {
     $('help').hidden = false;
   }
 
-  /** 방 창 열기·닫기 (위쪽 같이 하기 버튼 아래에) */
-  private showPlayers(show: boolean): void {
-    const panel = $('players');
-    panel.hidden = !show;
-    panel.style.left = `${$('net').getBoundingClientRect().left / uiZoom()}px`;
-    this.playersKey = '';
-    this.update();
-  }
-
-  /** 위쪽 같이 하기 버튼. 서버 없이 연 게임이면 숨긴다 */
+  /**
+   * 위쪽 함께 하기 버튼. 서버 없이 연 게임이면 같은 자리에 비활성으로 남긴다.
+   * 채팅 버튼도 여기서: 혼자 할 때는 비활성 + 방에 들어가면 쓸 수 있다는 안내
+   */
   private updateNet(): void {
     const net = this.game.net;
-    const el = $('net');
-    el.hidden = offline(net);
+    const el = $<HTMLButtonElement>('net');
+    const off = offline(net);
+    el.disabled = off;
+    if (off && this.topbar.isOpen('players')) this.topbar.close(false);
     if (this.roomsOnStart && net.connected) {
       this.roomsOnStart = false;
       // 새로고침 전에 방장·손님이었으면 저절로 다시 들어가므로 묻지 않는다
-      if (net.role === 'solo' && !net.rejoining) this.showPlayers(true);
+      if (net.role === 'solo' && !net.rejoining) this.topbar.open('players');
     }
+    const chat = $<HTMLButtonElement>('btn-chat');
+    const together = net.role !== 'solo';
+    chat.disabled = !together;
+    chat.title = together
+      ? `채팅 (Enter) — 방 안의 모두(${net.players}명)에게 흘러가요`
+      : '채팅은 함께 하기 방에 들어간 뒤에 쓸 수 있어요 (함께 하기 버튼에서 방 만들기·참가)';
     const lan = net.lanRooms.filter((r) => lanRoomCheck(r) === 'ok');
     let text: string;
     let cls = '';
@@ -613,12 +671,16 @@ export class UI {
     else if (net.waitingForHost || net.borrowed) [text, cls] = ['⏳ 방장 기다리는 중', 'wait'];
     else if (net.roomOpen) [text, cls] = [`🚪 ${net.hostName}의 방 · 참가`, 'wait'];
     else if (lan.length) [text, cls] = [lan.length > 1 ? `🚪 열린 방 ${lan.length}개 · 참가` : `🚪 ${lan[0].host || '누군가'}의 방 · 참가`, 'wait'];
-    else text = '👥 같이 하기';
+    else text = '👥 함께 하기';
+    if (off) [text, cls] = ['👥 함께 하기', ''];
     el.textContent = text;
-    el.title = '같이 하기: 방 만들기 · 참가 · 주소 복사 · 접속자 목록';
-    el.className = cls;
+    el.title = off
+      ? '함께 하기는 게임 서버(npm run host 또는 exe)로 열었을 때 쓸 수 있어요'
+      : '함께 하기: 방 만들기 · 참가 · 주소 복사 · 접속자 목록';
+    el.classList.toggle('live', cls === 'live');
+    el.classList.toggle('wait', cls === 'wait');
     const save = net.canSave;
-    $<HTMLButtonElement>('btn-save').disabled = !save;
+    this.updateSave(save);
     $<HTMLButtonElement>('btn-new').disabled = !save;
     $<HTMLButtonElement>('btn-import').disabled = !save;
     $<HTMLButtonElement>('btn-restore').disabled = !save || !this.game.hasBackup;
@@ -747,7 +809,7 @@ export class UI {
   private updateSound(): void {
     const off = sound.muted || (sound.volume <= 0 && sound.musicVolume <= 0);
     const btn = $('btn-sound');
-    btn.textContent = off ? '🔇' : '🔊';
+    btn.textContent = off ? '🔇 소리 꺼짐' : '🔊 소리 켜짐';
     btn.classList.toggle('off', off);
     const pct = Math.round(sound.volume * 100);
     $<HTMLInputElement>('sound-volume').value = String(pct);
@@ -772,13 +834,128 @@ export class UI {
     this.toast(input.showRates ? '생산량 표시 켬 (기계 위 숫자 = 분당 생산, 색 = 가동률)' : '생산량 표시 끔');
   }
 
-  private toggleModal(id: 'research' | 'help' | 'stats' | 'ach'): void {
+  /** 큰 창은 한 번에 하나: 위쪽 버튼·단축키로 열면 다른 큰 창은 닫는다 */
+  private toggleModal(id: WindowId): void {
     const el = $(id);
-    el.hidden = !el.hidden;
+    const open = el.hidden;
+    if (open) this.closeWindows();
+    this.topbar.close(false);
+    el.hidden = !open;
     if (id === 'research') this.researchKey = '';
     if (id === 'ach') this.achKey = '';
+    if (id === 'goals') this.goalsKey = '';
     if (id === 'stats') this.statsAt = 0;
     this.update();
+  }
+
+  /** 열린 큰 창(도감 포함)을 모두 닫는다. 닫은 게 있으면 true */
+  private closeWindows(): boolean {
+    let closed = false;
+    for (const id of WINDOWS) {
+      if ($(id).hidden) continue;
+      $(id).hidden = true;
+      closed = true;
+    }
+    if (this.codex.isOpen) {
+      this.codex.close();
+      closed = true;
+    }
+    return closed;
+  }
+
+  /**
+   * 연구 완료·목표 달성 알림 카드 (위쪽 바 아래 가운데). 몇 초 안에 또 오면 한 장에 모아 보여 준다.
+   * 적용은 이미 끝난 일이고 카드는 알려 주기만 한다
+   */
+  notice(title: string, body = '', ms = 6000): void {
+    const el = $('notice');
+    const lines = el.hidden ? [] : [...el.querySelectorAll('li')].map((li) => li.innerHTML);
+    lines.push(`<b>${title}</b>${body ? ` <span class="muted">${body}</span>` : ''}`);
+    const shown = lines.slice(-4);
+    el.innerHTML = `<header><h3>${lines.length > 1 ? `알림 ${lines.length}개` : '알림'}</h3><button class="x" title="닫기 (Esc)">×</button></header>
+      <ul>${shown.map((l) => `<li>${l}</li>`).join('')}</ul>${lines.length > shown.length ? `<p class="muted">외 ${lines.length - shown.length}개</p>` : ''}`;
+    el.hidden = false;
+    clearTimeout(this.noticeTimer);
+    this.noticeTimer = window.setTimeout(() => this.hideNotice(), ms);
+  }
+
+  private hideNotice(): boolean {
+    if ($('notice').hidden) return false;
+    $('notice').hidden = true;
+    clearTimeout(this.noticeTimer);
+    return true;
+  }
+
+  /** 저장 버튼: 저장됨 · 저장 필요 · 저장 실패 · (손님) 저장 안 함. 글자가 바뀌어도 폭은 그대로 (CSS) */
+  private updateSave(canSave: boolean): void {
+    const btn = $<HTMLButtonElement>('btn-save');
+    const s = this.game.saveState;
+    const [text, cls] = !canSave ? ['저장 안 함', ''] : !s.ok ? ['⚠ 저장 실패', 'bad'] : s.dirty ? ['● 저장 필요', 'warn'] : ['✓ 저장됨', 'good'];
+    if (btn.textContent !== text) btn.textContent = text;
+    btn.disabled = !canSave;
+    btn.classList.toggle('bad', cls === 'bad');
+    btn.classList.toggle('warn', cls === 'warn');
+    btn.classList.toggle('good', cls === 'good');
+    btn.title = !canSave
+      ? '손님은 방장의 공장이라 저장하지 않아요 (방장이 저장해요)'
+      : `${!s.ok ? '마지막 저장이 실패했어요. 눌러서 다시 저장 · ' : ''}지금 저장 (30초마다 저절로). 다른 PC로 옮기려면 메뉴 → 도움말 아래 '공장 파일로 내보내기'`;
+  }
+
+  /** 시간 팝오버: 날짜·때·경과 시간·지금 화면 가운데의 날씨 */
+  private updateTimePop(w: World): void {
+    if (!this.topbar.isOpen('time')) return;
+    const sky = w.regional ? this.regionalSky(w) : skyLabel(w.seed, w.time);
+    const t = Math.floor(w.time);
+    const hms = `${Math.floor(t / 3600)}:${String(Math.floor(t / 60) % 60).padStart(2, '0')}:${String(t % 60).padStart(2, '0')}`;
+    const html = `<h3>${dayNumber(w.time)}일차 · ${dayPart(w.time)}</h3>
+      <div class="row"><span>지난 게임 시간</span><b class="num">${hms}</b></div>
+      <div class="row"><span>하루 길이</span><b>${DAY_SEC / 60}분</b></div>
+      <div class="row"><span>날씨</span><b>${sky.icon}</b></div>
+      <p class="muted">${sky.text}</p>
+      <div class="row"><span>태양광 한 대</span><b>${Math.round(w.solarOutput())}kW</b></div>
+      <div class="row"><span>풍력 한 대</span><b>${Math.round(w.windOutput())}kW</b></div>
+      ${w.regional ? '<p class="muted">날씨는 지금 화면 가운데 땅 기준이에요.</p>' : ''}`;
+    if ($('time-pop').innerHTML !== html) $('time-pop').innerHTML = html;
+  }
+
+  /** 목표판 (O): 확장 세계는 메인 목표 36개 + 선택 도전, 기본 세계는 안내 목표 전체 */
+  private updateGoalsPanel(w: World): void {
+    const tracked = this.trackedChallenge();
+    const key = w.regional
+      ? `${[...w.goals].join()}|${[...w.challenges].join()}|${tracked}|${currentGoal(w)?.id}`
+      : [...w.guideDone].join();
+    if (key === this.goalsKey) return;
+    this.goalsKey = key;
+    let body: string;
+    if (w.regional) {
+      const cur = currentGoal(w);
+      let chapter = '';
+      const rows = MAIN_GOALS.map((g) => {
+        const done = w.goals.has(g.id);
+        const head = g.chapter !== chapter ? `<h3>${(chapter = g.chapter)}</h3>` : '';
+        const cls = done ? 'done' : g === cur ? 'cur' : '';
+        return `${head}<li class="${cls}"><span class="mark">${done ? '✓' : g === cur ? '▶' : '·'}</span><small class="muted">${g.id}</small> ${g.title}</li>`;
+      });
+      const done = MAIN_GOALS.filter((g) => w.goals.has(g.id)).length;
+      const ch = CHALLENGES.map(
+        (c) =>
+          `<li class="${w.challenges.has(c.id) ? 'done' : c.id === tracked ? 'cur' : ''}"><span class="mark">${w.challenges.has(c.id) ? '✓' : c.id === tracked ? '◆' : '·'}</span>${c.title} <small class="muted">${c.hint}</small></li>`,
+      ).join('');
+      body = `<p class="muted">메인 목표 ${done}/${MAIN_GOALS.length} · 지금 목표는 왼쪽 카드에서 자세히 볼 수 있어요.</p>
+        <ul class="steps goal-list">${rows.join('')}</ul>
+        <h3>선택 도전 <small>${w.challenges.size}/${CHALLENGES.length}</small></h3>
+        <p class="muted">◆ = 왼쪽 카드에서 추적 중 (고르기는 왼쪽 카드의 선택 도전 칸)</p>
+        <ul class="steps goal-list">${ch}</ul>`;
+    } else {
+      const cur = GUIDE.findIndex((s) => !w.guideDone.has(s.title));
+      const rows = GUIDE.map((s, i) => {
+        const done = w.guideDone.has(s.title);
+        return `<li class="${done ? 'done' : i === cur ? 'cur' : ''}"><span class="mark">${done ? '✓' : i === cur ? '▶' : '·'}</span>${s.title}</li>`;
+      }).join('');
+      body = `<p class="muted">목표 ${GUIDE.filter((s) => w.guideDone.has(s.title)).length}/${GUIDE.length} · 지금 목표는 왼쪽 카드에서 자세히 볼 수 있어요.</p>
+        <ul class="steps goal-list">${rows}</ul>`;
+    }
+    $('goals').innerHTML = `<div class="panel"><header><h2>목표판</h2><button class="x" data-act="close-modal">×</button></header>${body}</div>`;
   }
 
   private selected(): Building | null {
@@ -806,27 +983,49 @@ export class UI {
     const time = `${Math.floor(t / 60)}:${String(t % 60).padStart(2, '0')}`;
     // 하늘 아이콘 (낮·해 질 녘·밤·흐림·비). 태양광·풍력 출력이 하늘을 따르니 화면 효과를 꺼도 보인다
     const sky = w.regional ? this.regionalSky(w) : skyLabel(w.seed, w.time);
-    $('clock').textContent = `${sky.icon} ${time}`;
-    $('clock').title = `${sky.text} · 게임 시간 ${time} (하루 ${DAY_SEC / 60}분) · 태양광 ${Math.round(w.solarOutput())}kW · 풍력 ${Math.round(w.windOutput())}kW (한 대)`;
+    const clock = `${sky.icon} ${dayNumber(w.time)}일차 · ${dayPart(w.time)}`;
+    if ($('clock').textContent !== clock) $('clock').textContent = clock;
+    $('clock').title = `${sky.text} · 게임 시간 ${time} · 누르면 자세히`;
+    this.updateTimePop(w);
+    // 정지 중이면 "계속"과 정지 표시만. 직전 배속은 기억하되 도는 것처럼 표시하지 않는다
+    const paused = this.game.speed === 0;
+    const pause = $('btn-pause');
+    pause.classList.toggle('active', paused);
+    const pauseHtml = paused ? '▶ 계속' : '⏸ 정지';
+    if (pause.innerHTML !== pauseHtml) pause.innerHTML = pauseHtml;
+    pause.title = paused ? `계속 (Space) — ${this.game.lastSpeed}×로` : '정지 (Space)';
     document.querySelectorAll<HTMLButtonElement>('#topbar [data-speed]').forEach((btn) => {
       btn.classList.toggle('active', Number(btn.dataset.speed) === this.game.speed);
     });
     $('btn-map').classList.toggle('active', this.game.mapShown);
     $('layers').hidden = !w.regional;
+    this.topbar.setLayersShown(w.regional);
     if (!w.regional) this.game.input.layer = 'base';
     document.querySelectorAll<HTMLElement>('#layers [data-layer]').forEach((b) => b.classList.toggle('active', b.dataset.layer === this.game.input.layer));
+    // 열린 창 버튼 (같은 묶음 안에서만 금빛)
+    for (const [btn, id] of [['btn-stats', 'stats'], ['btn-goals', 'goals'], ['btn-ach', 'ach'], ['btn-research', 'research']] as const) {
+      $(btn).classList.toggle('active', !$(id).hidden);
+    }
+    $('btn-codex').classList.toggle('active', this.codex.isOpen);
+    // 지금 재료로 할 수 있는 연구가 있으면 작은 점 (고르지는 않는다)
+    const ready = w.techs.some((tc) => !w.researched.has(tc.id) && w.canResearch(tc.id).ok);
+    $('btn-research').querySelector<HTMLElement>('.dot')!.hidden = !ready;
+    $('btn-research').title = ready ? '연구: 지금 할 수 있는 연구가 있어요 (T)' : '연구: 새 건물·레시피 해금 (T)';
     this.updateNet();
-    // 되돌리기 버튼: 누르면 무엇이 바뀌는지 설명에 적어 둔다
-    for (const [id, redo, name] of [['btn-undo', false, '되돌리기 (Ctrl+Z)'], ['btn-redo', true, '다시 하기 (Ctrl+Y)']] as const) {
+    // 되돌리기 버튼: 이력이 없어도 같은 자리에 비활성으로. 누르면 무엇이 바뀌는지 설명에 적어 둔다
+    for (const [id, redo, name, none] of [
+      ['btn-undo', false, '되돌리기 (Ctrl+Z)', '되돌릴 작업 없음'],
+      ['btn-redo', true, '다시 실행 (Ctrl+Y)', '다시 실행할 작업 없음'],
+    ] as const) {
       const next = w.nextEdit(redo, this.game.me);
       const btn = $<HTMLButtonElement>(id);
       btn.disabled = !next;
-      btn.title = next ? `${name}: ${describeEdit(next)}` : name;
+      btn.title = next ? `${name}: ${describeEdit(next)}` : `${name} · ${none}`;
     }
 
     this.toolbar.update(w);
 
-    this.updateHolding();
+    this.updateHolding(w);
     this.updatePower(w);
     this.updateStock(w);
     this.updateOreAlerts(w);
@@ -836,35 +1035,48 @@ export class UI {
     this.sampleStock(w);
     if (!$('stats').hidden) this.updateStatsPanel(w);
     if (!$('ach').hidden) this.updateAchPanel(w);
+    if (!$('goals').hidden) this.updateGoalsPanel(w);
     this.achNotify(w);
     this.updateTooltip(w);
     this.codex.refresh();
+    // 좁은 화면(900px 미만)에서는 선택 상세가 열리면 왼쪽 판을 접어 한 판만 보인다
+    document.body.classList.toggle('one-panel', this.topbar.mode !== 'wide' && !$('info').hidden);
   }
 
-  /** 도구를 들고 있을 때 툴바 위 안내 */
-  private updateHolding(): void {
+  /**
+   * 툴바 위 상세 줄: 든 건물(또는 막힌 건물)의 이름·크기·전력·건설 상태·막힌 이유만.
+   * 회전·취소 같은 조작 안내는 도움말(H)에 있어 여기서는 뺀다
+   */
+  private updateHolding(w: World): void {
     const el = $('holding');
     const input = this.game.input;
-    if (input.paste) {
-      el.hidden = false;
-      el.innerHTML = `<b>복사한 건물 ${input.paste.entries.length}개</b> · 클릭: 붙여넣기 · <kbd>Esc</kbd> 취소`;
-      return;
+    let html = '';
+    let blocked = false;
+    if (input.paste) html = `<b>복사한 건물 ${input.paste.entries.length}개</b> 붙여넣는 중`;
+    else if (input.tool || input.blocked) {
+      const type = (input.tool ?? input.blocked!.type) as BuildingType;
+      const def = BUILDINGS[type];
+      const s = input.tool ? input.toolSetting : null;
+      const label = !s
+        ? ''
+        : type === 'station'
+          ? STATION_MODE_NAME[s as StationMode]
+          : type === 'sorter' || type === 'unloader'
+            ? ITEMS[s as ItemId].name
+            : (RECIPES[s]?.name ?? '');
+      const state = buildState(w, type);
+      const head = `<b>${def.name}</b>${label ? ` (${label})` : ''} · ${def.size}×${def.size}${def.power ? ` · 전력 ${def.power}kW` : ''}`;
+      if (state === 'ok') html = `${head} · <span class="ok">✓ 건설 가능</span>`;
+      else {
+        blocked = true;
+        html = `${head} · <span class="no">${state === 'locked' ? '🔒 연구 잠김' : '⚠ 재료 부족'}</span> · ${blockReason(w, type, state)}${
+          state === 'locked' ? ' <button data-act="open-research">연구 보기 <kbd>T</kbd></button>' : ''
+        }`;
+      }
     }
-    if (!input.tool) {
-      el.hidden = true;
-      return;
-    }
-    const s = input.toolSetting;
-    const label = !s
-      ? ''
-      : input.tool === 'station'
-        ? STATION_MODE_NAME[s as StationMode]
-        : input.tool === 'sorter' || input.tool === 'unloader'
-          ? ITEMS[s as ItemId].name
-          : (RECIPES[s]?.name ?? '');
-    el.hidden = false;
-    el.innerHTML = `<b>${BUILDINGS[input.tool].name}</b>${label ? ` (${label})` : ''} 들고 있음 ·
-      클릭: 짓기 · 건물 클릭: 설정 열기 · <kbd>R</kbd> 회전 (건물 위면 그 건물) · <kbd>Esc</kbd> 내려놓기`;
+    el.hidden = !html;
+    el.classList.toggle('blocked', blocked);
+    if (html && el.innerHTML !== html) el.innerHTML = html;
   }
 
   /**
@@ -1038,7 +1250,7 @@ export class UI {
       sound.play('goal');
       const last = MAIN_GOALS.filter((g) => w.goals.has(g.id)).at(-1);
       const opened = last ? revealPreview(last.id) : [];
-      if (last) this.toast(`목표 달성: ${last.title}${opened.length ? ` · 지도에 새로 열린 곳: ${opened.join(', ')}` : ''}`, opened.length ? 5000 : 2500);
+      if (last) this.notice(`목표 달성: ${last.title}`, opened.length ? `지도에 새로 열린 곳: ${opened.join(', ')}` : '');
       if (w.goals.has('MG36') && !this.finaleShown) this.showFinale(w);
     }
     this.goalCount = done;
@@ -1111,7 +1323,7 @@ export class UI {
           const a = ACH_BY_ID[id];
           return a ? `${a.name}${n ? ` ${MEDAL[Number(n) - 1]}` : ''}` : k;
         });
-        this.toast(`🏅 업적: ${names.slice(0, 3).join(', ')}${names.length > 3 ? ` 외 ${names.length - 3}개` : ''}`, 4000);
+        this.notice(`🏅 업적: ${names.slice(0, 3).join(', ')}${names.length > 3 ? ` 외 ${names.length - 3}개` : ''}`);
         sound.play('goal');
       }
     }
@@ -2799,6 +3011,26 @@ function productionBlock(st: MachineStats): string {
 }
 
 /** 서버 없이 연 게임이면 방 창을 닫아 둔다 */
+/** 위쪽 버튼으로 여는 큰 창 (도감은 따로 codex.ts) */
+const WINDOWS = ['research', 'help', 'stats', 'ach', 'goals'] as const;
+type WindowId = (typeof WINDOWS)[number];
+
+/** 글을 쓰는 중이면 게임 단축키를 쓰지 않는다 */
+function isTyping(t: EventTarget | null): boolean {
+  return t instanceof HTMLInputElement || t instanceof HTMLSelectElement || t instanceof HTMLTextAreaElement;
+}
+
+/** 몇 일차 (게임 시작이 1일차) */
+function dayNumber(time: number): number {
+  return Math.floor(time / DAY_SEC) + 1;
+}
+
+/** 하루 안의 때: sky.ts의 구간과 같다 (낮 0~0.6 · 저녁 ~0.7 · 밤 ~0.9 · 아침 ~1) */
+function dayPart(time: number): string {
+  const p = dayPhase(time);
+  return p < 0.6 ? '낮' : p < 0.7 ? '저녁' : p < 0.9 ? '밤' : '아침';
+}
+
 function offline(net: Session): boolean {
   // exe는 늘 자기 서버가 있다 (방장 PC 서버에서 내 서버로 갈아타는 찰나에 방 창이 닫히지 않게)
   return !net.connected && !net.borrowed && !net.joining && !net.desktop;

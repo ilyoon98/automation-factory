@@ -13,6 +13,7 @@ import {
   uniqueBlueprintName,
 } from './blueprints';
 import { copyText } from './clipboard';
+import { ITEMS } from '../data/items';
 import { buildingIconUrl, itemIcon, truckIconUrl } from './icons';
 
 /** 건물 탭들 + 맨 끝 청사진 탭 (K) */
@@ -65,20 +66,35 @@ export class Toolbar {
    */
   private setupScrollbar(): void {
     const palette = document.getElementById('palette')!;
+    const nav = document.getElementById('palette-nav')!;
     const bar = document.getElementById('palette-bar')!;
     const thumb = bar.querySelector<HTMLElement>('.thumb')!;
+    const range = nav.querySelector<HTMLElement>('.range')!;
+    const prev = nav.querySelector<HTMLButtonElement>('.prev')!;
+    const next = nav.querySelector<HTMLButtonElement>('.next')!;
     const overflow = () => palette.scrollWidth - palette.clientWidth;
 
     const sync = () => {
       const max = overflow();
-      bar.hidden = max <= 1;
+      nav.hidden = max <= 1;
       palette.classList.toggle('fade-left', palette.scrollLeft > 1);
       palette.classList.toggle('fade-right', palette.scrollLeft < max - 1);
-      if (bar.hidden) return;
+      if (nav.hidden) return;
       const w = Math.max(30, (bar.clientWidth * palette.clientWidth) / palette.scrollWidth);
       thumb.style.width = `${w}px`;
       thumb.style.left = `${(palette.scrollLeft / max) * (bar.clientWidth - w)}px`;
+      // 지금 반 이상 보이는 카드 범위 (번호는 원래 목록 순서 그대로)
+      const cards = [...palette.children] as HTMLElement[];
+      const left = palette.scrollLeft;
+      const right = left + palette.clientWidth;
+      const seen = cards.map((c, i) => [i, Math.min(right, c.offsetLeft + c.offsetWidth) - Math.max(left, c.offsetLeft) >= c.offsetWidth / 2] as const).filter(([, v]) => v);
+      range.textContent = seen.length ? `${seen[0][0] + 1}–${seen.at(-1)![0] + 1} / ${cards.length}` : '';
+      prev.disabled = left <= 1;
+      next.disabled = left >= max - 1;
     };
+    const page = (dir: number) => palette.scrollBy({ left: dir * palette.clientWidth * 0.8, behavior: 'smooth' });
+    prev.addEventListener('click', () => page(-1));
+    next.addEventListener('click', () => page(1));
     this.syncScrollbar = sync;
     palette.addEventListener('scroll', sync);
     new ResizeObserver(sync).observe(palette);
@@ -178,11 +194,31 @@ export class Toolbar {
       const cat = tool ? categoryOf(tool) : null;
       if (cat && cat !== this.category) this.setCategory(cat);
     }
+    this.world = w;
+    this.paintCards(w);
+  }
+
+  /** 마지막으로 본 공장 (탭을 바꿔 카드를 새로 그릴 때 상태 띠를 바로 채우려고) */
+  private world: World | null = null;
+
+  /** 카드마다 비용·상태 띠·선택 표시 */
+  private paintCards(w: World): void {
+    const tool = this.input.tool;
+    const looking = this.input.blocked?.type ?? null;
     for (const [type, btn] of this.buttons) {
-      const locked = !w.unlockedBuildings.has(type);
-      btn.classList.toggle('locked', locked);
-      btn.classList.toggle('poor', !locked && !w.canAfford(BUILDINGS[type].cost));
-      btn.classList.toggle('active', tool === type);
+      const state = buildState(w, type);
+      // 지금 지을 수 없으면 막힌 표시가 선택 표시보다 먼저 (금빛·체크는 실제로 들고 있고 지을 수 있을 때만)
+      btn.classList.toggle('locked', state === 'locked');
+      btn.classList.toggle('poor', state === 'poor');
+      btn.classList.toggle('active', tool === type && state === 'ok');
+      btn.classList.toggle('looking', looking === type);
+      const cost = costHtml(w, type, state === 'poor');
+      const el = btn.querySelector<HTMLElement>('.cost')!;
+      if (el.innerHTML !== cost) el.innerHTML = cost;
+      const band = STATE_BAND[state];
+      const s = btn.querySelector<HTMLElement>('.state')!;
+      if (s.textContent !== band) s.textContent = band;
+      btn.setAttribute('aria-pressed', String(tool === type && state === 'ok'));
     }
   }
 
@@ -246,17 +282,19 @@ export class Toolbar {
       const btn = document.createElement('button');
       btn.className = 'pal';
       btn.dataset.codexBuilding = type; // 우클릭: 도감
+      // 비용은 늘 보이게 (아이콘 + 개수). 상태 띠: 건설 가능 · 연구 잠김 · 재료 부족 (update에서 채운다)
       btn.innerHTML = `
         <span class="key">${i + 1}</span>
         <img src="${buildingIconUrl(type)}" alt="">
         <span class="name">${def.name}</span>
-        <span class="cost">${def.cost.map((c) => `${itemIcon(c.item)}${c.count}`).join(' ')}</span>
-        <span class="lock">🔒</span>`;
-      btn.title = `${def.name}\n${def.description}${def.power ? `\n전력 ${def.power}kW` : ''}\n우클릭: 도감`;
+        <span class="cost"></span>
+        <span class="state"></span>`;
+      btn.title = `${def.name} · ${def.size}×${def.size}${def.power ? ` · 전력 ${def.power}kW` : ''}\n${def.description}\n비용: ${def.cost.map((c) => `${ITEMS[c.item].name} ${c.count}`).join(', ')}\n우클릭: 도감`;
       btn.addEventListener('click', () => this.input.setTool(type));
       palette.appendChild(btn);
       this.buttons.set(type, btn);
     });
+    if (this.world) this.paintCards(this.world);
     palette.scrollLeft = 0;
     this.syncScrollbar();
   }
@@ -366,6 +404,41 @@ export class Toolbar {
     this.input.startPaste(blueprints().find((s) => s.name === name)!.bp, name);
     this.input.notify(`청사진 '${name}'을 받았어요 (건물 ${got.bp.entries.length}개) — 클릭해서 붙여넣기`);
   }
+}
+
+export type BuildState = 'ok' | 'locked' | 'poor';
+
+/** 툴바 카드 상태: 연구 잠김이 재료 부족보다 먼저. 재료는 허브 건설 재고 기준 (world.canAfford) */
+export function buildState(w: World, type: BuildingType): BuildState {
+  if (!w.unlockedBuildings.has(type)) return 'locked';
+  return w.canAfford(BUILDINGS[type].cost) ? 'ok' : 'poor';
+}
+
+const STATE_BAND: Record<BuildState, string> = { ok: '✓ 건설 가능', locked: '🔒 연구 잠김', poor: '⚠ 재료 부족' };
+
+/** 비용 (아이콘 + 개수). 재료 부족이면 모자란 재료를 강조 */
+function costHtml(w: World, type: BuildingType, poor: boolean): string {
+  return BUILDINGS[type].cost
+    .map((c) => {
+      const short = poor && w.stockOf(c.item) < c.count;
+      return `<span class="${short ? 'short' : ''}">${itemIcon(c.item)}${c.count}</span>`;
+    })
+    .join(' ');
+}
+
+/** 막힌 이유 한 줄: 잠김이면 해금하는 연구, 재료 부족이면 재료마다 보유/필요(부족) */
+export function blockReason(w: World, type: BuildingType, why: 'locked' | 'poor'): string {
+  if (why === 'locked') {
+    const t = w.techs.find((tc) => tc.unlockBuildings?.includes(type));
+    return t ? `필요한 연구: ${t.icon} ${t.name}` : '연구로 해금해야 해요';
+  }
+  return BUILDINGS[type].cost
+    .filter((c) => w.stockOf(c.item) < c.count)
+    .map((c) => {
+      const have = Math.floor(w.stockOf(c.item));
+      return `${itemIcon(c.item)}${ITEMS[c.item].name} ${have}/${c.count} <b class="bad">(${c.count - have} 부족)</b>`;
+    })
+    .join(' · ');
 }
 
 function escapeHtml(s: string): string {

@@ -1,4 +1,5 @@
 import { CHAT_MAX, type Session } from '../net/session';
+import { topbar } from './topbar';
 
 /** 흘러가는 속도 (px/초). 길이와 상관없이 같은 속도라, 같은 줄에서 뒤 메시지가 앞 메시지를 따라잡지 않는다 */
 const SPEED = 170;
@@ -14,7 +15,7 @@ const LOG_SHOW = 6;
 
 /**
  * 채팅: Enter(또는 위쪽 채팅 버튼)로 입력창을 열고 보내면, 메시지가 화면 오른쪽에서 왼쪽으로 쭉 흘러가다 사라진다.
- * 같이 하면 방 안의 모두에게, 혼자면 내 화면에만 뜬다.
+ * 함께 하기 방에 들어가 있을 때만 (혼자면 위쪽 버튼이 비활성). 입력창은 위쪽 바 아래, 채팅 버튼 오른쪽에 맞춘 팝오버
  */
 export class Chat {
   private flow = document.getElementById('chat-flow')!;
@@ -53,14 +54,16 @@ export class Chat {
     });
     // 다른 곳을 누르면 닫는다 (쓰던 글은 남겨 둔다)
     this.input.addEventListener('blur', () => this.close());
-    document.getElementById('btn-chat')!.addEventListener('click', () => this.open());
+    const btn = document.getElementById('btn-chat')!;
+    topbar.register('chat', this.box, btn, 'right');
+    btn.addEventListener('click', () => this.open());
   }
 
   open(): void {
-    this.input.placeholder =
-      this.session.role === 'solo' ? '혼자 할 땐 내 화면에만 보여요' : `모두에게 보내기 (${this.session.players}명)`;
+    if (this.session.role === 'solo') return;
+    this.input.placeholder = `모두에게 보내기 (${this.session.players}명)`;
     this.renderLog();
-    this.box.hidden = false;
+    topbar.open('chat');
     this.input.focus();
   }
 
@@ -83,6 +86,7 @@ export class Chat {
 
   close(): void {
     if (this.box.hidden) return;
+    if (topbar.isOpen('chat')) topbar.close(false);
     this.box.hidden = true;
     this.input.blur();
   }

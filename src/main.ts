@@ -148,13 +148,18 @@ function commandSound(cmd: Command, r: unknown): void {
   }
 }
 
+/** 위쪽 저장 버튼: 마지막 저장이 됐는지, 그 뒤로 내가 공장을 바꿨는지 */
+const saveState = { ok: true, dirty: false };
+
 const game: GameApi = {
   getWorld: () => world,
-  exec: (cmd, done) =>
-    session.exec(cmd, (r) => {
+  exec: (cmd, done) => {
+    if (cmd.t !== 'end') saveState.dirty = true;
+    return session.exec(cmd, (r) => {
       commandSound(cmd, r);
       done?.(r);
-    }),
+    });
+  },
   get me() {
     return session.me;
   },
@@ -163,6 +168,12 @@ const game: GameApi = {
   },
   input: null!,
   speed: 1,
+  get lastSpeed() {
+    return lastSpeed;
+  },
+  get saveState() {
+    return saveState;
+  },
   setSpeed(s: number) {
     if (!session.requestSpeed(s)) applySpeed(s);
   },
@@ -171,9 +182,12 @@ const game: GameApi = {
     if (!session.canSave) return false;
     try {
       localStorage.setItem(SAVE_KEY, JSON.stringify(world.serialize()));
+      saveState.ok = true;
+      saveState.dirty = false;
       return true;
     } catch (err) {
       console.warn('저장 실패', err);
+      saveState.ok = false;
       return false;
     }
   },

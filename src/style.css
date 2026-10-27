@@ -233,70 +233,219 @@ h3 small {
 }
 
 /* 상단 바 */
+/*
+ * 위쪽 바 (docs/상단-UI-배치-앵커-상세기획.md). 수치는 UI 논리 px (--uiz 배율 전).
+ * 줄: 최소 40px (버튼 30 + 위아래 4) · 좌우 끝은 바깥에서 8px (테두리 2 + 안쪽 6) · 줄 사이 1px 옅은 선.
+ * 같은 묶음 버튼 사이 4px, 묶음 사이 8px (필요하면 1×22 세로 구분선). 줄 배치는 ui/topbar.ts
+ */
 #topbar {
   position: fixed;
   top: 0;
   left: 0;
   right: 0;
-  height: 40px;
+  z-index: 30;
+  display: flex;
+  flex-direction: column;
+  background: var(--panel);
+  border-top: 2px solid var(--ink);
+  border-bottom: 2px solid var(--ink);
+  box-shadow: 0 3px 0 rgba(59, 39, 22, 0.3);
+}
+#topbar .tb-row {
   display: flex;
   align-items: center;
+  justify-content: space-between;
   gap: 8px;
-  padding: 0 10px;
-  background: var(--panel);
-  border-bottom: 3px solid var(--ink);
-  box-shadow: inset 0 -2px 0 var(--lo), 0 3px 0 rgba(59, 39, 22, 0.3);
+  min-height: 40px;
+  /* 좌우 테두리가 없으니 끝에서 8px을 모두 안쪽 여백으로 */
+  padding: 4px 8px;
 }
-#topbar .brand {
-  font: 15px var(--font-l);
-  margin-right: 6px;
+#topbar .tb-row + .tb-row {
+  border-top: 1px solid rgba(138, 110, 75, 0.35);
 }
-#topbar #clock {
-  font-variant-numeric: tabular-nums;
-  color: var(--muted);
-  min-width: 44px;
-}
-#topbar .speed {
+#topbar .tb-side {
   display: flex;
-  gap: 2px;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  min-width: 0;
 }
-#topbar .speed button {
-  padding: 3px 8px;
+#topbar .tb-side.right {
+  margin-left: auto;
+  justify-content: flex-end;
 }
-#topbar .spacer {
-  flex: 1;
+#topbar .tb-group {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px;
 }
-/* 같이 하기 상태: 호스트 · 2명 / P3 · 2명 / 맞추는 중 */
-#topbar #net {
-  padding: 3px 8px;
-  border: 2px solid var(--muted);
-  color: var(--muted);
-  white-space: nowrap;
+#topbar .tb-group[hidden] {
+  display: none;
+}
+#topbar .tb-sep {
+  width: 1px;
+  height: 22px;
+  background: rgba(138, 110, 75, 0.55);
+}
+#topbar button {
+  position: relative;
+  height: 30px;
+  padding: 0 8px;
   font-size: 12px;
-  cursor: default;
+  white-space: nowrap;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-variant-numeric: tabular-nums;
+}
+#topbar kbd {
+  font-size: 11px;
+  padding: 0 3px;
+  margin: 0;
+  line-height: 14px;
+}
+/* 눌린(선택된) 버튼: 금빛 + 눌림 (배속·지도 레이어·생산량·열린 창·열린 팝오버) */
+#topbar button.active {
+  box-shadow: inset 2px 2px 0 #d7a63d, inset -2px -2px 0 #fff0b8;
+}
+/* 이름이 바뀌어도 자리가 움직이지 않게 폭을 고정 */
+#topbar #clock {
+  min-width: 108px;
+  justify-content: flex-start;
+}
+#topbar #btn-pause {
+  min-width: 64px;
+}
+#topbar #g-speed [data-speed] {
+  min-width: 32px;
+  justify-content: center;
+}
+#topbar button.edit {
+  min-width: 88px;
+  justify-content: center;
+}
+#topbar #btn-save {
+  min-width: 88px;
+  justify-content: center;
+}
+#topbar #btn-save.good {
+  color: var(--good);
+}
+#topbar #btn-save.warn {
+  color: var(--warn);
+}
+#topbar #btn-save.bad {
+  color: var(--bad);
+  font-weight: 700;
+}
+/* 함께 하기: 방 상태에 따라 초록(접속) · 주황(기다림) */
+#topbar #net {
+  display: inline-block;
+  max-width: 150px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  line-height: 26px;
 }
 #topbar #net.live {
   color: var(--good);
-  border-color: var(--good);
 }
 #topbar #net.wait {
   color: var(--warn);
-  border-color: var(--warn);
 }
-#topbar #net {
-  cursor: pointer;
+/* 새 연구 가능: 작은 점 (열린 창의 금빛 전체 강조와 구분) */
+#topbar #btn-research .dot {
+  position: absolute;
+  top: 3px;
+  right: 3px;
+  width: 6px;
+  height: 6px;
+  background: var(--good);
+  box-shadow: 0 0 0 1px var(--paper);
 }
-/* 접속자 목록 (위쪽 같이 하기 표시를 누르면) */
-#players {
+#topbar #btn-research .dot[hidden] {
+  display: none;
+}
+
+/* 위쪽 팝오버 (시간·메뉴·함께 하기·채팅): 위쪽 바 전체 아래 8px. 좌우 위치는 topbar.ts가 버튼에 맞춰 화면 안으로 */
+.popover {
   position: fixed;
-  top: 46px;
-  z-index: 20;
-  min-width: 230px;
+  top: calc(var(--top-h, 84px) + 8px);
+  z-index: 50;
+  width: min(260px, calc((100vw / var(--uiz)) - 16px));
   background: var(--panel);
   border: 3px solid var(--ink);
   box-shadow: var(--bevel), var(--drop);
   padding: 8px 10px;
   font-size: 12px;
+}
+.popover[hidden] {
+  display: none;
+}
+#time-pop h3 {
+  margin: 2px 0 6px;
+  font: 15px var(--font-l);
+}
+#time-pop .num {
+  font-variant-numeric: tabular-nums;
+}
+#time-pop p {
+  margin: 2px 0 6px;
+}
+#menu-pop {
+  width: 200px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+#menu-pop[hidden] {
+  display: none;
+}
+#menu-pop button {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  text-align: left;
+}
+
+/* 연구 완료·목표 달성 알림 카드: 위쪽 바 아래 가운데, 한 장 */
+#notice {
+  position: fixed;
+  top: calc(var(--top-h, 84px) + 8px);
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 90;
+  width: min(360px, calc((100vw / var(--uiz)) - 16px));
+  background: var(--panel);
+  border: 3px solid var(--ink);
+  box-shadow: var(--bevel), var(--drop);
+  padding: 6px 10px 8px;
+}
+#notice[hidden] {
+  display: none;
+}
+#notice header {
+  display: flex;
+  align-items: center;
+}
+#notice h3 {
+  flex: 1;
+  margin: 0;
+  font: 12px var(--font-s);
+  color: var(--muted);
+}
+#notice ul {
+  margin: 4px 0 0;
+  padding: 0;
+  list-style: none;
+  line-height: 1.6;
+}
+#notice p {
+  margin: 2px 0 0;
+}
+/* 접속자 목록 (위쪽 함께 하기 버튼을 누르면). 위치·테두리는 .popover */
+#players {
+  min-width: 230px;
 }
 #players .row {
   display: flex;
@@ -322,7 +471,7 @@ h3 small {
   padding: 2px 8px;
 }
 #players {
-  width: 290px;
+  width: min(290px, calc((100vw / var(--uiz)) - 16px));
 }
 #players h3 {
   margin: 2px 0 8px;
@@ -369,70 +518,19 @@ h3 small {
   color: var(--ink);
   font-weight: 700;
 }
-/*
- * 버튼 글자가 두 줄로 깨지지 않게. 단축키 표시는 늘 보여 주고,
- * 좁은 창에서는 여백과 게임 이름을 줄여 자리를 만든다
- */
-#topbar button,
-#topbar .brand {
-  white-space: nowrap;
-}
-/* 단축키는 이름 아래 작게 (폭을 덜 쓰게) */
-#topbar button:has(kbd) {
-  display: inline-flex;
-  flex-direction: column;
-  align-items: center;
-  padding: 1px 6px;
-  line-height: 1.1;
-}
-#topbar kbd {
-  font-size: 9px;
-  padding: 0 2px;
-  margin: 1px 0 0;
-  line-height: 1.1;
-}
-@media (max-width: 1100px) {
-  #topbar {
-    gap: 4px;
-    padding: 0 6px;
-  }
-  #topbar button,
-  #topbar .speed button {
-    padding: 3px 5px;
-  }
-  #topbar button:has(kbd) {
-    padding: 1px 5px;
-  }
-  #topbar .brand {
-    display: none;
-  }
-  #topbar #clock {
-    min-width: 0;
-  }
-}
-@media (max-width: 860px) {
-  #topbar {
-    gap: 3px;
-  }
-  #topbar button,
-  #topbar .speed button,
-  #topbar button:has(kbd) {
-    padding-left: 3px;
-    padding-right: 3px;
-  }
-}
-
 /* 왼쪽 패널 */
 #left {
   position: fixed;
-  top: 52px;
-  left: 10px;
+  top: calc(var(--top-h, 84px) + 8px);
+  left: 8px;
+  z-index: 20;
   /* 판 224px + 그림자 6px + 스크롤바 자리 12px */
   width: 242px;
   display: flex;
   flex-direction: column;
   gap: 8px;
-  max-height: calc((100vh / var(--uiz)) - var(--bottom-h, 180px) - 70px);
+  /* 위쪽 바 아래 8px ~ 툴바(바닥에서 10px 띄움) 위 8px */
+  max-height: max(0px, calc((100vh / var(--uiz)) - var(--top-h, 84px) - var(--bottom-h, 180px) - 26px));
   overflow-y: auto;
   /* 스크롤바가 없어도 그 자리를 비워 둔다: 넘칠 때 판 너비가 줄었다 늘었다 하지 않게 */
   scrollbar-gutter: stable;
@@ -601,6 +699,7 @@ h3 small {
   }
 }
 #palette {
+  position: relative;
   display: flex;
   gap: 8px;
   overflow-x: auto;
@@ -621,10 +720,31 @@ h3 small {
 #palette.fade-left.fade-right {
   mask-image: linear-gradient(to right, transparent, #000 48px, #000 calc(100% - 48px), transparent);
 }
+#palette-nav {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+#palette-nav[hidden] {
+  display: none;
+}
+#palette-nav button {
+  padding: 0 8px;
+  height: 20px;
+  font-size: 10px;
+}
+#palette-nav .range {
+  font: 10px var(--font-s);
+  color: var(--muted);
+  min-width: 56px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
 #palette-bar {
   position: relative;
+  flex: 1;
   height: 8px;
-  margin: 2px 4px 0;
+  margin: 0;
   background: var(--paper-3);
   border: 2px solid var(--ink);
   cursor: pointer;
@@ -692,20 +812,57 @@ h3 small {
 .pal.active .key {
   background: var(--ink);
 }
-.pal .lock {
-  display: none;
-  position: absolute;
-  inset: 0;
-  align-items: center;
-  justify-content: center;
-  font-size: 20px;
-  background: rgba(59, 39, 22, 0.45);
+/* 상태 띠: 색만으로 가리지 않게 늘 글자 + 아이콘 */
+.pal .state {
+  grid-column: 1 / -1;
+  margin: 2px -14px -8px -8px;
+  padding: 1px 8px;
+  font: 10px var(--font-s);
+  color: var(--good);
+  border-top: 2px solid rgba(59, 39, 22, 0.15);
+  white-space: nowrap;
 }
-.pal.locked .lock {
-  display: flex;
-}
-.pal.poor .cost {
+.pal .cost .short {
   color: var(--bad);
+  font-weight: 700;
+}
+/* 연구 잠김: 회색 빗금, 이름은 읽히게 */
+.pal.locked {
+  background: repeating-linear-gradient(135deg, #e3dccb 0 6px, #d6ccb6 6px 12px);
+}
+.pal.locked img {
+  filter: grayscale(1);
+  opacity: 0.55;
+}
+.pal.locked .state {
+  color: var(--ink);
+  background: rgba(59, 39, 22, 0.12);
+}
+/* 재료 부족: 옅은 주황 */
+.pal.poor {
+  background: #f8dcb4;
+}
+.pal.poor .state {
+  color: var(--bad);
+  background: rgba(192, 57, 43, 0.12);
+}
+.pal.locked:hover:not(:disabled),
+.pal.poor:hover:not(:disabled) {
+  filter: brightness(1.04);
+}
+/* 실제로 든 도구 (지을 수 있을 때만): 금빛 테두리 + 체크 */
+.pal.active {
+  outline: 2px solid #d7a63d;
+  outline-offset: -5px;
+}
+.pal.active .state::after {
+  content: ' · 선택';
+  color: var(--ink);
+}
+/* 막힌 이유를 보는 중인 카드 (도구는 들지 않음) */
+.pal.looking {
+  outline: 2px dashed var(--ink);
+  outline-offset: -5px;
 }
 #holding {
   position: fixed;
@@ -723,13 +880,38 @@ h3 small {
 #holding b {
   color: #f6d77e;
 }
+#holding .ok {
+  color: #9fdc93;
+}
+#holding .no {
+  color: #ffb08a;
+  font-weight: 700;
+}
+#holding b.bad {
+  color: #ffb08a;
+}
+#holding .icon {
+  width: 16px;
+  height: 16px;
+  vertical-align: -4px;
+}
+#holding.blocked {
+  pointer-events: auto;
+}
+#holding button {
+  margin-left: 6px;
+  padding: 1px 8px;
+}
 
 /* 정보창 */
 #info {
   position: fixed;
-  top: 52px;
-  right: 10px;
-  width: 270px;
+  top: calc(var(--top-h, 84px) + 8px);
+  right: 8px;
+  z-index: 20;
+  width: min(270px, calc((100vw / var(--uiz)) - 16px));
+  max-height: max(0px, calc((100vh / var(--uiz)) - var(--top-h, 84px) - var(--bottom-h, 180px) - 26px));
+  overflow-y: auto;
   background: var(--panel);
   border: 3px solid var(--ink);
   box-shadow: var(--bevel), var(--drop);
@@ -932,6 +1114,7 @@ h3 small {
 
 /* 툴팁, 토스트 */
 #tooltip {
+  z-index: 100;
   position: fixed;
   pointer-events: none;
   background: var(--paper);
@@ -968,7 +1151,7 @@ h3 small {
 /* 채팅: 위쪽 바 아래 ~ 툴바 위 아무 줄에서 오른쪽 → 왼쪽으로 흘러가는 메시지 (줄 높이는 chat.ts의 LANE_H) */
 #chat-flow {
   position: fixed;
-  top: 60px;
+  top: calc(var(--top-h, 84px) + 16px);
   bottom: calc(var(--bottom-h, 180px) + 24px);
   left: 0;
   right: 0;
@@ -998,20 +1181,13 @@ h3 small {
 .chat-msg.mine {
   border-color: #f6d77e;
 }
+/* 채팅 입력: 위쪽 바 아래, 채팅 버튼 오른쪽에 맞춘 팝오버 (위치는 .popover와 topbar.ts) */
 #chat-box {
-  position: fixed;
-  left: 50%;
-  bottom: calc(var(--bottom-h, 180px) + 12px);
-  transform: translateX(-50%);
-  width: min(460px, calc((100vw / var(--uiz)) - 20px));
+  width: min(420px, calc((100vw / var(--uiz)) - 16px));
   display: flex;
   align-items: center;
   gap: 8px;
   padding: 4px 8px;
-  background: var(--panel);
-  border: 3px solid var(--ink);
-  box-shadow: var(--bevel), var(--drop);
-  z-index: 25;
 }
 #chat-box[hidden] {
   display: none;
@@ -1023,12 +1199,12 @@ h3 small {
   flex: 1;
   min-width: 0;
 }
-/* 입력창 위 최근 채팅 (흘러간 걸 놓쳤을 때) */
+/* 입력창 아래 최근 채팅 (흘러간 걸 놓쳤을 때) */
 #chat-box .chat-log {
   position: absolute;
   left: -3px;
   right: -3px;
-  bottom: calc(100% + 6px);
+  top: calc(100% + 6px);
   background: rgba(59, 39, 22, 0.84);
   border: 2px solid var(--ink);
   box-shadow: 3px 3px 0 rgba(20, 12, 6, 0.3);
@@ -1140,20 +1316,23 @@ h3 small {
 }
 
 /* 모달 */
+/* 큰 창: 위쪽 바 아래 8px 가운데. 위쪽 바는 덮지 않아 다른 창 버튼·팝오버를 바로 누를 수 있다 */
 .modal {
   position: fixed;
-  inset: 0;
+  inset: var(--top-h, 84px) 0 0 0;
+  z-index: 80;
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: center;
+  padding-top: 8px;
   background: rgba(43, 33, 25, 0.55);
 }
 .modal[hidden] {
   display: none;
 }
 .panel {
-  width: min(760px, calc((100vw / var(--uiz)) - 32px));
-  max-height: calc((100vh / var(--uiz)) - 80px);
+  width: min(760px, calc((100vw / var(--uiz)) - 16px));
+  max-height: max(0px, calc((100vh / var(--uiz)) - var(--top-h, 84px) - var(--bottom-h, 180px) - 26px));
   overflow-y: auto;
   /* 스크롤바가 없어도 그 자리를 비워 둔다: 탭·내용에 따라 카드 줄이 좌우로 밀리지 않게 */
   scrollbar-gutter: stable;
@@ -1220,7 +1399,7 @@ h3 small {
 }
 /* 연구 창은 높이를 고정: 탭마다 카드 수가 달라도 창이 커졌다 작아지며 탭이 위아래로 움직이지 않게 (넘치면 안에서 스크롤) */
 #research .panel {
-  height: min(720px, calc((100vh / var(--uiz)) - 80px));
+  height: min(720px, max(0px, calc((100vh / var(--uiz)) - var(--top-h, 84px) - var(--bottom-h, 180px) - 26px)));
 }
 /* 연구 창 탭: 생산 · 물류 · 전력 · 자원 */
 .rtabs {
@@ -1539,9 +1718,9 @@ h3 small {
 /* exe 업데이트 알림 (src/ui/update.ts): 위쪽 바 아래 오른쪽 (왼쪽엔 같이 하기 방 창이 뜬다) */
 #update {
   position: fixed;
-  top: 46px;
-  right: 12px;
-  z-index: 25;
+  top: calc(var(--top-h, 84px) + 8px);
+  right: 8px;
+  z-index: 50;
   display: flex;
   align-items: center;
   gap: 8px;
@@ -1672,4 +1851,40 @@ h3 small {
 }
 .pal.confirm-del .share {
   display: none;
+}
+/* 900px 미만: 좌우 판을 동시에 넓게 펼치지 않는다. 선택 상세가 열리면 왼쪽 판을 접고, 닫으면 그대로 돌아온다 */
+body.one-panel #left {
+  display: none;
+}
+/* 목표판 (O): 메인 목표·선택 도전 전체 목록 */
+#goals ul.goal-list {
+  list-style: none;
+  margin: 4px 0 8px;
+  padding: 0;
+  columns: 2 260px;
+  column-gap: 24px;
+}
+#goals .goal-list li {
+  break-inside: avoid;
+  padding: 1px 0;
+}
+#goals .goal-list .mark {
+  display: inline-block;
+  width: 16px;
+  color: var(--muted);
+}
+#goals .goal-list li.done {
+  color: var(--muted);
+}
+#goals .goal-list li.done .mark {
+  color: var(--good);
+}
+#goals .goal-list li.cur {
+  font-weight: 700;
+}
+#goals .goal-list li.cur .mark {
+  color: var(--accent);
+}
+#goals h3 {
+  column-span: all;
 }

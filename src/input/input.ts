@@ -62,6 +62,11 @@ const ROTATABLE: BuildingType[] = [
  */
 export class Input implements ViewState {
   tool: BuildingType | null = null;
+  /**
+   * 툴바에서 연구 잠김·재료 부족 건물을 눌렀을 때: 건설 도구는 들지 않고 그 건물의 막힌 이유만 보여 준다.
+   * 다른 도구를 들거나 Esc로 지운다
+   */
+  blocked: { type: BuildingType; why: 'locked' | 'poor' } | null = null;
   /** 확장 지도의 정보 보기 (기본 / 전력 / 운송 / 자원 / 날씨). 개인 설정이라 시뮬레이션과 무관 */
   layer: MapLayer = 'base';
   toolDir: Dir = 1;
@@ -124,10 +129,15 @@ export class Input implements ViewState {
 
   setTool(t: BuildingType | null): void {
     const w = this.cb.getWorld();
-    if (t && !w.unlockedBuildings.has(t)) {
-      this.cb.toast(`${BUILDINGS[t].name}: 연구로 해금해야 해요`);
+    // 지을 수 없는 건물은 들지 않고 이유만 (잠김이 재료 부족보다 먼저). 이미 든 도구를 다시 누르면 내려놓기
+    const why = !t || t === this.tool ? null : !w.unlockedBuildings.has(t) ? 'locked' : !w.canAfford(BUILDINGS[t].cost) ? 'poor' : null;
+    if (t && why) {
+      this.tool = null;
+      this.blocked = { type: t, why };
+      this.cb.changed();
       return;
     }
+    this.blocked = null;
     this.tool = this.tool === t ? null : t;
     if (this.tool) {
       this.selectedId = null;
@@ -173,6 +183,8 @@ export class Input implements ViewState {
     this.canvas.setPointerCapture(e.pointerId);
     const t = this.tileAt(e);
     this.last = t;
+    // 맵을 누르면 툴바에서 보던 막힌 이유는 접는다
+    this.blocked = null;
     if (e.button === 1) return this.startPan(e);
     if (e.button === 2) {
       // 복사한 걸 들고 있으면 우클릭은 철거가 아니라 붙여넣기 취소
@@ -376,6 +388,7 @@ export class Input implements ViewState {
         break;
       case 'escape':
         this.tool = null;
+        this.blocked = null;
         this.paste = null;
         this.multi = [];
         this.selectedId = null;

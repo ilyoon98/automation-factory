@@ -50,6 +50,8 @@ export type Command =
   | { t: 'station-dock'; id: number; storage: number }
   /** 정류장 목표 재고 (0 = 지우기) */
   | { t: 'station-target'; id: number; item: ItemId; n: number }
+  /** 허브 프로젝트: 허브에 도착한 설비 모듈을 납품으로 소비할지 */
+  | { t: 'project'; on: boolean }
   /** 전력 구역의 차량 충전 예산 (kW, 0~800) */
   | { t: 'zone-budget'; zone: number; kw: number }
   | { t: 'undo' }
@@ -90,6 +92,7 @@ export interface CommandResults {
   'build-adv-truck': UseResult;
   'power-link': UseResult;
   'zone-budget': boolean;
+  project: boolean;
   'truck-plan': boolean;
   'station-dock': boolean;
   'station-target': boolean;
@@ -226,6 +229,10 @@ function run(w: World, c: Command): CommandResults[Command['t']] {
       const b = w.buildings.get(c.id);
       return !!b && Object.hasOwn(ITEMS, c.item) && w.setTarget(b, c.item, Number(c.n));
     }
+    case 'project':
+      if (!w.regional || !w.researched.has('integrated-automation')) return false;
+      w.stats.projectOn = !!c.on;
+      return true;
     case 'zone-budget':
       return w.setZoneBudget(Number(c.zone), Number(c.kw));
     case 'undo':

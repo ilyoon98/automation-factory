@@ -121,6 +121,9 @@ export class Vehicle {
   returning = false;
   /** 품목 차례 (예약·하역을 돌려 가며 공정하게) */
   planTurn = 0;
+  /** 마지막으로 짐을 실은 정류장과 그 전력 구역 (다른 곳에 내리면 배송 실적) */
+  fromStation = 0;
+  fromZone = 0;
 
   constructor(
     readonly id: number,

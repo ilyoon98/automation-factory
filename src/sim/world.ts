@@ -54,6 +54,7 @@ import { darkness, weatherMix } from './sky';
 import { ROUTE_MIN, Vehicle, type RouteStop, type VehicleState } from './vehicle';
 import { TERRAIN, TERRAIN_IDS, type TerrainKind } from '../data/terrain';
 import { WEATHER_FX, localWeather, type LocalWeather, type WeatherFx } from './weather-v1';
+import { PROJECT_GOAL, evaluateGoals } from './goals';
 
 export const TICK_RATE = 60;
 export const DT = 1 / TICK_RATE;
@@ -186,6 +187,51 @@ export interface Reservation {
   item: ItemId;
   n: number;
   dir: 'in' | 'out';
+}
+
+/** 공장 실적. 시작 재고·환급·창고 이동은 생산으로 세지 않는다 */
+export interface FactoryStats {
+  /** 제작·채굴·채취 완료 누적 */
+  made: Map<ItemId, number>;
+  /** 허브로 들어온 누적 */
+  hubIn: Map<ItemId, number>;
+  /** 허브 밖 발전원이 기계 작업에 준 전기, 변전소로 정식화한 구역의 작업 전기 (kJ) */
+  genWork: number;
+  formalWork: number;
+  /** 트럭이 실은 곳이 아닌 정류장에 내린 화물, 그중 정기편 계획 운송 */
+  delivered: number;
+  scheduledDelivered: number;
+  /** 다른 구역으로 배송한 품목별 개수 */
+  itemDelivered: Map<ItemId, number>;
+  /** 구역 사이 배송 "출발>도착": 개수와 품목 */
+  pairs: Map<string, { n: number; items: Set<ItemId> }>;
+  /** 구역별 생산 수, 작업 전기 (kJ), 제작에 실제로 쓴 재료 */
+  zoneMade: Map<number, number>;
+  zoneWork: Map<number, number>;
+  zoneUsed: Map<number, Set<ItemId>>;
+  largeStarted: boolean;
+  /** 허브 프로젝트: 납품을 켰는지, 누적 납품 모듈 */
+  projectOn: boolean;
+  projectDelivered: number;
+}
+
+export function newStats(): FactoryStats {
+  return {
+    made: new Map(),
+    hubIn: new Map(),
+    genWork: 0,
+    formalWork: 0,
+    delivered: 0,
+    scheduledDelivered: 0,
+    itemDelivered: new Map(),
+    pairs: new Map(),
+    zoneMade: new Map(),
+    zoneWork: new Map(),
+    zoneUsed: new Map(),
+    largeStarted: false,
+    projectOn: false,
+    projectDelivered: 0,
+  };
 }
 
 export interface PileEntry {
@@ -420,6 +466,10 @@ export class World {
   piles: PileEntry[] = [];
   /** 다음 회수 사건 번호 */
   nextPileEv = 1;
+  /** 공장 실적 (목표 판정용, regional-v1): 생산·배송·작업 전기·쓰임·허브 프로젝트 */
+  stats: FactoryStats = newStats();
+  /** 이룬 메인 목표 id (regional-v1) */
+  goals = new Set<string>();
   /** 운송 예약 (출고: 실제 보관물, 입고: 목적지 정류장 풀). 화물이 아니라 권리 표시라 실물 합계에 더하지 않는다 */
   reservations: Reservation[] = [];
   /** 처리한 현지 실물 명령: rid → 결과 (중복 수신은 이 결과만 돌려준다). 넣은 순서대로 오래된 것부터 잊는다 */
@@ -1971,6 +2021,8 @@ export class World {
 
     this.time += DT;
     this.tickNo++;
+    // 메인 목표는 시뮬레이션이 1초마다 판정해 고정 id로 남긴다 (화면을 열지 않아도)
+    if (this.regional && this.tickNo % TICK_RATE === 0) evaluateGoals(this);
   }
 
   private pushMerger(b: Building): void {
@@ -2095,6 +2147,16 @@ export class World {
       return;
     }
     for (const i of r.inputs) addTo(b.inBuf, i.item, -i.count);
+    if (this.regional) {
+      // 구역에서 제작에 실제로 쓴 재료 (공급선의 쓰임 확인)
+      const z = this.zoneOfB.get(b.id);
+      if (z) {
+        let used = this.stats.zoneUsed.get(z);
+        if (!used) this.stats.zoneUsed.set(z, (used = new Set()));
+        for (const i of r.inputs) used.add(i.item);
+      }
+      if (b.type === 'large-assembler') this.stats.largeStarted = true;
+    }
     b.crafting = true;
     // 이 배치가 모듈을 쓰는지는 시작할 때 정한다 (도중에 설치해도 이 배치는 그대로)
     b.modBatch = !!b.module;
@@ -2400,6 +2462,11 @@ export class World {
       this.burn(s.hydros, s.hydros.length ? hydroUse / s.hydros.length : 0, WATER_ENERGY);
       const demand = s.demand + s.charge;
       const satisfaction = demand === 0 ? 1 : Math.min(1, served / demand);
+      // 실적: 구역의 작업 전기, 허브 밖 발전원이 준 몫, 정식 구역의 작업 전기
+      const work = s.demand * satisfaction * DT;
+      this.stats.zoneWork.set(id, (this.stats.zoneWork.get(id) ?? 0) + work);
+      this.stats.genWork += Math.max(0, work - (s.z.hub ? Math.min(HUB_BASE_POWER, nonfuel(s)) * DT : 0));
+      if (s.cap > GRID.hub.cap) this.stats.formalWork += work;
       this.zoneState.set(id, {
         demand: s.demand,
         charge: s.charge,
@@ -2662,6 +2729,7 @@ export class World {
         r.n = 0;
         continue;
       }
+      this.markLoaded(v, this.buildings.get(v.stops[0].id) ?? h);
       if (countOf(h.inBuf, r.item) > 0) addTo(h.inBuf, r.item, -1);
       else addTo(h.outBuf, r.item, -1);
       addTo(v.cargo, r.item, 1);
@@ -2779,6 +2847,7 @@ export class World {
         const item = items[(v.planTurn + k) % items.length];
         if (!this.dropInto(st, item)) continue;
         addTo(v.cargo, item, -1);
+        this.recordDelivery(v, st, item);
         const r = this.reservations.find((x) => x.v === v.id && x.dir === 'in' && x.item === item);
         if (r) r.n--;
         this.reservations = this.reservations.filter((x) => x.n > 0);
@@ -2891,6 +2960,8 @@ export class World {
     const hydroLoad = hydros.length ? Math.min(HYDRO_POWER, rest / hydros.length) : 0;
     rest = Math.max(0, rest - hydroLoad * hydros.length);
     const genLoad = gens.length ? rest / gens.length : 0;
+    // 실적: 허브(400kW) 밖 발전원이 기계 작업에 준 전기
+    this.stats.genWork += Math.max(0, (demand - charge) * satisfaction - HUB_BASE_POWER) * DT;
     this.burn(hydros, hydroLoad, WATER_ENERGY);
     this.burn(gens, genLoad, COAL_ENERGY);
     this.power = { demand, capacity, supply, satisfaction, charge };
@@ -2949,14 +3020,45 @@ export class World {
     if (!b.crafting) b.progress = 0;
   }
 
+  /** 기계가 만든(캔) 물건을 출력 칸에 넣고 생산 실적으로 센다 */
+  private produce(b: Building, item: ItemId, n: number): void {
+    addTo(b.outBuf, item, n);
+    addTo(this.stats.made, item, n);
+    const z = this.regional ? this.zoneOfB.get(b.id) : undefined;
+    if (z) this.stats.zoneMade.set(z, (this.stats.zoneMade.get(z) ?? 0) + n);
+  }
+
+  /** 트럭이 실은 곳(정류장·구역)과 다른 정류장에 내렸을 때 배송 실적 */
+  private recordDelivery(v: Vehicle, st: Building, item: ItemId): void {
+    if (!v.fromStation || v.fromStation === st.id) return;
+    const s = this.stats;
+    s.delivered++;
+    if (this.planned(v) && v.period > 0) s.scheduledDelivered++;
+    const to = this.regional ? (this.zoneOfB.get(st.id) ?? 0) : 0;
+    if (v.fromZone && to && v.fromZone !== to) {
+      addTo(s.itemDelivered, item, 1);
+      const key = `${v.fromZone}>${to}`;
+      let p = s.pairs.get(key);
+      if (!p) s.pairs.set(key, (p = { n: 0, items: new Set() }));
+      p.n++;
+      p.items.add(item);
+    }
+  }
+
+  /** 트럭이 이 정류장에서 실었다고 표시 (배송 실적의 출발지) */
+  private markLoaded(v: Vehicle, st: Building): void {
+    v.fromStation = st.id;
+    v.fromZone = this.regional ? (this.zoneOfB.get(st.id) ?? 0) : 0;
+  }
+
   private finishCraft(b: Building): void {
     if (b.type === 'lumberjack') {
       // 범위에서 처음 찾은 다 자란 나무를 벤다 (그사이 누가 베었으면 다음 나무)
       const i = b.mineTiles.find((t) => this.tree[t] >= 1);
       if (i === undefined) return;
       this.clearTree(i);
-      addTo(b.outBuf, 'log', FOREST.logs);
-      addTo(b.outBuf, 'sapling', 1);
+      this.produce(b, 'log', FOREST.logs);
+      this.produce(b, 'sapling', 1);
       return;
     }
     if (b.type === 'planter') {
@@ -2968,11 +3070,11 @@ export class World {
       return;
     }
     if (b.mineDirt) {
-      addTo(b.outBuf, 'dirt', 1);
+      this.produce(b, 'dirt', 1);
       return;
     }
     if (b.type === 'sap-extractor') {
-      addTo(b.outBuf, 'sap', 1);
+      this.produce(b, 'sap', 1);
       return;
     }
     if (b.type === 'drill') {
@@ -2980,7 +3082,7 @@ export class World {
       const item = this.resItem[i];
       if (!item || this.resAmount[i] <= 0) return;
       this.resAmount[i] -= 1;
-      addTo(b.outBuf, item, 1);
+      this.produce(b, item, 1);
       return;
     }
     if (isMinerType(b.type) && b.type !== 'pump') {
@@ -2990,7 +3092,7 @@ export class World {
         const p = this.patches.get(b.minePatches[(b.mineIdx + k) % n]);
         const item = p && !this.oreLock(p.item) ? this.takeFromPatch(p) : null;
         if (!item) continue;
-        addTo(b.outBuf, item, 1);
+        this.produce(b, item, 1);
         b.mineIdx = (b.mineIdx + k + 1) % n;
         return;
       }
@@ -3008,7 +3110,7 @@ export class World {
           this.resAmount[i] = 0;
           this.resItem[i] = null;
         }
-        addTo(b.outBuf, item, 1);
+        this.produce(b, item, 1);
         b.mineIdx = (b.mineIdx + k + 1) % n;
         return;
       }
@@ -3018,11 +3120,11 @@ export class World {
     if (!r) return;
     if (r.pattern) {
       // 분리기: 정해진 순서대로 하나씩
-      addTo(b.outBuf, r.pattern[b.cycle % r.pattern.length], 1);
+      this.produce(b, r.pattern[b.cycle % r.pattern.length], 1);
       b.cycle = (b.cycle + 1) % r.pattern.length;
       return;
     }
-    for (const o of r.outputs) addTo(b.outBuf, o.item, o.count);
+    for (const o of r.outputs) this.produce(b, o.item, o.count);
   }
 
   private pushOutputs(b: Building): void {
@@ -3157,6 +3259,12 @@ export class World {
         return true;
       }
       case 'hub':
+        addTo(this.stats.hubIn, item, 1);
+        // 허브 프로젝트: 실제로 허브에 도착한 설비 모듈을 남은 목표만큼 소비한다
+        if (item === 'module' && this.stats.projectOn && this.stats.projectDelivered < PROJECT_GOAL) {
+          this.stats.projectDelivered++;
+          return true;
+        }
         addTo(this.stock, item, 1);
         addTo(this.incomeBuckets[this.incomeSecond % 60], item, 1);
         return true;
@@ -4019,6 +4127,7 @@ export class World {
       v.timer -= gap;
       addTo(st.inBuf, item, -1);
       addTo(v.cargo, item, 1);
+      this.markLoaded(v, st);
       return;
     }
     v.idle += DT;
@@ -4045,6 +4154,7 @@ export class World {
     v.timer -= gap;
     addTo(v.cargo, item, -1);
     addTo(buf, item, 1);
+    this.recordDelivery(v, st, item);
     v.lapUnloaded++;
     if (v.kind === 'advanced') this.advDelivered++;
     v.status = 'unloading';
@@ -4237,6 +4347,7 @@ export class World {
         ...(v.charger ? { charger: true } : {}),
         ...(v.filter ? { filter: v.filter } : {}),
         ...(v.kind !== 'basic' ? { kind: v.kind, kit: v.kit ?? undefined, home: v.home } : {}),
+        ...(v.fromStation ? { from: [v.fromStation, v.fromZone] as [number, number] } : {}),
         ...(v.plan.length || v.returning
           ? { plan: v.plan.map((p) => ({ ...p })), period: v.period, nextDue: v.nextDue, early: v.early, loadTimer: v.loadTimer, stuck: v.stuck, returning: v.returning, planTurn: v.planTurn }
           : {}),
@@ -4246,6 +4357,7 @@ export class World {
       ...(this.terrain ? { terrain: runLength(this.terrain), vents: [...this.vents] } : {}),
       ...(this.zones.length ? { zones: this.zones.map((z) => ({ ...z })), nextZoneId: this.nextZoneId } : {}),
       ...(this.reservations.length ? { resv: this.reservations.map((r) => ({ ...r })) } : {}),
+      ...(this.regional ? { stats: saveStats(this.stats), goals: [...this.goals] } : {}),
       ...(this.piles.length || this.nextPileEv > 1
         ? { piles: this.piles.map((p): [number, number, number, number, PileReason] => [p.tile, ITEM_IDS.indexOf(p.item), p.n, p.ev, p.why]), pileEv: this.nextPileEv }
         : {}),
@@ -4355,6 +4467,7 @@ export class World {
       v.battery = s.battery ?? w.truckBattery();
       v.charger = s.charger ?? false;
       // 종류가 없는 차량은 기존 기본 트럭
+      if (s.from) [v.fromStation, v.fromZone] = s.from;
       if (s.plan) {
         v.plan = s.plan.map((p) => ({ ...p }));
         v.period = s.period ?? 0;
@@ -4381,6 +4494,8 @@ export class World {
     w.doneCmds = new Map(data.cmds ?? []);
     w.zones = (data.zones ?? []).map((z) => ({ ...z }));
     w.reservations = (data.resv ?? []).map((r) => ({ ...r }));
+    if (data.stats) w.stats = loadStats(data.stats);
+    w.goals = new Set(data.goals ?? []);
     w.nextZoneId = data.nextZoneId ?? Math.max(0, ...w.zones.map((z) => z.id)) + 1;
     // 구역이 생기기 전의 확장 세계 저장이면 허브 구역을 만든다
     w.ensureHubZone();
@@ -4463,6 +4578,11 @@ export class World {
     h.str(this.rules).num(this.nextPileEv).num(this.moduleBatches).num(this.advDelivered).num(this.nextZoneId);
     for (const z of this.zones) h.num(z.id).num(z.x).num(z.y).num(z.creator).num(z.budget);
     for (const r of this.reservations) h.num(r.v).num(r.holder).str(r.item).num(r.n).str(r.dir);
+    // 실적은 확장 세계에서만 저장한다 (예전 세계는 저장 모양 그대로)
+    const st = this.regional ? this.stats : newStats();
+    h.num(st.genWork).num(st.formalWork).num(st.delivered).num(st.scheduledDelivered).num(st.projectDelivered).num(st.projectOn ? 1 : 0).num(this.goals.size);
+    for (const [item, n] of st.made) h.str(item).num(n);
+    for (const [k, p] of st.pairs) h.str(k).num(p.n);
     for (const p of this.piles) h.num(p.tile).str(p.item).num(p.n).num(p.ev);
     for (const [rid, r] of this.doneCmds) h.str(rid).num(r.ok ? 1 : 0).num(r.vehicle ?? 0).num(r.from ?? 0);
     for (const [item, n] of this.stock) h.str(item).num(n);
@@ -4483,6 +4603,7 @@ export class World {
     for (const v of this.vehicles.values()) {
       h.num(v.id).num(v.x).num(v.y).num(v.tile).str(v.state).num(v.timer).num(v.idle).num(v.battery).num(v.charger ? 1 : 0);
       h.num(v.stop).str(v.kind).num(v.home).str(v.kit?.item ?? '').num(v.kit?.from ?? 0);
+      h.num(v.fromStation).num(v.fromZone);
       h.num(v.period).num(v.nextDue).num(v.loadTimer).num(v.stuck).num(v.returning ? 1 : 0).num(v.planTurn).num(v.early ? 1 : 0);
       for (const p of v.plan) h.str(p.item).num(p.cap);
       for (const s of v.stops) h.num(s.id).str(s.act).str(s.item ?? '');
@@ -4587,6 +4708,8 @@ export interface SavedVehicle {
   kind?: TruckKind;
   kit?: { item: ItemId; from: number };
   home?: number;
+  /** 마지막으로 실은 정류장과 그 전력 구역 (배송 실적) */
+  from?: [number, number];
   /** 계획 운송 (regional-v1) */
   plan?: { item: ItemId; cap: number }[];
   period?: number;
@@ -4634,6 +4757,9 @@ export interface SaveData {
   nextZoneId?: number;
   /** 운송 예약 */
   resv?: Reservation[];
+  /** 공장 실적과 이룬 메인 목표 (regional-v1) */
+  stats?: SavedStats;
+  goals?: string[];
   /** 현지 회수 더미 [칸 번호, 아이템 번호, 개수, 회수 사건, 이유]와 다음 사건 번호 */
   piles?: [number, number, number, number, PileReason][];
   pileEv?: number;
@@ -4796,6 +4922,46 @@ export function portTiles(b: { x: number; y: number; size: number; dir: Dir; def
     for (let k = 0; k < turns; k++) [x, y] = [b.size - 1 - y, x];
     return [b.x + x, b.y + y];
   });
+}
+
+export type SavedStats = ReturnType<typeof saveStats>;
+
+function saveStats(s: FactoryStats) {
+  return {
+    made: [...s.made],
+    hubIn: [...s.hubIn],
+    genWork: s.genWork,
+    formalWork: s.formalWork,
+    delivered: s.delivered,
+    scheduledDelivered: s.scheduledDelivered,
+    itemDelivered: [...s.itemDelivered],
+    pairs: [...s.pairs].map(([k, p]): [string, number, ItemId[]] => [k, p.n, [...p.items]]),
+    zoneMade: [...s.zoneMade],
+    zoneWork: [...s.zoneWork],
+    zoneUsed: [...s.zoneUsed].map(([z, set]): [number, ItemId[]] => [z, [...set]]),
+    largeStarted: s.largeStarted,
+    projectOn: s.projectOn,
+    projectDelivered: s.projectDelivered,
+  };
+}
+
+function loadStats(d: Partial<ReturnType<typeof saveStats>>): FactoryStats {
+  return {
+    made: new Map(d.made ?? []),
+    hubIn: new Map(d.hubIn ?? []),
+    genWork: d.genWork ?? 0,
+    formalWork: d.formalWork ?? 0,
+    delivered: d.delivered ?? 0,
+    scheduledDelivered: d.scheduledDelivered ?? 0,
+    itemDelivered: new Map(d.itemDelivered ?? []),
+    pairs: new Map((d.pairs ?? []).map(([k, n, items]) => [k, { n, items: new Set(items) }])),
+    zoneMade: new Map(d.zoneMade ?? []),
+    zoneWork: new Map(d.zoneWork ?? []),
+    zoneUsed: new Map((d.zoneUsed ?? []).map(([z, items]) => [z, new Set(items)])),
+    largeStarted: d.largeStarted ?? false,
+    projectOn: d.projectOn ?? false,
+    projectDelivered: d.projectDelivered ?? 0,
+  };
 }
 
 /** [값, 이어진 개수] 쌍으로 줄인 배열 (지형 저장용) */

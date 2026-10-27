@@ -47,6 +47,7 @@ import {
 import { blueprintCode, blueprintPreview, defaultBlueprintName, saveBlueprint } from './blueprints';
 import { copyText } from './clipboard';
 import { GUIDE, findTarget, type GuideFocus } from './guide';
+import { MAIN_GOALS, PROJECT_GOAL, currentGoal } from '../sim/goals';
 import { Codex, depositName, type DepositId } from './codex';
 import { buildingIconUrl, depositIconUrl, itemIcon, itemLink, truckIconUrl, withBuildingIcons } from './icons';
 import { sound } from './sound';
@@ -199,6 +200,9 @@ export class UI {
   private savedPastes = new WeakMap<Blueprint, string>();
   /** 지금 목표가 가리키는 것 */
   private guideFocus: GuideFocus | null = null;
+  /** 확장 세계: 지난번에 본 이룬 목표 수, 완성 알림을 보였는지 */
+  private goalCount = 0;
+  private finaleShown = false;
   /** 지금 목표가 맵에서 가리키는 곳 (건물을 들었을 때) */
   guideMark: { x: number; y: number; label: string } | null = null;
   private mouse = { x: 0, y: 0 };
@@ -935,7 +939,51 @@ export class UI {
       <p class="muted">누르면 그 채굴기로 가요. 철거하면 재료를 100% 돌려받아요.</p>`;
   }
 
+  /**
+   * 확장 세계의 메인 목표 카드: 장 이름 · 지금 목표 · 확인 항목(최대 3) · 안내. 판정은 시뮬레이션(goals.ts)이 한다
+   */
+  private updateMainGoals(w: World): void {
+    const done = MAIN_GOALS.filter((g) => w.goals.has(g.id)).length;
+    if (w !== this.guideWorld) this.finaleShown = w.goals.has('MG36');
+    // 새로 이룬 목표만 알린다 (불러오거나 방에 들어가 한꺼번에 채워질 때는 조용히)
+    if (w === this.guideWorld && done > this.goalCount) {
+      sound.play('goal');
+      const last = MAIN_GOALS.filter((g) => w.goals.has(g.id)).at(-1);
+      if (last) this.toast(`목표 달성: ${last.title}`, 2500);
+      if (w.goals.has('MG36') && !this.finaleShown) this.showFinale(w);
+    }
+    this.goalCount = done;
+    this.guideWorld = w;
+    this.applyGuideFocus(w, null);
+    const pct = Math.round((done / MAIN_GOALS.length) * 100);
+    const head = `<h3>메인 목표 <small>${done}/${MAIN_GOALS.length}</small></h3><div class="gbar"><i style="width:${pct}%"></i></div>`;
+    const g = currentGoal(w);
+    if (!g) {
+      $('guide').innerHTML = `${head}<p class="muted">공장망 완성! 지도는 계속 운영할 수 있어요. 끝없는 연구와 거점 확장을 이어 가 보세요.</p>`;
+      return;
+    }
+    const checks = g.checks(w)
+      .slice(0, 3)
+      .map(([label, have, need]) => {
+        const ok = have >= need;
+        return `<li class="${ok ? 'done' : ''}"><span class="mark">${ok ? '✓' : '·'}</span>${label} <b>${Math.min(have, need).toLocaleString()}/${need.toLocaleString()}</b></li>`;
+      })
+      .join('');
+    $('guide').innerHTML = `${head}
+      <div class="now"><small class="muted">${g.chapter} · ${g.id}</small><b>${g.title}</b><p>${withBuildingIcons(g.hint)}</p></div>
+      <ul class="steps">${checks}</ul>`;
+  }
+
+  /** 최종 납품을 마쳤을 때 한 번: 공장망 요약과 계속 건설 */
+  private showFinale(w: World): void {
+    this.finaleShown = true;
+    const s = w.stats;
+    const total = [...s.made.values()].reduce((a, b) => a + b, 0);
+    this.toast(`공장망 완성! 설비 모듈 ${s.projectDelivered}개를 허브에 납품했어요 · 누적 생산 ${total.toLocaleString()}개 · 전력 구역 ${w.zones.length}곳 · 계속 건설할 수 있어요`, 8000);
+  }
+
   private updateGuide(w: World): void {
+    if (w.regional) return this.updateMainGoals(w);
     // 이룬 목표는 저장에 남긴다 (생산이 잠깐 멈춰도, 불러온 뒤에도 앞 목표로 돌아가지 않게)
     let reached = false;
     for (const s of GUIDE) {
@@ -1032,7 +1080,7 @@ export class UI {
         .map((t) => `${t.id}${t.stops.map((st) => st.id + st.act).join('-')}`)
         .join(',')}:${w.canBuildTruck(b).reason ?? ''}`;
     }
-    const key = `${b.id}|${b.recipe}|${b.filter}|${w.unlockedRecipes.size}|${srcKey}|${this.useSig(w, b)}`;
+    const key = `${b.id}|${b.recipe}|${b.filter}|${w.unlockedRecipes.size}|${srcKey}|${this.useSig(w, b)}|${b.type === 'hub' ? `${w.stats.projectOn}${w.stats.projectDelivered}${w.researched.size}` : ''}`;
     if (key !== this.infoKey) {
       this.infoKey = key;
       el.innerHTML = this.infoStatic(w, b);
@@ -1218,6 +1266,11 @@ export class UI {
       html += `<button data-act="rotate">회전 (R)</button>`;
     }
     if (b.type !== 'hub') html += `<button data-act="remove" class="danger">철거 (Del)</button>`;
+    if (b.type === 'hub' && w.regional && w.researched.has('integrated-automation')) {
+      // 허브 프로젝트: 실제로 허브에 도착한 설비 모듈을 50개까지 납품
+      const on = w.stats.projectOn;
+      html += `<button data-act="project" title="켜 두면 허브로 들어오는 설비 모듈을 남은 목표만큼 프로젝트가 가져가요 (허브에 이미 있던 모듈은 쓰지 않아요)">${on ? '⏸ 모듈 납품 끄기' : '🏁 설비 모듈 납품 켜기'} <span class="muted">${w.stats.projectDelivered}/${PROJECT_GOAL}</span></button>`;
+    }
     if (b.type === 'storage' || b.type === 'hub') {
       // 창고·허브는 스스로 내보내지 않으니 꺼낼 방법을 바로 쥐여 준다
       html += `<button data-act="take-out" title="옆에 놓으면 흰 화살표가 이쪽을 향하게 저절로 돌아가요">📤 하역기 들기</button>`;
@@ -1972,6 +2025,13 @@ export class UI {
         : (e.target as HTMLElement).closest<HTMLElement>('[data-item]')?.dataset.item) as ItemId | undefined;
       const n = act === 'target-add' ? Number(el.querySelector<HTMLInputElement>('input[data-target-n]')?.value) : 0;
       if (item) this.game.exec({ t: 'station-target', id: b.id, item, n });
+    }
+    if (act === 'project') {
+      const on = !this.game.getWorld().stats.projectOn;
+      this.game.exec({ t: 'project', on }, (ok) => {
+        if (ok) this.toast(on ? '허브로 들어오는 설비 모듈을 프로젝트에 납품해요' : '모듈 납품을 껐어요 (들어오는 모듈은 허브 재고로)', 3000);
+        this.update();
+      });
     }
     if (act === 'link-go' || act === 'link-cut') {
       const target = act === 'link-go' ? Number(document.querySelector<HTMLSelectElement>('#info select[data-act="link-target"]')?.value) : 0;

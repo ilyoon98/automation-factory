@@ -260,7 +260,7 @@ export class Renderer {
     // 컨베이어 무늬가 흐르는 위치 (칸 단위, 0~0.5. 종류마다 속도가 다르다)
     const phase = (b: Building) => (world.time * (b.def.speed ?? BELT_SPEED) * world.boost('endless-belt')) % 0.5;
     const isLine = (b: Building) => isLineType(b.type);
-    if (world.regional && (view.layer === 'power' || (view.layer === 'base' && this.showGrid(world, view)))) this.drawGridCoverage(world);
+    if (world.regional && (view.layer === 'power' || (view.layer === 'base' && this.showGrid(view)))) this.drawGridCoverage(world);
     for (const b of visible) if (b.type === 'road') this.drawRoad(world, b);
     for (const b of visible) {
       if (isBeltType(b.type)) this.drawBelt(b, phase(b));
@@ -1207,12 +1207,13 @@ export class Renderer {
     ctx.restore();
   }
 
-  /** 배전 범위를 보여 줄 때: 전력 건물을 들었거나, 전력에 관련된 건물을 골랐을 때 */
-  private showGrid(world: World, view: ViewState): boolean {
+  /**
+   * 기본 보기에서 배전 범위를 보여 줄 때: 전기를 쓰거나 내는 건물을 들고 놓을 자리를 고를 때만.
+   * (고른 건물로는 보이지 않는다. 전력 보기에서 고른 발전기가 기본 보기로 돌아와도 범위를 남기던 문제)
+   */
+  private showGrid(view: ViewState): boolean {
     const t = view.tool;
-    if (t && (isGeneratorType(t) || ['pole', 'substation', 'accumulator'].includes(t) || BUILDINGS[t].power > 0)) return true;
-    const b = view.selectedId ? world.buildings.get(view.selectedId) : undefined;
-    return !!b && (isGeneratorType(b.type) || ['pole', 'substation', 'accumulator', 'station', 'charger'].includes(b.type));
+    return !!t && (isGeneratorType(t) || ['pole', 'substation', 'accumulator', 'station', 'charger'].includes(t) || BUILDINGS[t].power > 0);
   }
 
   /** 전력망마다 노드 공급 범위 (망마다 색, 허브·발전기 없는 망은 회색)와 망 이름 */

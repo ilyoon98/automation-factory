@@ -461,6 +461,21 @@ export class UI {
     window.addEventListener('keydown', (e) => {
       if (isTyping(e.target)) return;
       const k = e.key.toLowerCase();
+      const modal = document.querySelector<HTMLElement>('.modal:not([hidden])');
+      if (modal) {
+        if (k === 'tab') {
+          const controls = [...modal.querySelectorAll<HTMLElement>('button, input, select, textarea, a[href], [tabindex]')]
+            .filter((el) => !el.matches(':disabled, [tabindex="-1"]') && el.getClientRects().length > 0);
+          if (controls.length) {
+            const first = controls[0], last = controls[controls.length - 1];
+            if (!modal.contains(document.activeElement) || (e.shiftKey ? document.activeElement === first : document.activeElement === last)) {
+              e.preventDefault();
+              (e.shiftKey ? last : first).focus();
+            }
+          }
+        }
+        return;
+      }
       // 툴바 탭: Tab / Shift+Tab 으로 돌리기, Z X C V 로 바로 가기 (Ctrl+C 같은 조합은 무시)
       if (k === 'tab') {
         e.preventDefault();
@@ -3253,7 +3268,7 @@ type WindowId = (typeof WINDOWS)[number];
 
 /** 글을 쓰는 중이면 게임 단축키를 쓰지 않는다 */
 function isTyping(t: EventTarget | null): boolean {
-  return t instanceof HTMLInputElement || t instanceof HTMLSelectElement || t instanceof HTMLTextAreaElement;
+  return t instanceof HTMLElement && !!t.closest('input, select, textarea, [contenteditable="true"]');
 }
 
 /** 몇 일차 (게임 시작이 1일차) */

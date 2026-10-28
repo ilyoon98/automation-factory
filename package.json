@@ -14,7 +14,8 @@
     "test": "vitest run",
     "app": "npm run build && electron .",
     "exe": "npm run build && node scripts/build-exe.mjs",
-    "release": "npm run build && node scripts/build-exe.mjs --publish"
+    "release": "npm run build && node scripts/build-exe.mjs --publish",
+    "test:ui": "npm run build && node scripts/ui-smoke.cjs"
   },
   "build": {
     "appId": "kr.automation-factory.game",

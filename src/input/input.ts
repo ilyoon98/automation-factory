@@ -163,6 +163,10 @@ export class Input implements ViewState {
 
   /** 키보드로 화면 이동 (매 프레임) */
   update(dt: number): void {
+    if (document.querySelector('.modal:not([hidden])')) {
+      this.keys.clear();
+      return;
+    }
     const speed = (600 / this.cam.zoom) * dt;
     if (this.keys.has('w') || this.keys.has('arrowup')) this.cam.y -= speed;
     if (this.keys.has('s') || this.keys.has('arrowdown')) this.cam.y += speed;
@@ -368,8 +372,10 @@ export class Input implements ViewState {
   }
 
   private onKey(e: KeyboardEvent): void {
-    if (e.target instanceof HTMLInputElement || e.target instanceof HTMLSelectElement) return;
+    if (e.target instanceof HTMLElement && e.target.closest('input, select, textarea, [contenteditable="true"]')) return;
     const k = e.key.toLowerCase();
+    if ((k === ' ' || k === 'enter') && e.target instanceof HTMLElement && e.target.closest('button, [role="button"]')) return;
+    if (document.querySelector('.modal:not([hidden])') && k !== 'escape' && k !== ' ') return;
     if ((e.ctrlKey || e.metaKey) && (k === 'z' || k === 'y')) {
       e.preventDefault();
       this.undoRedo(k === 'y' || e.shiftKey);

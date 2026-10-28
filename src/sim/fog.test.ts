@@ -44,7 +44,7 @@ describe('확인한 땅', () => {
     }
   });
 
-  it('모르는 땅에는 못 짓고, 가장자리에 지으면 둘레 6칸이 더 보인다', () => {
+  it('모르는 땅에는 못 짓고, 가장자리에 지어도 지도는 넓어지지 않는다 (목표로만 열린다)', () => {
     const w = generateRegionalWorld(7);
     w.stock.set('iron-plate', 1000);
     const [ax, ay] = w.sites.A;
@@ -57,8 +57,10 @@ describe('확인한 땅', () => {
       if (!w.canPlace('belt', x, y).ok) continue;
       found = true;
       expect(w.canPlace('belt', x + 1, y).reason).toContain('모르는 땅');
+      const before = w.revealedCount;
       expect(w.place('belt', x, y, 0)).not.toBeNull();
-      expect(w.isRevealed(w.idx(x + 5, y))).toBe(true);
+      expect(w.revealedCount).toBe(before);
+      expect(w.canPlace('belt', x + 1, y).reason).toContain('모르는 땅');
     }
     expect(found).toBe(true);
   });

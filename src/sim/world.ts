@@ -363,8 +363,6 @@ export function revealPreview(id: string): string[] {
   return list[0] === '*' ? ['지도 전체'] : list.map((k) => SITE_LABEL[k] ?? k);
 }
 
-/** 확인한 땅 가장자리에 지으면 둘레 이만큼 더 보인다 */
-const REVEAL_BUILD = 6;
 
 /** 채굴기로는 캐지 않는 자원 칸 (시추기·수액 채취기 전용) */
 export const NOT_MINED: ItemId[] = ['water', 'sap', 'crude-oil', 'brine'];
@@ -556,7 +554,7 @@ export class World {
   vents: number[] = [];
   /**
    * 확인한 땅 (regional-v1). null이면 모두 보인다 (예전 지도). 처음엔 허브 둘레만 보이고,
-   * 메인 목표를 이루면 다음 산업의 거점이 길과 함께 열린다. 확인한 땅 가장자리에 지으면 둘레 6칸이 더 보인다
+   * 메인 목표를 이루면 다음 산업의 거점이 길과 함께 열린다. 건물을 지어도 넓어지지 않는다 (지도는 목표로만 열린다)
    */
   revealed: Uint8Array | null = null;
   /** 확인한 칸 수 (화면 알림·해시용) */
@@ -1042,7 +1040,7 @@ export class World {
     for (let dy = 0; dy < def.size; dy++) {
       for (let dx = 0; dx < def.size; dx++) {
         if (!this.inBounds(x + dx, y + dy)) return { ok: false, reason: '맵 밖' };
-        if (!this.isRevealed(this.idx(x + dx, y + dy))) return { ok: false, reason: '아직 모르는 땅 (목표를 이루거나 가장자리에 지어 넓혀요)' };
+        if (!this.isRevealed(this.idx(x + dx, y + dy))) return { ok: false, reason: '아직 모르는 땅 (메인 목표를 이루면 다음 거점이 열려요)' };
         const occupant = this.buildingAt(x + dx, y + dy);
         if (occupant && !(replacing && isBeltType(occupant.type))) return { ok: false, reason: '이미 건물이 있음' };
       }
@@ -1241,8 +1239,6 @@ export class World {
       const kind = this.regional ? this.localWeather(this.terrainAt(this.refTile(b))).kind : weatherAt(this.seed, this.time).kind;
       if (kind === 'cloudy' || kind === 'rain' || kind === 'storm') this.ach.num.set(`ww:${b.id}`, 1);
     }
-    // 지은 자리 둘레를 확인한 땅으로 (도로를 깔며 조금씩 나아갈 수 있게)
-    if (this.revealed && !free) this.reveal(b.x + b.size / 2 - 0.5, b.y + b.size / 2 - 0.5, REVEAL_BUILD + b.size / 2);
     if (type === 'underground') {
       const plan = this.undergroundPlan(x, y, dir);
       b.ugMode = plan.mode;

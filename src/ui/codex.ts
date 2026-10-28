@@ -3,7 +3,7 @@ import { ITEMS, type ItemId } from '../data/items';
 import { RECIPES, recipesFor, type MachineKind, type Recipe } from '../data/recipes';
 import { ENDLESS_GROWTH, ENDLESS_TECHS, REGIONAL_TECHS, TECHS } from '../data/tech';
 import type { World } from '../sim/world';
-import { buildingIconUrl, depositIconUrl, itemIconUrl, itemLink } from './icons';
+import { buildingIconUrl, depositIconUrl, itemIconUrl, itemLink, lockIcon } from './icons';
 
 /** 광맥·지형. 나오는 아이템으로 구분한다 */
 export type DepositId = 'iron-ore' | 'copper-ore' | 'coal' | 'stone' | 'water' | 'dirt';
@@ -314,7 +314,7 @@ export class Codex {
       id === 'dirt'
         ? w.dirtMining
           ? '무한 · 캘 수 있어요'
-          : '무한 · 🔒 흙 정제 연구 필요'
+          : `무한 · ${lockIcon()}흙 정제 연구 필요`
         : d.finite
           ? `유한 · 지금 맵에 ${left.toLocaleString()}개 남음 (${tiles}칸)`
           : `무한 · 지금 맵에 ${tiles}칸`;
@@ -402,7 +402,7 @@ export class Codex {
             left: chip(item, `×${c!.count}`, item),
             mid: label('🔨 짓기'),
             right: plain(buildingLink(b)),
-            tag: locked ? `🔒 ${buildingTech.get(b) ?? ''}` : '',
+            tag: locked ? `${lockIcon()}${buildingTech.get(b) ?? ''}` : '',
             cls: locked ? 'locked' : '',
           });
         }),
@@ -438,7 +438,7 @@ export class Codex {
     const meta = [
       `${def.size}×${def.size}칸`,
       def.power ? `전력 ${def.power}kW` : (POWER_MADE[b] ?? '전력 필요 없음'),
-      locked ? `🔒 ${buildingTech.get(b) ?? ''} 연구 필요` : '사용 가능',
+      locked ? `${lockIcon()}${buildingTech.get(b) ?? ''} 연구 필요` : '사용 가능',
     ].join(' · ');
     const head = `<div class="codex-head">
         <img src="${buildingIconUrl(b)}" alt="">
@@ -456,7 +456,7 @@ export class Codex {
               left: def.cost.map((c) => chip(c.item, `×${c.count}`)).join('<span class="plus">+</span>'),
               mid: label('🔨 짓기'),
               right: plain(`<img class="icon" src="${buildingIconUrl(b)}" alt="">${def.name}`),
-              tag: locked ? `🔒 ${buildingTech.get(b) ?? ''}` : '허브 재고에서 빠지고<br>철거하면 돌려받아요',
+              tag: locked ? `${lockIcon()}${buildingTech.get(b) ?? ''}` : '허브 재고에서 빠지고<br>철거하면 돌려받아요',
               cls: locked ? 'locked' : '',
             }),
           ]);
@@ -513,7 +513,7 @@ export class Codex {
       left: plain(depositLink(s.item)),
       mid: machine(s.building),
       right: chip(s.item, '', me),
-      tag: lockedDirt ? '🔒 흙 정제' : `분당 ${fmt(rate)}<br>${s.note}`,
+      tag: lockedDirt ? `${lockIcon()}흙 정제` : `분당 ${fmt(rate)}<br>${s.note}`,
       cls: lockedDirt ? 'locked' : '',
     });
   }
@@ -538,7 +538,7 @@ export class Codex {
       left,
       mid: machine(r.machine, `${r.time}초`),
       right,
-      tag: locked ? `🔒 ${recipeTech.get(r.id) ?? ''}` : `한 대에 분당 ${fmt(per)}<br>${what}`,
+      tag: locked ? `${lockIcon()}${recipeTech.get(r.id) ?? ''}` : `한 대에 분당 ${fmt(per)}<br>${what}`,
       cls: locked ? 'locked' : '',
     });
   }

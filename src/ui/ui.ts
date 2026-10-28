@@ -54,7 +54,7 @@ import { GUIDE, findTarget, type GuideFocus } from './guide';
 import { CHALLENGES, CHALLENGE_BY_ID, MAIN_GOALS, PROJECT_GOAL, currentGoal } from '../sim/goals';
 import { ACH_BY_ID, Q60_ITEMS, achProgress, activeAchievements, sustainedSecs, type AchDef, type AchKind } from '../sim/achievements';
 import { Codex, depositName, type DepositId } from './codex';
-import { buildingIconUrl, depositIconUrl, itemIcon, itemLink, truckIconUrl, withBuildingIcons } from './icons';
+import { buildingIconUrl, depositIconUrl, itemIcon, itemLink, lockIcon, truckIconUrl, withBuildingIcons } from './icons';
 import { sound } from './sound';
 import { crispTarget, crispText, onUiZoom, setCrispText, uiZoom } from './crisp';
 import { letScrollbarDrag } from './left-scroll';
@@ -217,6 +217,9 @@ export class UI {
   private planRows = new Map<number, number>();
   private kitSrc = new Map<number, string>();
   private researchKey = '';
+  /** 잠긴 건물에서 연 연구 (반짝이고, 처음 한 번 그 카드로 스크롤) */
+  private researchFocus: string | null = null;
+  private researchScroll = false;
   /** 연구 창에서 보고 있는 탭 (처음 열 때 정한다) */
   private researchTab: TechCategory | null = null;
   private toastTimer = 0;
@@ -269,6 +272,7 @@ export class UI {
   constructor(private game: GameApi) {
     this.roomsOnStart = game.net.desktop;
     this.toolbar = new Toolbar(game.input);
+    this.toolbar.onLockedClick = (t) => this.openResearchFor(t);
     this.codex = new Codex(
       () => game.getWorld(),
       (x, y) => game.focus(x, y),
@@ -315,7 +319,8 @@ export class UI {
     });
     // 툴바에서 잠긴 건물을 눌렀을 때 상세 줄의 "연구 보기"
     $('holding').addEventListener('click', (e) => {
-      if ((e.target as HTMLElement).closest('[data-act="open-research"]') && $('research').hidden) this.toggleModal('research');
+      const t = game.input.blocked?.type;
+      if ((e.target as HTMLElement).closest('[data-act="open-research"]') && t) this.openResearchFor(t);
     });
     // 업적 창: 탭·필터·추적 (개인 설정)
     $('ach').addEventListener('click', (e) => {
@@ -875,10 +880,25 @@ export class UI {
     if (open) this.closeWindows();
     this.topbar.close(false);
     el.hidden = !open;
-    if (id === 'research') this.researchKey = '';
+    if (id === 'research') {
+      this.researchKey = '';
+      this.researchFocus = null;
+    }
     if (id === 'ach') this.achKey = '';
     if (id === 'goals') this.goalsKey = '';
     if (id === 'stats') this.statsAt = 0;
+    this.update();
+  }
+
+  /** 이 건물을 여는 연구를 연구 창에서 그 탭으로 열어 반짝인다 (선행이 남았으면 카드에 선행이 보인다) */
+  private openResearchFor(type: BuildingType): void {
+    const tech = this.game.getWorld().techs.find((t) => t.unlockBuildings?.includes(type));
+    if ($('research').hidden) this.toggleModal('research');
+    if (!tech) return;
+    this.researchTab = tech.category;
+    this.researchFocus = tech.id;
+    this.researchScroll = true;
+    this.researchKey = '';
     this.update();
   }
 
@@ -1106,7 +1126,7 @@ export class UI {
       if (state === 'ok') html = `${head} · <span class="ok">✓ 건설 가능</span>`;
       else {
         blocked = true;
-        html = `${head} · <span class="no">${state === 'locked' ? '🔒 연구 잠김' : '⚠ 재료 부족'}</span> · ${blockReason(w, type, state)}${
+        html = `${head} · <span class="no">${state === 'locked' ? `${lockIcon()}연구 잠김` : '⚠ 재료 부족'}</span> · ${blockReason(w, type, state)}${
           state === 'locked' ? ' <button data-act="open-research">연구 보기 <kbd>T</kbd></button>' : ''
         }`;
       }
@@ -2718,7 +2738,12 @@ export class UI {
     el.querySelectorAll<HTMLElement>('.tech').forEach((c) => {
       const id = c.querySelector<HTMLElement>('[data-tech]')?.dataset.tech;
       const hit = want === 'endless' ? this.researchTab === 'endless' && !!id && w.canResearch(id).ok : id === want;
-      c.classList.toggle('guide-pulse', !!want && hit);
+      const focus = !!id && id === this.researchFocus;
+      c.classList.toggle('guide-pulse', (!!want && hit) || focus);
+      if (focus && this.researchScroll) {
+        this.researchScroll = false;
+        c.scrollIntoView({ block: 'center' });
+      }
     });
     el.querySelectorAll<HTMLElement>('[data-have]').forEach((s) => {
       s.textContent = String(w.stockOf(s.dataset.have as ItemId));

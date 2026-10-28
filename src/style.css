@@ -848,6 +848,16 @@ h3 small {
   color: var(--ink);
   background: rgba(59, 39, 22, 0.12);
 }
+/* 상태 띠 안의 픽셀 자물쇠: 건물 그림 규칙(32px·회색)을 받지 않게 */
+.pal .state img.icon {
+  grid-row: auto;
+  width: 16px;
+  height: 16px;
+  filter: none;
+  opacity: 1;
+  vertical-align: -4px;
+  image-rendering: pixelated;
+}
 /* 재료 부족: 옅은 주황 */
 .pal.poor {
   background: #f8dcb4;

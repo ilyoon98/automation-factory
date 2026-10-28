@@ -14,7 +14,7 @@ import {
 } from './blueprints';
 import { copyText } from './clipboard';
 import { ITEMS } from '../data/items';
-import { buildingIconUrl, itemIcon, truckIconUrl } from './icons';
+import { buildingIconUrl, itemIcon, lockIcon, truckIconUrl } from './icons';
 
 /** 건물 탭들 + 맨 끝 청사진 탭 (K) */
 type Tab = Category | 'blueprints';
@@ -140,6 +140,8 @@ export class Toolbar {
   }
 
   private syncScrollbar: () => void = () => {};
+  /** 잠긴 건물 카드를 눌렀을 때 (ui.ts가 연구 창을 그 연구로 연다) */
+  onLockedClick: ((type: BuildingType) => void) | null = null;
   /** 지금 세계가 regional-v1인지 (산업 탭을 보일지) */
   private regional = false;
 
@@ -237,7 +239,10 @@ export class Toolbar {
       if (el.innerHTML !== cost) el.innerHTML = cost;
       const band = STATE_BAND[state];
       const s = btn.querySelector<HTMLElement>('.state')!;
-      if (s.textContent !== band) s.textContent = band;
+      if (s.dataset.band !== state) {
+        s.dataset.band = state;
+        s.innerHTML = band;
+      }
       btn.setAttribute('aria-pressed', String(tool === type && state === 'ok'));
     }
   }
@@ -320,6 +325,8 @@ export class Toolbar {
       btn.addEventListener('click', () => {
         this.input.setTool(type);
         this.reveal(type);
+        // 연구로 잠긴 건물을 누르면 그 건물을 여는 연구를 바로 보여 준다
+        if (this.input.blocked?.type === type && this.input.blocked.why === 'locked') this.onLockedClick?.(type);
       });
       palette.appendChild(btn);
       this.buttons.set(type, btn);
@@ -444,7 +451,7 @@ export function buildState(w: World, type: BuildingType): BuildState {
   return w.canAfford(BUILDINGS[type].cost) ? 'ok' : 'poor';
 }
 
-const STATE_BAND: Record<BuildState, string> = { ok: '✓ 건설 가능', locked: '🔒 연구 잠김', poor: '⚠ 재료 부족' };
+const STATE_BAND: Record<BuildState, string> = { ok: '✓ 건설 가능', locked: `${lockIcon()}연구 잠김`, poor: '⚠ 재료 부족' };
 
 /** 비용 (아이콘 + 개수). 재료 부족이면 모자란 재료를 강조 */
 function costHtml(w: World, type: BuildingType, poor: boolean): string {

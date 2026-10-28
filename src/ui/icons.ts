@@ -1,6 +1,6 @@
 import { BUILDINGS, type BuildingType } from '../data/buildings';
 import { ITEMS, type ItemId } from '../data/items';
-import { loadSpriteOverrides, sprite } from '../render/pixel';
+import { PAL, define, loadSpriteOverrides, sprite } from '../render/pixel';
 import '../render/pixel-buildings';
 
 /**
@@ -53,6 +53,29 @@ loadSpriteOverrides().then((names) => {
     if (url) img.src = url;
   }
 });
+
+/** 연구 잠김 자물쇠 (8×8: 쇠고리 + 놋쇠 몸통 + 열쇠 구멍) */
+define('ui:lock', 8, 8, 1, (p) => {
+  p.rect(2, 0, 4, 1, PAL.ink);
+  for (let y = 1; y < 3; y++) {
+    p.px(1, y, PAL.ink);
+    p.px(6, y, PAL.ink);
+  }
+  p.px(2, 1, PAL.metal.hi);
+  p.px(5, 1, PAL.metal.mid);
+  p.rect(0, 3, 8, 5, PAL.ink);
+  p.rect(1, 4, 6, 3, PAL.brass.mid);
+  p.rect(1, 4, 6, 1, PAL.brass.hi);
+  p.rect(1, 6, 6, 1, PAL.brass.lo);
+  p.px(3, 5, PAL.ink);
+  p.px(4, 5, PAL.ink);
+  p.px(3, 6, PAL.ink);
+});
+
+/** 연구 잠김 표시 (글자 옆 픽셀 자물쇠) */
+export function lockIcon(): string {
+  return `<img class="icon" src="${spriteUrl('ui:lock', 'ui:lock', 8)}" alt="잠김">`;
+}
 
 export function itemIconUrl(item: ItemId): string {
   return spriteUrl(`item:${item}`, `item:${item}`, 8);

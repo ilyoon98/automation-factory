@@ -1583,6 +1583,14 @@ h3 small {
   cursor: pointer;
   margin: 0;
 }
+/* 목표 확인 항목 앞 아이콘 (우클릭: 도감·연구) */
+#guide .goal-ico {
+  cursor: context-menu;
+  margin-right: 3px;
+}
+#guide .goal-ico .icon {
+  image-rendering: pixelated;
+}
 #guide .chals .chal {
   cursor: pointer;
 }

@@ -52,7 +52,7 @@ import { blueprintCode, blueprintPreview, defaultBlueprintName, saveBlueprint } 
 import { copyText } from './clipboard';
 import { GUIDE, findTarget, type GuideFocus } from './guide';
 import { goalFocus } from './goal-focus';
-import { CHALLENGES, MAIN_GOALS, PROJECT_GOAL, currentGoal } from '../sim/goals';
+import { CHALLENGES, MAIN_GOALS, PROJECT_GOAL, currentGoal, type GoalHint } from '../sim/goals';
 import { ACH_BY_ID, Q60_ITEMS, achProgress, activeAchievements, sustainedSecs, type AchDef, type AchKind } from '../sim/achievements';
 import { Codex, depositName, type DepositId } from './codex';
 import { buildingIconUrl, depositIconUrl, itemIcon, itemLink, lockIcon, mapIcon, techIcon, techTabIcon, truckIconUrl, withBuildingIcons } from './icons';
@@ -290,10 +290,13 @@ export class UI {
     });
     // 아래 툴바의 건물을 우클릭하면 도감에서 그 건물을 연다
     document.addEventListener('contextmenu', (e) => {
-      const el = (e.target as HTMLElement).closest<HTMLElement>('[data-codex-building]');
+      const el = (e.target as HTMLElement).closest<HTMLElement>('[data-codex-building], [data-codex-item], [data-codex-tech]');
       if (!el) return;
       e.preventDefault();
-      this.codex.open({ building: el.dataset.codexBuilding as BuildingType });
+      // 목표 확인 항목의 아이콘: 아이템은 도감, 연구는 연구 창
+      if (el.dataset.codexItem) this.codex.open({ item: el.dataset.codexItem as ItemId });
+      else if (el.dataset.codexTech) this.openResearchTech(el.dataset.codexTech);
+      else this.codex.open({ building: el.dataset.codexBuilding as BuildingType });
     });
 
     document.querySelectorAll<HTMLButtonElement>('#topbar [data-speed]').forEach((btn) =>
@@ -905,8 +908,17 @@ export class UI {
   }
 
   /** 이 건물을 여는 연구를 연구 창에서 그 탭으로 열어 반짝인다 (선행이 남았으면 카드에 선행이 보인다) */
-  private openResearchFor(type: BuildingType): void {
-    const tech = this.game.getWorld().techs.find((t) => t.unlockBuildings?.includes(type));
+  /** 목표 확인 항목 앞 아이콘: 만들 아이템(우클릭 = 도감에서 얻는 법) · 연구(우클릭 = 연구 창의 그 연구) */
+  private checkIcon(w: World, hint?: GoalHint): string {
+    if (hint?.item) return `<span class="goal-ico" data-codex-item="${hint.item}" title="${ITEMS[hint.item].name} · 우클릭: 도감">${itemIcon(hint.item)}</span>`;
+    const t = hint?.tech ? w.tech(hint.tech) : undefined;
+    if (t) return `<span class="goal-ico" data-codex-tech="${t.id}" title="${t.name} · 우클릭: 연구">${techIcon(t)}</span>`;
+    return '';
+  }
+
+  /** 연구 창을 그 연구의 탭으로 열어 반짝인다 */
+  private openResearchTech(id: string): void {
+    const tech = this.game.getWorld().tech(id);
     if ($('research').hidden) this.toggleModal('research');
     if (!tech) return;
     this.researchTab = tech.category;
@@ -914,6 +926,12 @@ export class UI {
     this.researchScroll = true;
     this.researchKey = '';
     this.update();
+  }
+
+  private openResearchFor(type: BuildingType): void {
+    const tech = this.game.getWorld().techs.find((t) => t.unlockBuildings?.includes(type));
+    if (tech) this.openResearchTech(tech.id);
+    else if ($('research').hidden) this.toggleModal('research');
   }
 
   /** 열린 큰 창(도감 포함)을 모두 닫는다. 닫은 게 있으면 true */
@@ -1400,9 +1418,9 @@ export class UI {
     }
     const checks = g.checks(w)
       .slice(0, 3)
-      .map(([label, have, need]) => {
+      .map(([label, have, need, hint]) => {
         const ok = have >= need;
-        return `<li class="${ok ? 'done' : ''}"><span class="mark">${ok ? '✓' : '·'}</span>${label} <b>${Math.min(have, need).toLocaleString()}/${need.toLocaleString()}</b></li>`;
+        return `<li class="${ok ? 'done' : ''}"><span class="mark">${ok ? '✓' : '·'}</span>${this.checkIcon(w, hint)}${label} <b>${Math.min(have, need).toLocaleString()}/${need.toLocaleString()}</b></li>`;
       })
       .join('');
     const opens = w.revealed ? revealPreview(g.id) : [];
@@ -1433,7 +1451,7 @@ export class UI {
       if (c.id !== open) return head;
       const detail = c
         .checks(w)
-        .map(([label, have, need]) => `<li class="sub ${have >= need ? 'done' : ''}"><span class="mark">${have >= need ? '✓' : '·'}</span>${label} <b>${Math.min(have, need).toLocaleString()}/${need.toLocaleString()}</b></li>`)
+        .map(([label, have, need, hint]) => `<li class="sub ${have >= need ? 'done' : ''}"><span class="mark">${have >= need ? '✓' : '·'}</span>${this.checkIcon(w, hint)}${label} <b>${Math.min(have, need).toLocaleString()}/${need.toLocaleString()}</b></li>`)
         .join('');
       return `${head}<li class="sub muted">${c.hint}</li>${detail}`;
     }).join('');

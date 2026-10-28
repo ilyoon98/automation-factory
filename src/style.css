@@ -1523,6 +1523,19 @@ h3 small {
   background: #f6d77e;
   color: var(--ink);
 }
+#stock .stock-more {
+  width: 100%;
+  margin-top: 4px;
+  font: 11px var(--font-s);
+}
+#piles [data-piles] {
+  cursor: pointer;
+  margin: 0;
+}
+#guide .reward {
+  margin: 4px 0;
+  font-weight: 700;
+}
 #stock .stock-row {
   cursor: pointer;
   padding: 2px 4px;

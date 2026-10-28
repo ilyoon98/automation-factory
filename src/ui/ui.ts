@@ -51,10 +51,10 @@ import {
 import { blueprintCode, blueprintPreview, defaultBlueprintName, saveBlueprint } from './blueprints';
 import { copyText } from './clipboard';
 import { GUIDE, findTarget, type GuideFocus } from './guide';
-import { CHALLENGES, CHALLENGE_BY_ID, MAIN_GOALS, PROJECT_GOAL, currentGoal } from '../sim/goals';
+import { CHALLENGES, CHALLENGE_BY_ID, MAIN_GOALS, PROJECT_GOAL, currentGoal, type MainGoal } from '../sim/goals';
 import { ACH_BY_ID, Q60_ITEMS, achProgress, activeAchievements, sustainedSecs, type AchDef, type AchKind } from '../sim/achievements';
 import { Codex, depositName, type DepositId } from './codex';
-import { buildingIconUrl, depositIconUrl, itemIcon, itemLink, lockIcon, truckIconUrl, withBuildingIcons } from './icons';
+import { buildingIconUrl, depositIconUrl, itemIcon, itemLink, lockIcon, mapIcon, truckIconUrl, withBuildingIcons } from './icons';
 import { sound } from './sound';
 import { crispTarget, crispText, onUiZoom, setCrispText, uiZoom } from './crisp';
 import { letScrollbarDrag } from './left-scroll';
@@ -161,6 +161,55 @@ function incomingItems(w: World, b: Building): ItemId[] {
 
 /** Shift + 1~4 정보 보기 */
 const LAYER_KEYS: MapLayer[] = ['base', 'power', 'transport', 'resource'];
+/** 땅에서 캐는 것: 그것을 캐는 건물 */
+const RAW_MAKER: Partial<Record<ItemId, BuildingType>> = {
+  'iron-ore': 'miner',
+  'copper-ore': 'miner',
+  coal: 'miner',
+  stone: 'miner',
+  'tin-ore': 'miner',
+  bauxite: 'miner',
+  sulfur: 'miner',
+  log: 'lumberjack',
+  sapling: 'lumberjack',
+  sap: 'sap-extractor',
+  'crude-oil': 'drill',
+  brine: 'drill',
+  water: 'pump',
+};
+
+/**
+ * 메인 목표의 다음 할 일을 반짝일 곳: 못 마친 확인 항목 순서대로, 안 한 연구면 그 연구,
+ * 만들어야 할 재료면 그것을 만드는 건물이 아직 하나도 없을 때 그 건물(잠겼으면 그 건물을 여는 연구)
+ */
+function goalFocus(w: World, g: MainGoal): GuideFocus | null {
+  for (const [, have, need, hint] of g.checks(w)) {
+    if (have >= need || !hint) continue;
+    if (hint.tech) {
+      if (!w.researched.has(hint.tech)) return { research: hint.tech };
+      continue;
+    }
+    if (!hint.item) continue;
+    const type = RAW_MAKER[hint.item] ?? (Object.values(RECIPES).find((r) => r.outputs.some((o) => o.item === hint.item))?.machine as BuildingType | undefined);
+    if (!type) continue;
+    let built = false;
+    for (const b of w.buildings.values()) {
+      if (b.type === type) {
+        built = true;
+        break;
+      }
+    }
+    if (built) continue;
+    if (w.unlockedBuildings.has(type)) return { build: type };
+    const tech = w.techs.find((t) => t.unlockBuildings?.includes(type));
+    if (tech && !w.researched.has(tech.id)) return { research: tech.id };
+  }
+  return null;
+}
+
+/** 허브 재고를 접었을 때 보이는 줄 수 */
+const STOCK_FOLD = 8;
+
 const ACH_TAB: Record<AchKind, string> = { first: '최초', deep: '심화', record: '기록', hidden: '숨은' };
 /** 메달 네 단계로 세는 업적 (심화·기록) */
 const tiered = (a: AchDef) => a.kind === 'deep' || a.kind === 'record';
@@ -509,7 +558,7 @@ export class UI {
       game.focus(x + 0.5, y + 0.5);
     });
     // 전력망 목록: 누르면 그 망의 첫 노드로
-    $('power').addEventListener('pointerdown', (e) => {
+    $('piles').addEventListener('pointerdown', (e) => {
       if ((e.target as HTMLElement).closest('[data-piles]')) {
         const tiles = [...game.getWorld().pileTiles().keys()];
         if (!tiles.length) return;
@@ -524,8 +573,15 @@ export class UI {
           game.input.selectedPile = t;
         }
         this.update();
-        return;
       }
+    });
+    // 허브 재고 펼치기·접기 (다시 그려져도 놓치지 않게 pointerdown)
+    $('stock').addEventListener('pointerdown', (e) => {
+      if (!(e.target as HTMLElement).closest('[data-stock-toggle]')) return;
+      this.stockOpen = !this.stockOpen;
+      this.update();
+    });
+    $('power').addEventListener('pointerdown', (e) => {
       const id = Number((e.target as HTMLElement).closest<HTMLElement>('[data-net]')?.dataset.net);
       const n = id ? game.getWorld().buildings.get(id) : undefined;
       if (n) game.focus(n.x + n.size / 2, n.y + n.size / 2);
@@ -1281,24 +1337,32 @@ export class UI {
           <p class="muted power-src">요청 ${kw(need)} / 쓸 수 있는 ${kw(Math.max(supply, s.capacity))} kW${extra.length ? ` · ${extra.join(' · ')}` : ''}</p></div>`;
       })
       .join('');
-    const piles = w.pileTiles();
-    let pileN = 0;
-    for (const n of piles.values()) pileN += n;
     $('power').innerHTML = `<h3>전력 <span class="muted">일하는 망 ${nets.length}개 · 거점 ${w.zones.length}곳</span></h3>${rows}
       ${nets.length > shown.length ? `<p class="muted power-src">외 ${nets.length - shown.length}개 망</p>` : ''}
-      ${piles.size ? `<p class="muted power-src" data-piles title="누르면 회수 더미로 (누를 때마다 다음 곳)">📦 회수 대기 ${piles.size}곳 · ${pileN}개</p>` : ''}
       <p class="muted power-src">허브·발전기·변전소·전봇대는 12칸 안이면 전선으로 이어져 한 망이 돼요. 같은 망은 전기를 함께 쓰고, 모자라면 멀리 있는 공장도 같이 느려져요.</p>`;
   }
 
   private updateStock(w: World): void {
-    const rows = ITEM_IDS.filter((i) => w.stockOf(i) > 0 || w.incomePerMinute(i) > 0)
+    // 회수 더미: 전력과 따로 작은 칸 (누르면 더미로, 누를 때마다 다음 곳)
+    const piles = w.pileTiles();
+    let pileN = 0;
+    for (const n of piles.values()) pileN += n;
+    $('piles').hidden = !piles.size;
+    const pileHtml = piles.size ? `<p class="power-src" data-piles title="누르면 회수 더미로 (누를 때마다 다음 곳)">📦 회수 대기 ${piles.size}곳 · ${pileN}개 <span class="muted">눌러서 보기</span></p>` : '';
+    if ($('piles').innerHTML !== pileHtml) $('piles').innerHTML = pileHtml;
+    // 허브 재고: 처음엔 STOCK_FOLD개만, 펼치면 전부 (들어오는 속도가 있는 것부터)
+    const items = ITEM_IDS.filter((i) => w.stockOf(i) > 0 || w.incomePerMinute(i) > 0);
+    const shown = this.stockOpen ? items : items.slice(0, STOCK_FOLD);
+    const rows = shown
       .map((i) => {
         const rate = w.incomePerMinute(i);
         return `<div class="row stock-row" data-item="${i}" title="클릭: 도감">${itemIcon(i)}<span>${ITEMS[i].name}</span><b>${w.stockOf(i)}</b><em>${rate ? `+${rate}/분` : ''}</em></div>`;
       })
       .join('');
-    $('stock').innerHTML = `<h3>허브 재고</h3>${rows || '<p class="muted">비어 있음</p>'}`;
+    const more = items.length > STOCK_FOLD ? `<button class="stock-more" data-stock-toggle>${this.stockOpen ? '접기 ▲' : `펼치기 ▼ (${items.length - STOCK_FOLD}개 더)`}</button>` : '';
+    $('stock').innerHTML = `<h3>허브 재고 <small class="muted">${items.length}종</small></h3>${rows || '<p class="muted">비어 있음</p>'}${more}`;
   }
+  private stockOpen = false;
 
   /** 곧 바닥나거나 바닥난 광맥: 처음 한 번은 알림, 해결될 때까지 왼쪽 위 목록 */
   private updateOreAlerts(w: World): void {
@@ -1364,7 +1428,8 @@ export class UI {
     }
     this.goalCount = done;
     this.guideWorld = w;
-    this.applyGuideFocus(w, null);
+    const cur = currentGoal(w);
+    this.applyGuideFocus(w, cur ? goalFocus(w, cur) : null);
     const pct = Math.round((done / MAIN_GOALS.length) * 100);
     const head = `<h3>메인 목표 <small>${done}/${MAIN_GOALS.length}</small></h3><div class="gbar"><i style="width:${pct}%"></i></div>`;
     const g = currentGoal(w);
@@ -1380,20 +1445,32 @@ export class UI {
       })
       .join('');
     const opens = w.revealed ? revealPreview(g.id) : [];
-    $('guide').innerHTML = `${head}
+    const html = `${head}
       <div class="now"><small class="muted">${g.chapter} · ${g.id}</small><b>${g.title}</b><p>${withBuildingIcons(g.hint)}</p></div>
       <ul class="steps">${checks}</ul>
-      ${opens.length ? `<p class="muted">이루면 지도에 열려요: ${opens.join(', ')}</p>` : ''}
+      ${opens.length ? `<p class="reward">보상: ${mapIcon()} ${opens.join(', ')}</p>` : ''}
       ${this.challengeHtml(w)}${this.trackedAchHtml(w)}`;
+    // 선택 도전 목록을 펼친 동안 다시 그리면 목록이 바로 닫힌다: 고르는 중이면 그대로 둔다
+    if (html === this.guideHtml || $('guide').contains(document.activeElement) && document.activeElement instanceof HTMLSelectElement) return;
+    this.guideHtml = html;
+    $('guide').innerHTML = html;
   }
+  private guideHtml = '';
 
   /** 선택 도전 하나를 골라 목표 카드 아래에 추적 (고른 것은 이 PC에만 기억, 이룬 기록은 공장에 저장) */
   private challengeHtml(w: World): string {
     const id = this.trackedChallenge();
+    // 고르지 않았으면 아직 못 이룬 도전 중 가장 가까운 것을 보여 준다 (도전은 고르지 않아도 모두 저절로 기록된다)
+    const near = (c: (typeof CHALLENGES)[number]) => {
+      const cs = c.checks(w);
+      return cs.reduce((a, [, have, need]) => a + Math.min(1, need ? have / need : 1), 0) / Math.max(1, cs.length);
+    };
+    const auto = CHALLENGES.filter((c) => !w.challenges.has(c.id)).sort((a, b) => near(b) - near(a))[0];
     const opts = CHALLENGES.map((c) => `<option value="${c.id}" ${c.id === id ? 'selected' : ''}>${w.challenges.has(c.id) ? '✓ ' : ''}${c.title}</option>`).join('');
     let html = `<div class="row"><span>선택 도전</span><b>${w.challenges.size}/${CHALLENGES.length}</b></div>
-      <select data-act="challenge" style="width:100%"><option value="">고르지 않음</option>${opts}</select>`;
-    const c = id ? CHALLENGE_BY_ID[id] : undefined;
+      <select data-act="challenge" style="width:100%"><option value="">가장 가까운 도전 (자동)</option>${opts}</select>`;
+    const c = id ? CHALLENGE_BY_ID[id] : auto;
+    if (!id) html += '<p class="muted">고르지 않아도 다섯 도전 모두 저절로 기록돼요.</p>';
     if (c) {
       const done = w.challenges.has(c.id);
       html += `<p class="muted">${done ? '✓ 이룬 도전이에요. ' : ''}${c.hint}</p><ul class="steps">${c

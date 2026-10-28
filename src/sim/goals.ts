@@ -7,8 +7,14 @@ import type { World } from './world';
  * 한 번 이룬 목표는 생산이 멈춰도 되돌아가지 않는다. 시간·유지율 조건은 없다.
  */
 
-/** 확인 항목 하나: [설명, 지금, 필요] */
-export type GoalCheck = [string, number, number];
+/** 확인 항목이 무엇을 요구하는지 (안내 반짝임용: 연구 버튼·지을 건물) */
+export interface GoalHint {
+  tech?: string;
+  item?: ItemId;
+}
+
+/** 확인 항목 하나: [설명, 지금, 필요, 무엇을 요구하는지] */
+export type GoalCheck = [string, number, number, GoalHint?];
 
 export interface MainGoal {
   id: string;
@@ -20,8 +26,8 @@ export interface MainGoal {
   checks(w: World): GoalCheck[];
 }
 
-const made = (w: World, item: ItemId, need: number, name: string): GoalCheck => [`${name} 누적 생산`, w.stats.made.get(item) ?? 0, need];
-const tech = (w: World, id: string): GoalCheck => [`연구 "${w.tech(id)?.name ?? id}"`, w.researched.has(id) ? 1 : 0, 1];
+const made = (w: World, item: ItemId, need: number, name: string): GoalCheck => [`${name} 누적 생산`, w.stats.made.get(item) ?? 0, need, { item }];
+const tech = (w: World, id: string): GoalCheck => [`연구 "${w.tech(id)?.name ?? id}"`, w.researched.has(id) ? 1 : 0, 1, { tech: id }];
 
 /** 생산 거점: 자동 채취·제작 10개와 작업 전기 1MJ를 기록한 전력 구역 */
 export function productionZones(w: World): number[] {

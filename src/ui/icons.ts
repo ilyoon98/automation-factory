@@ -72,6 +72,23 @@ define('ui:lock', 8, 8, 1, (p) => {
   p.px(3, 6, PAL.ink);
 });
 
+/** 지도 보상 (8×8: 접힌 양피지 지도와 빨간 표시) */
+define('ui:map', 8, 8, 1, (p) => {
+  p.rect(0, 1, 8, 6, PAL.ink);
+  p.rect(1, 2, 2, 4, '#f3e7c9');
+  p.rect(3, 2, 2, 4, '#e3cf9e');
+  p.rect(5, 2, 2, 4, '#f3e7c9');
+  p.px(2, 3, '#6b9e4e');
+  p.px(4, 4, '#4a86c8');
+  p.px(5, 3, '#c0392b');
+  p.px(6, 4, '#c0392b');
+});
+
+/** 메인 목표 보상 (지도에 열리는 곳) */
+export function mapIcon(): string {
+  return `<img class="icon" src="${spriteUrl('ui:map', 'ui:map', 8)}" alt="지도">`;
+}
+
 /** 연구 잠김 표시 (글자 옆 픽셀 자물쇠) */
 export function lockIcon(): string {
   return `<img class="icon" src="${spriteUrl('ui:lock', 'ui:lock', 8)}" alt="잠김">`;

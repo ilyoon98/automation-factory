@@ -1,5 +1,7 @@
 import { BUILDINGS, type BuildingType } from '../data/buildings';
 import { ITEMS, type ItemId } from '../data/items';
+import { RECIPES } from '../data/recipes';
+import type { TechCategory } from '../data/tech';
 import { PAL, define, loadSpriteOverrides, sprite } from '../render/pixel';
 import '../render/pixel-buildings';
 
@@ -87,6 +89,52 @@ define('ui:map', 8, 8, 1, (p) => {
 /** 메인 목표 보상 (지도에 열리는 곳) */
 export function mapIcon(): string {
   return `<img class="icon" src="${spriteUrl('ui:map', 'ui:map', 8)}" alt="지도">`;
+}
+
+/** 끝없는 연구 탭 (8×8: 위로 오르는 화살표와 계단) */
+define('ui:endless', 8, 8, 1, (p) => {
+  p.rect(0, 6, 8, 2, PAL.ink);
+  p.rect(1, 6, 2, 1, PAL.brass.mid);
+  p.rect(3, 4, 2, 4, PAL.ink);
+  p.rect(3, 5, 2, 1, PAL.brass.mid);
+  p.rect(5, 2, 3, 6, PAL.ink);
+  p.rect(5, 3, 2, 1, PAL.brass.hi);
+  p.px(6, 0, '#4a9e4a');
+  p.rect(5, 1, 3, 1, '#4a9e4a');
+});
+
+/** 연구가 여는 것에서 고른 그림 (건물 → 결과 아이템), 아무것도 열지 않는 연구는 따로 */
+const TECH_ART: Record<string, { building?: BuildingType; item?: ItemId; truck?: true }> = {
+  'forest-care': { building: 'planter' },
+  'ore-independence': { building: 'separator' },
+  'endless-mining': { building: 'miner' },
+  'endless-crafting': { building: 'assembler' },
+  'endless-belt': { building: 'fast-belt' },
+  'endless-truck': { truck: true },
+  'endless-forest': { building: 'planter' },
+};
+
+/** 연구 아이콘 (이모지 대신 게임 안 픽셀 그림: 그 연구가 여는 건물, 없으면 여는 레시피의 결과 아이템) */
+export function techIcon(t: { id: string; name: string; unlockBuildings?: BuildingType[]; unlockRecipes?: string[] }): string {
+  const art = TECH_ART[t.id];
+  const building = art?.building ?? (art ? undefined : t.unlockBuildings?.[0]);
+  const item = art?.item ?? (art || building ? undefined : t.unlockRecipes?.map((r) => RECIPES[r]?.outputs[0]?.item).find(Boolean));
+  const src = art?.truck ? truckIconUrl() : building ? buildingIconUrl(building) : item ? itemIconUrl(item) : spriteUrl('ui:endless', 'ui:endless', 8);
+  return `<img class="icon" src="${src}" alt="" title="${t.name}">`;
+}
+
+/** 연구 탭 아이콘 */
+const TAB_ART: Record<TechCategory, BuildingType | null> = {
+  production: 'assembler',
+  logistics: 'belt',
+  power: 'generator',
+  resources: 'miner',
+  endless: null,
+};
+
+export function techTabIcon(c: TechCategory): string {
+  const b = TAB_ART[c];
+  return `<img class="icon" src="${b ? buildingIconUrl(b) : spriteUrl('ui:endless', 'ui:endless', 8)}" alt="">`;
 }
 
 /** 연구 잠김 표시 (글자 옆 픽셀 자물쇠) */

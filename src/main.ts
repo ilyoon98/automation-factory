@@ -313,6 +313,10 @@ game.input = new Input(canvas, camera, {
     if (session.role === 'solo') ui.toast('핑은 같이 할 때 다른 사람에게 보여요');
     else session.ping(x, y);
   },
+  pickPile(tile) {
+    const [sx, sy] = camera.worldToScreen((tile % world.width) + 0.5, Math.floor(tile / world.width));
+    ui.pickPile(tile, sx, sy);
+  },
 });
 const ui = new UI(game);
 // exe: 새 버전 알림 (같이 하는 중이면 업데이트 전에 한 번 묻는다)

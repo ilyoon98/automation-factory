@@ -55,7 +55,7 @@ import { goalFocus } from './goal-focus';
 import { CHALLENGES, MAIN_GOALS, PROJECT_GOAL, currentGoal } from '../sim/goals';
 import { ACH_BY_ID, Q60_ITEMS, achProgress, activeAchievements, sustainedSecs, type AchDef, type AchKind } from '../sim/achievements';
 import { Codex, depositName, type DepositId } from './codex';
-import { buildingIconUrl, depositIconUrl, itemIcon, itemLink, lockIcon, mapIcon, truckIconUrl, withBuildingIcons } from './icons';
+import { buildingIconUrl, depositIconUrl, itemIcon, itemLink, lockIcon, mapIcon, techIcon, techTabIcon, truckIconUrl, withBuildingIcons } from './icons';
 import { sound } from './sound';
 import { crispTarget, crispText, onUiZoom, setCrispText, uiZoom } from './crisp';
 import { letScrollbarDrag } from './left-scroll';
@@ -647,8 +647,8 @@ export class UI {
         const e = ENDLESS_BY_ID[id];
         this.notice(
           e
-            ? `연구 완료: ${e.icon} ${e.name} ${game.getWorld().endlessLevel(id)}단계`
-            : `연구 완료: ${game.getWorld().tech(id)?.icon} ${game.getWorld().tech(id)?.name}`,
+            ? `연구 완료: ${techIcon(e)}${e.name} ${game.getWorld().endlessLevel(id)}단계`
+            : `연구 완료: ${techIcon(game.getWorld().tech(id)!)}${game.getWorld().tech(id)?.name}`,
         );
         this.update();
       });
@@ -1214,27 +1214,25 @@ export class UI {
     return `<div class="line-items"><b>이 줄의 아이템</b>${rows}<p class="muted">잘못 들어간 아이템 때문에 기계가 막혔으면 그 아이템만 빼요. 이어진 줄 전체에서 빠져요.</p></div>`;
   }
 
-  /** 회수 더미 정보창: 든 것·생긴 이유, 줍기(가까운 창고·정류장, 없으면 허브)·버리기 */
-  private updatePileInfo(w: World, tile: number): void {
-    const el = $('info');
-    el.hidden = false;
-    const pile = w.pileAt(tile);
-    const t = w.pileTarget(tile);
-    const busy = this.useBusy.has(`pile:${tile}`);
-    const key = `pile|${tile}|${[...pile].join(',')}|${t ? `${t.b.id}:${t.room}` : ''}|${busy}`;
-    if (key === this.infoKey) return;
-    this.infoKey = key;
-    const why = [...new Set(w.piles.filter((p) => p.tile === tile).map((p) => PILE_REASON_LABEL[p.why]))].join(', ');
-    const total = [...pile.values()].reduce((a, n) => a + n, 0);
-    // 줍기: 8칸 안의 창고·정류장, 없거나 자리가 모자라면 허브로
-    const where = t ? `${BUILDINGS[t.b.type].name} (${t.dist}칸)${t.room < total ? ' · 넘치는 건 허브' : ''}` : '허브';
-    el.innerHTML = `<header><h3>📦 회수 더미</h3><button class="x" data-act="pile-close">×</button></header>
-      <div class="row"><span>${why}</span><b>${[...pile].map(([i, n]) => `${itemIcon(i)}${n}`).join(' ')}</b></div>
-      <p class="muted">철거·분리·반송으로 이 자리에 남은 실물이에요. 칸을 막거나 벨트에 섞이지는 않아요.</p>
-      <div class="actions">
-        <button data-act="pile-collect" ${busy ? 'disabled' : ''}>📦 줍기 <span class="muted">→ ${where}</span></button>
-        <button data-act="pile-discard" ${busy ? 'disabled' : ''}>버리기</button>
-      </div>`;
+  /** 회수 더미를 바로 줍는다 (가까운 창고·정류장, 없으면 허브). 주운 자리에 "+아이콘 개수"가 떠오른다 */
+  pickPile(tile: number, sx: number, sy: number): void {
+    const items = [...this.game.getWorld().pileAt(tile)];
+    this.sendUse(`pile:${tile}`, { t: 'pile-collect', rid: newRid(), tile }, () => this.floatGain(sx, sy, items));
+  }
+
+  /** 얻은 것을 그 자리에서 위로 떠오르며 사라지게 (화면 좌표) */
+  private floatGain(sx: number, sy: number, items: [ItemId, number][]): void {
+    const el = document.createElement('div');
+    el.className = 'gain-float';
+    el.style.left = `${sx}px`;
+    el.style.top = `${sy}px`;
+    el.innerHTML = items
+      .slice(0, 4)
+      .map(([i, n]) => `<div>+${itemIcon(i)}${n}</div>`)
+      .join('') + (items.length > 4 ? `<div>+${items.length - 4}종</div>` : '');
+    document.body.appendChild(el);
+    sound.play('click');
+    setTimeout(() => el.remove(), 1400);
   }
 
   /** regional-v1: 지도에 있는 땅마다 지금 날씨와 영향 (화면 가운데 땅을 굵게). 예보는 없다 */
@@ -1673,11 +1671,6 @@ export class UI {
     const b = this.selected();
     if (!b && this.game.input.paste) {
       this.updatePasteInfo(this.game.input.paste, this.game.input.pasteName);
-      return;
-    }
-    const pileTile = this.game.input.selectedPile;
-    if (!b && pileTile != null && w.piles.some((p) => p.tile === pileTile)) {
-      this.updatePileInfo(w, pileTile);
       return;
     }
     if (!b) {
@@ -2531,20 +2524,6 @@ export class UI {
   private onInfoClick(e: MouseEvent): void {
     const act = (e.target as HTMLElement).closest<HTMLElement>('[data-act]')?.dataset.act;
     const input = this.game.input;
-    if (act === 'pile-collect' || act === 'pile-discard' || act === 'pile-close') {
-      const tile = input.selectedPile;
-      if (act === 'pile-close' || tile == null) input.selectedPile = null;
-      else if (act === 'pile-discard') {
-        if (confirm('이 회수 더미를 버릴까요? 되돌릴 수 없어요.'))
-          this.sendUse(`pile:${tile}`, { t: 'pile-discard', rid: newRid(), tile }, (r) => this.toast(`${r.moved}개를 버렸어요`, 2500));
-      } else
-        this.sendUse(`pile:${tile}`, { t: 'pile-collect', rid: newRid(), tile }, (r) => {
-          const to = r.from ? this.game.getWorld().buildings.get(r.from) : undefined;
-          this.toast(`${r.moved}개를 주워 ${to ? BUILDINGS[to.type].name : '허브'}로 옮겼어요`, 2500);
-        });
-      this.update();
-      return;
-    }
     // 컨베이어 줄에서 잘못 들어간 아이템만 빼기
     const take = (e.target as HTMLElement).closest<HTMLElement>('[data-line-take]')?.dataset.lineTake as ItemId | undefined;
     const sel = this.selected();
@@ -2768,7 +2747,7 @@ export class UI {
           ready = list.some((t) => !w.researched.has(t.id) && w.canResearch(t.id).ok);
         }
         return `<button data-rtab="${c.id}" class="${c.id === tab ? 'active' : ''}" title="${ready ? '지금 연구할 수 있는 게 있어요' : ''}">
-          ${c.icon} ${c.name} <small>${count}</small>${ready ? '<span class="ready"></span>' : ''}</button>`;
+          ${techTabIcon(c.id)}${c.name} <small>${count}</small>${ready ? '<span class="ready"></span>' : ''}</button>`;
       }).join('');
       const costHtml = (list: ItemStack[]) =>
         list.map((c) => `<span class="c">${itemLink(c.item, false)}<span data-have="${c.item}"></span>/${c.count}</span>`).join(' ');
@@ -2778,9 +2757,9 @@ export class UI {
         const check = w.canResearch(t.id);
         const open = w.researched.has(ENDLESS_REQUIRES);
         const now = Math.round(t.step * level * 100);
-        const req = open ? '' : `<div class="req">선행: ${w.tech(ENDLESS_REQUIRES)!.icon} ${w.tech(ENDLESS_REQUIRES)!.name}</div>`;
+        const req = open ? '' : `<div class="req">선행: ${techIcon(w.tech(ENDLESS_REQUIRES)!)}${w.tech(ENDLESS_REQUIRES)!.name}</div>`;
         return `<div class="tech ${open ? 'open' : 'locked'}">
-          <h4><span class="ticon">${t.icon}</span>${t.name} <small class="muted">${level}단계</small></h4>
+          <h4><span class="ticon">${techIcon(t)}</span>${t.name} <small class="muted">${level}단계</small></h4>
           <p>${t.description}<br><small>지금 +${now}% → 다음 단계 +${now + Math.round(t.step * 100)}%</small></p>
           ${req}
           <div class="cost">${costHtml(endlessCost(t, level + 1))}</div>
@@ -2800,7 +2779,7 @@ export class UI {
           ? `<div class="req">선행: ${t.requires
               .map((r) => {
                 const x = w.tech(r)!;
-                return `${x.icon} ${x.name}${w.researched.has(r) ? ' ✓' : ''}`;
+                return `${techIcon(x)}${x.name}${w.researched.has(r) ? ' ✓' : ''}`;
               })
               .join(', ')}</div>`
           : '';
@@ -2808,7 +2787,7 @@ export class UI {
           .map((c) => `<span class="c">${itemLink(c.item, false)}<span data-have="${c.item}"></span>/${c.count}</span>`)
           .join(' ');
         return `<div class="tech ${cls}">
-          <h4><span class="ticon">${t.icon}</span>${t.name}</h4>
+          <h4><span class="ticon">${techIcon(t)}</span>${t.name}</h4>
           <p>${t.description}${unlocks ? `<br><small>해금: ${unlocks}</small>` : ''}</p>
           ${req}
           <div class="cost">${cost}</div>

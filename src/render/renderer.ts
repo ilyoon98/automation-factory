@@ -36,8 +36,6 @@ export interface ViewState {
   selectedId: number | null;
   /** 고른 트럭 */
   selectedVehicle: number | null;
-  /** 고른 회수 더미 칸 */
-  selectedPile?: number | null;
   selection: { x0: number; y0: number; x1: number; y1: number } | null;
   /** Ctrl + 우클릭 드래그 중인 철거 영역 */
   removeArea: { x0: number; y0: number; x1: number; y1: number } | null;
@@ -317,11 +315,6 @@ export class Renderer {
       ctx.setLineDash([]);
     }
 
-    // 고른 회수 더미
-    if (view.selectedPile != null && world.piles.some((p) => p.tile === view.selectedPile)) {
-      const [sx, sy] = cam.worldToScreen(view.selectedPile % world.width, Math.floor(view.selectedPile / world.width));
-      this.outline(sx, sy, z, z, SELECT);
-    }
     // 선택한 건물
     if (view.selectedId) {
       const b = world.buildings.get(view.selectedId);

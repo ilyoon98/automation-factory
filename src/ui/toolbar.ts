@@ -14,7 +14,7 @@ import {
 } from './blueprints';
 import { copyText } from './clipboard';
 import { ITEMS } from '../data/items';
-import { buildingIconUrl, itemIcon, lockIcon, truckIconUrl } from './icons';
+import { buildingIconUrl, itemIcon, lockIcon, techIcon, truckIconUrl } from './icons';
 
 /** 건물 탭들 + 맨 끝 청사진 탭 (K) */
 type Tab = Category | 'blueprints';
@@ -467,7 +467,7 @@ function costHtml(w: World, type: BuildingType, poor: boolean): string {
 export function blockReason(w: World, type: BuildingType, why: 'locked' | 'poor'): string {
   if (why === 'locked') {
     const t = w.techs.find((tc) => tc.unlockBuildings?.includes(type));
-    return t ? `필요한 연구: ${t.icon} ${t.name}` : '연구로 해금해야 해요';
+    return t ? `필요한 연구: ${techIcon(t)}${t.name}` : '연구로 해금해야 해요';
   }
   return BUILDINGS[type].cost
     .filter((c) => w.stockOf(c.item) < c.count)

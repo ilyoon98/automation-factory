@@ -1471,6 +1471,18 @@ h3 small {
   font-size: 20px;
   line-height: 1;
 }
+/* 연구 아이콘: 게임 안 픽셀 그림 (건물·아이템) */
+.tech .ticon .icon {
+  width: 24px;
+  height: 24px;
+  margin: 0;
+  vertical-align: middle;
+  image-rendering: pixelated;
+}
+.rtabs .icon,
+.tech .req .icon {
+  image-rendering: pixelated;
+}
 .techs {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
@@ -1522,6 +1534,40 @@ h3 small {
 .ilink:hover {
   background: #f6d77e;
   color: var(--ink);
+}
+/* 회수 더미를 주웠을 때: 그 자리에서 "+아이콘 개수"가 떠오르며 사라진다 */
+.gain-float {
+  position: fixed;
+  z-index: 95;
+  transform: translate(-50%, -100%);
+  pointer-events: none;
+  font: 700 14px var(--font-s);
+  color: #fff7e8;
+  text-shadow:
+    1px 1px 0 var(--ink),
+    -1px 1px 0 var(--ink),
+    1px -1px 0 var(--ink),
+    -1px -1px 0 var(--ink);
+  animation: gain-rise 1.4s ease-out forwards;
+}
+.gain-float .icon {
+  width: 16px;
+  height: 16px;
+  vertical-align: -3px;
+  image-rendering: pixelated;
+}
+@keyframes gain-rise {
+  0% {
+    opacity: 0;
+    margin-top: 0;
+  }
+  15% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+    margin-top: -36px;
+  }
 }
 #stock .stock-head {
   display: flex;

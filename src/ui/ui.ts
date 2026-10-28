@@ -20,7 +20,7 @@ import {
   type BuildingType,
 } from '../data/buildings';
 import { ITEMS, ITEM_IDS, type ItemId, type ItemStack } from '../data/items';
-import { RECIPES, recipesFor, type MachineKind } from '../data/recipes';
+import { RECIPES, recipesFor, type MachineKind, type Recipe } from '../data/recipes';
 import { ENDLESS_BY_ID, ENDLESS_REQUIRES, ENDLESS_TECHS, TECH_CATEGORIES, endlessCost, type RuleProfile, type TechCategory } from '../data/tech';
 import type { Input } from '../input/input';
 import { DAY_SEC, ambientEnabled, dayLabel, dayPhase, setAmbientEnabled, skyLabel } from '../render/ambient';
@@ -152,6 +152,13 @@ const newRid = () => `${RID_PREFIX}-${++ridSeq}`;
 
 /** 심화 메달 네 단계 */
 const MEDAL = ['🥉', '🥈', '🥇', '💎'];
+/** 기계로 들어오는 재료: 안에 든 것 + 이어진 줄로 오는 것 (줄 끝 기계가 낼 수 있는 것 포함) */
+function incomingItems(w: World, b: Building): ItemId[] {
+  const items = new Set<ItemId>(w.upstream(b).items);
+  for (const [item, n] of b.inBuf) if (n > 0) items.add(item);
+  return ITEM_IDS.filter((i) => items.has(i));
+}
+
 /** Shift + 1~4 정보 보기 */
 const LAYER_KEYS: MapLayer[] = ['base', 'power', 'transport', 'resource'];
 const ACH_TAB: Record<AchKind, string> = { first: '최초', deep: '심화', record: '기록', hidden: '숨은' };
@@ -1598,6 +1605,8 @@ export class UI {
       const up = w.upstream(b);
       srcKey = `${up.items.join(',')}:${up.sources.map((s) => s.id).join(',')}`;
     }
+    // 레시피 기계는 들어오는 재료가 바뀌면 레시피 목록 순서를 다시 만든다
+    if (isRecipeMachine(b.type)) srcKey = incomingItems(w, b).join(',');
     // 정류장은 트럭 목록과 "트럭 만들기" 버튼 상태가 바뀌면 다시 만든다
     if (b.type === 'station') {
       srcKey = `${b.stationMode}:${w
@@ -1725,10 +1734,18 @@ export class UI {
     if (w.regional && w.isPowerUser(b)) html += this.powerNodeBlock(w, b);
     if (b.type === 'charger' && w.regional) html += this.budgetBlock(w, b);
     if (isRecipeMachine(b.type)) {
-      const options = recipesFor(b.type as MachineKind)
-        .filter((r) => w.unlockedRecipes.has(r.id))
-        .map((r) => `<option value="${r.id}" ${b.recipe === r.id ? 'selected' : ''}>${r.name}</option>`)
-        .join('');
+      // 들어오는 재료로 만들 수 있는 레시피를 위로, 일부만 들어오는 것, 나머지 순 (아무것도 안 이어졌으면 그대로)
+      const incoming = new Set(incomingItems(w, b));
+      const opt = (r: Recipe) => `<option value="${r.id}" ${b.recipe === r.id ? 'selected' : ''}>${r.name}</option>`;
+      const list = recipesFor(b.type as MachineKind).filter((r) => w.unlockedRecipes.has(r.id));
+      const has = (r: Recipe) => r.inputs.filter((i) => incoming.has(i.item)).length;
+      const full = list.filter((r) => r.inputs.length && has(r) === r.inputs.length);
+      const part = list.filter((r) => has(r) > 0 && has(r) < r.inputs.length);
+      const rest = list.filter((r) => !full.includes(r) && !part.includes(r));
+      const group = (label: string, rs: Recipe[]) => (rs.length ? `<optgroup label="${label}">${rs.map(opt).join('')}</optgroup>` : '');
+      const options = incoming.size
+        ? group('들어오는 재료로 만들 수 있어요', full) + group('재료 일부가 들어와요', part) + group('다른 레시피', rest)
+        : list.map(opt).join('');
       const none = needsRecipeChoice(b.type) ? '선택 안 함' : '자동 (들어온 재료로)';
       html += `<label class="recipe">레시피 <select data-act="recipe"><option value="">${none}</option>${options}</select></label>`;
       const r = w.recipeOf(b);

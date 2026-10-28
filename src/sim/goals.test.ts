@@ -63,8 +63,8 @@ describe('메인 목표', () => {
   });
 });
 
-describe('선택 도전', () => {
-  it('지열이 기계를 돌리면 실적이 쌓이고, 조건이 차면 도전 기록 (메인 진행과 별개)', () => {
+describe('지역 과제', () => {
+  it('지열이 기계를 돌리면 실적이 쌓이고, 화산·염호 지역에서 조건이 차면 과제 기록 (메인 진행과 별개)', () => {
     const w = regional();
     for (const t of w.techs) w.applyTech(t.id);
     for (const item of ['steel', 'bronze', 'motor', 'controller', 'concrete'] as const) w.stock.set(item, 100);
@@ -78,13 +78,13 @@ describe('선택 도전', () => {
       w.tick();
     }
     expect(w.stats.geoWork).toBeGreaterThan(90 * 19);
-    w.stats.linkWork = 5000;
-    w.stats.geoWork = 5000;
+    // 앞 지역 넷을 마친 상태로 (지역은 차례대로만 판정)
+    for (const id of ['R1a', 'R1b', 'R2a', 'R2b', 'R3a', 'R3b', 'R4a', 'R4b']) w.challenges.add(id);
     run(w, 1);
-    expect(w.challenges.has('CG03')).toBe(true);
-    expect(w.goals.has('CG03')).toBe(false);
+    expect(w.challenges.has('R5b')).toBe(true);
+    expect(w.goals.has('R5b')).toBe(false);
     const back = World.deserialize(JSON.parse(JSON.stringify(w.serialize())));
-    expect(back.challenges.has('CG03')).toBe(true);
+    expect(back.challenges.has('R5b')).toBe(true);
   });
 });
 

@@ -197,61 +197,127 @@ export const MAIN_GOALS: MainGoal[] = [
   },
 ];
 
+/** 지역 과제 하나: 그 지역 자원으로 할 수 있는 일 */
+export interface RegionTask {
+  id: string;
+  title: string;
+  hint: string;
+  checks(w: World): GoalCheck[];
+}
+
+/** 지역 단계: 지금 열린 땅에서 하는 과제 셋, 그중 REGION_NEED개를 이루면 opens(거점 키, '*' = 지도 전체)가 열린다 */
+export interface RegionStage {
+  id: string;
+  /** 지금 지역 이름 */
+  name: string;
+  /** 이루면 열리는 곳 (화면 안내용 이름은 world의 siteLabels) */
+  opens: string[];
+  tasks: RegionTask[];
+}
+
+/** 지역마다 과제 셋 중 이만큼 이루면 다음 지역이 열린다 (모두 할 필요는 없다) */
+export const REGION_NEED = 2;
+
 /**
- * 선택형 도전 (메인 진행의 선행이 아니다). 진행 중 원하는 것 하나를 골라 추적한다.
- * CG06(돌아오는 길의 화물)은 다중 정류장 양방향 배송이 가능한 빌드에서만 켠다는 기획에 따라 넣지 않았다
+ * 지역 과제 (2026-10-28 사용자 결정): 지도는 메인 목표가 아니라 지역 과제로 열린다.
+ * 메인 목표는 공장 전체 이야기, 지역 과제는 지금 열린 땅에서 할 수 있는 일. 이룬 과제 id는 w.challenges에 남는다
  */
-export const CHALLENGES: MainGoal[] = [
+export const REGION_STAGES: RegionStage[] = [
   {
-    id: 'CG01',
-    chapter: '선택 도전',
-    title: '다시 자라는 공장',
-    requires: [],
-    hint: '식목기로 심은 나무가 다 자라게 하고, 종이를 만들어요.',
-    checks: (w) => [['심은 나무가 다 자람', w.stats.treesMatured, 50], made(w, 'paper', 50, '종이')],
-  },
-  {
-    id: 'CG02',
-    chapter: '선택 도전',
-    title: '광맥 밖의 보조 공급',
-    requires: [],
-    hint: '흙 정제·광물 분리로 정광에서 철판·구리판을 만들고 콘크리트도.',
-    checks: (w) => [
-      ['정광으로 만든 철판', w.stats.recipeDone.get('iron-plate-c') ?? 0, 100],
-      ['정광으로 만든 구리판', w.stats.recipeDone.get('copper-plate-c') ?? 0, 100],
-      made(w, 'concrete', 20, '콘크리트'),
+    id: 'R1',
+    name: '시작 초원',
+    opens: ['B', 'H'],
+    tasks: [
+      { id: 'R1a', title: '철판 공장', hint: '철광석을 제련로로 자동으로 녹여요.', checks: (w) => [made(w, 'iron-plate', 100, '철판')] },
+      { id: 'R1b', title: '스스로 만든 전기', hint: '석탄·풍력 발전기로 허브 밖 전기를 기계에 대요.', checks: (w) => [['허브 밖 발전원이 기계에 준 전기 (kJ)', Math.floor(w.stats.genWork), 1000]] },
+      { id: 'R1c', title: '숲의 첫 수확', hint: '벌목기로 시작 지역 가장자리 숲의 나무를 베요.', checks: (w) => [made(w, 'log', 50, '통나무')] },
     ],
   },
   {
-    id: 'CG03',
-    chapter: '선택 도전',
-    title: '지열로 잇는 공장',
-    requires: [],
-    hint: '지열 발전소로 기계를 돌리고, 전봇대로 이어 20칸 넘게 떨어진 다른 생산 거점 기계도 돌려요.',
-    checks: (w) => [
-      ['지열이 작업에 준 전기 (kJ)', Math.floor(w.stats.geoWork), 5000],
-      ['다른 생산 거점 작업에 준 지열 전기 (kJ)', Math.floor(w.stats.linkWork), 5000],
+    id: 'R2',
+    name: '눈밭과 조립 부지',
+    opens: ['C'],
+    tasks: [
+      { id: 'R2a', title: '눈밭의 주석', hint: '눈밭의 주석광석을 캐서 주석판으로.', checks: (w) => [made(w, 'tin-plate', 50, '주석판')] },
+      { id: 'R2b', title: '첫 합금', hint: '구리판과 주석판으로 청동을 만들어요.', checks: (w) => [made(w, 'bronze', 40, '청동')] },
+      {
+        id: 'R2c',
+        title: '거점 사이 운송',
+        hint: '트럭으로 다른 거점에 재료를 실어 날라요.',
+        checks: (w) => [['다른 거점으로 배송한 재료', [...w.stats.itemDelivered.values()].reduce((a, n) => a + n, 0), 20]],
+      },
     ],
   },
   {
-    id: 'CG04',
-    chapter: '선택 도전',
-    title: '저장해 둔 밤',
-    requires: [],
-    hint: '낮에 축전기에 모아 둔 전기로 한밤의 기계를 돌려요.',
-    checks: (w) => [['한밤에 축전기가 작업에 준 전기 (kJ)', Math.floor(w.stats.nightStorage), 5000]],
+    id: 'R3',
+    name: '숲',
+    opens: ['D', 'E'],
+    tasks: [
+      { id: 'R3a', title: '고무나무 수액', hint: '고무나무 옆에 수액 채취기를 놓아요.', checks: (w) => [made(w, 'sap', 30, '수액')] },
+      { id: 'R3b', title: '첫 고무', hint: '화학 반응기에서 수액으로 고무를 만들어요.', checks: (w) => [made(w, 'rubber', 20, '고무')] },
+      { id: 'R3c', title: '다시 자라는 숲', hint: '식목기로 심은 나무가 다 자라게 해요.', checks: (w) => [['심은 나무가 다 자람', w.stats.treesMatured, 30]] },
+    ],
   },
   {
-    id: 'CG05',
-    chapter: '선택 도전',
-    title: '날씨에 맞춘 발전',
-    requires: [],
-    hint: '서로 다른 날씨 세 가지에서 각각 기계에 1MJ씩 전기를 대요.',
-    checks: (w) => [['1MJ 넘게 일한 날씨 종류', [...w.stats.weatherWork.values()].filter((k) => k >= 1000).length, 3]],
+    id: 'R4',
+    name: '두 사막',
+    opens: ['F', 'G'],
+    tasks: [
+      { id: 'R4a', title: '사막의 원유', hint: '모래사막의 원유 지점에 시추기를 놓아요.', checks: (w) => [made(w, 'crude-oil', 50, '원유')] },
+      { id: 'R4b', title: '첫 플라스틱', hint: '정유소에서 원유와 물로 플라스틱을 만들어요.', checks: (w) => [made(w, 'plastic', 20, '플라스틱')] },
+      { id: 'R4c', title: '가벼운 금속', hint: '바위사막의 보크사이트를 전해로에서 알루미늄판으로.', checks: (w) => [made(w, 'aluminum-plate', 10, '알루미늄판')] },
+    ],
+  },
+  {
+    id: 'R5',
+    name: '화산과 염호',
+    opens: ['tin2', 'bauxite2', 'oil2', 'brine2', 'sulfur2', 'rubber2'],
+    tasks: [
+      { id: 'R5a', title: '화산의 황', hint: '화산의 황 자원지를 캐요.', checks: (w) => [made(w, 'sulfur', 20, '황')] },
+      { id: 'R5b', title: '지하의 불꽃', hint: '분출구 위에 지열 발전소를 지어 기계를 돌려요.', checks: (w) => [['지열이 작업에 준 전기 (kJ)', Math.floor(w.stats.geoWork), 1000]] },
+      { id: 'R5c', title: '염호의 리튬', hint: '염수를 전해로에서 리튬으로.', checks: (w) => [made(w, 'lithium', 10, '리튬')] },
+    ],
+  },
+  {
+    id: 'R6',
+    name: '두 번째 자원지',
+    opens: ['*'],
+    tasks: [
+      {
+        id: 'R6a',
+        title: '날씨에 맞춘 발전',
+        hint: '서로 다른 날씨 세 가지에서 각각 기계에 1MJ씩 전기를 대요.',
+        checks: (w) => [['1MJ 넘게 일한 날씨 종류', [...w.stats.weatherWork.values()].filter((k) => k >= 1000).length, 3]],
+      },
+      { id: 'R6b', title: '저장해 둔 밤', hint: '낮에 축전기에 모아 둔 전기로 한밤의 기계를 돌려요.', checks: (w) => [['한밤에 축전기가 작업에 준 전기 (kJ)', Math.floor(w.stats.nightStorage), 1000]] },
+      { id: 'R6c', title: '고급 트럭', hint: '대형 조립소의 고급 트럭 조립품으로 고급 트럭을 만들어요.', checks: (w) => [['고급 트럭', [...w.vehicles.values()].some((v) => v.kind !== 'basic') ? 1 : 0, 1]] },
+    ],
   },
 ];
 
-export const CHALLENGE_BY_ID: Record<string, MainGoal> = Object.fromEntries(CHALLENGES.map((g) => [g.id, g]));
+export const REGION_TASK_BY_ID: Record<string, RegionTask> = Object.fromEntries(REGION_STAGES.flatMap((s) => s.tasks.map((t) => [t.id, t])));
+
+/** 이 지역 단계를 마쳤는지 (과제 REGION_NEED개) */
+export function stageCleared(w: World, s: RegionStage): boolean {
+  return s.tasks.filter((t) => w.challenges.has(t.id)).length >= REGION_NEED;
+}
+
+/** 지금 지역 단계 번호 (모두 마쳤으면 REGION_STAGES.length) */
+export function currentStage(w: World): number {
+  const i = REGION_STAGES.findIndex((s) => !stageCleared(w, s));
+  return i < 0 ? REGION_STAGES.length : i;
+}
+
+/** 메인 목표가 쓰는 자원이 있는 지역: 이만큼의 지역 단계를 마쳐야 그 땅이 열려 있다 */
+const GOAL_NEEDS_STAGE: Record<string, number> = { MG10: 1, MG11: 1, MG13: 2, MG18: 3, MG20: 3, MG21: 4, MG25: 4 };
+
+/** 이 메인 목표에 필요한데 아직 안 열린 지역 단계 (없으면 null) */
+export function goalNeedsStage(w: World, g: MainGoal): RegionStage | null {
+  const need = GOAL_NEEDS_STAGE[g.id];
+  if (!need || !w.revealed) return null;
+  const cur = currentStage(w);
+  return cur < need ? REGION_STAGES[cur] : null;
+}
 
 /** 허브 프로젝트의 납품 목표 */
 export const PROJECT_GOAL = 50;
@@ -270,13 +336,21 @@ export function evaluateGoals(w: World): string[] {
     if (w.goals.has(g.id) || !g.requires.every((r) => w.goals.has(r))) continue;
     if (!goalMet(w, g)) continue;
     w.goals.add(g.id);
-    w.revealForGoal(g.id);
     got.push(g.id);
   }
-  for (const c of CHALLENGES) {
-    if (w.challenges.has(c.id) || !goalMet(w, c)) continue;
-    w.challenges.add(c.id);
-    got.push(c.id);
+  // 지역 과제: 지금 지역까지의 과제만 판정한다. 한 지역의 과제를 REGION_NEED개 이루면 다음 땅이 열린다
+  for (let i = 0; i < REGION_STAGES.length && i <= currentStage(w); i++) {
+    const s = REGION_STAGES[i];
+    const was = stageCleared(w, s);
+    for (const t of s.tasks) {
+      if (w.challenges.has(t.id) || !t.checks(w).every(([, have, need]) => have >= need)) continue;
+      w.challenges.add(t.id);
+      got.push(t.id);
+    }
+    if (!was && stageCleared(w, s)) {
+      w.revealSites(s.opens);
+      got.push(`stage:${s.id}`);
+    }
   }
   return got;
 }

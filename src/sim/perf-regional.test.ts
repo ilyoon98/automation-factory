@@ -14,7 +14,7 @@ const nodeProcess = (globalThis as { process?: { env: Record<string, string | un
 describe.skipIf(!nodeProcess?.env.PERF)('확장 지도 성능', () => {
   it('기계 1,000대·트럭 64대가 도는 256×256 지도에서 틱 시간', () => {
     const w = generateRegionalWorld(2026);
-    w.revealForGoal('MG32');
+    w.revealSites(['*']);
     for (const t of w.techs) w.applyTech(t.id);
     for (const item of ['iron-plate', 'gear', 'stone', 'steel', 'circuit', 'coal', 'wood', 'copper-wire'] as const) w.stock.set(item, 1e9);
     // 발전: 지도 곳곳 석탄 발전기 (구역이 여럿 생긴다)

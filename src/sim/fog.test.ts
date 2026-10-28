@@ -65,7 +65,7 @@ describe('확인한 땅', () => {
     expect(found).toBe(true);
   });
 
-  it('첫 트럭 배송(MG07)을 이루면 눈밭 주석과 조립 부지가 허브에서 이어진 길과 함께 열린다', () => {
+  it('메인 목표는 지도를 열지 않고, 시작 초원의 지역 과제 셋 중 둘을 이루면 눈밭 주석과 조립 부지가 길과 함께 열린다', () => {
     const w = generateRegionalWorld(11);
     const [ax, ay] = w.sites.A;
     const [bx, by] = w.sites.B;
@@ -74,6 +74,13 @@ describe('확인한 땅', () => {
     const before = w.revealedCount;
     evaluateGoals(w);
     expect(w.goals.has('MG07')).toBe(true);
+    expect(w.revealedCount).toBe(before);
+    w.stats.made.set('iron-plate', 100);
+    evaluateGoals(w);
+    expect(w.challenges.has('R1a')).toBe(true);
+    expect(w.revealedCount).toBe(before); // 셋 중 하나로는 아직
+    w.stats.made.set('log', 50);
+    expect(evaluateGoals(w)).toContain('stage:R1');
     expect(w.revealedCount).toBeGreaterThan(before);
     expect(w.isRevealed(w.idx(bx, by))).toBe(true);
     expect(w.isRevealed(w.idx(...w.sites.H))).toBe(true);
@@ -82,15 +89,19 @@ describe('확인한 땅', () => {
     expect(w.isRevealed(w.idx(...w.sites.D))).toBe(false);
   });
 
-  it('통합 자동화 연구 목표(MG32)를 이루면 지도 전체', () => {
+  it('마지막 지역 과제를 마치면 지도 전체, 지역은 차례대로만 판정한다', () => {
     const w = generateRegionalWorld(3);
-    expect(w.revealForGoal('MG32')).toEqual(['지도 전체']);
+    // 아직 시작 초원인데 뒤 지역 과제 조건을 채워도 기록하지 않는다
+    w.stats.made.set('sulfur', 100);
+    evaluateGoals(w);
+    expect(w.challenges.has('R5a')).toBe(false);
+    expect(w.revealSites(['*'])).toEqual(['지도 전체']);
     expect(w.revealedCount).toBe(w.width * w.height);
   });
 
   it('저장·불러오기 뒤에도 같은 땅이 보이고, 예전 지도는 모두 보인다', () => {
     const w = generateRegionalWorld(5);
-    w.revealForGoal('MG07');
+    w.revealSites(['B', 'H']);
     const back = World.deserialize(JSON.parse(JSON.stringify(w.serialize())));
     expect(back.revealedCount).toBe(w.revealedCount);
     expect([...back.revealed!]).toEqual([...w.revealed!]);
@@ -98,6 +109,6 @@ describe('확인한 땅', () => {
     expect(back.checksum()).toBe(w.checksum());
     const legacy = new World(10, 10);
     expect(legacy.isRevealed(0)).toBe(true);
-    expect(legacy.revealForGoal('MG07')).toEqual([]);
+    expect(legacy.revealSites(['B'])).toEqual([]);
   });
 });

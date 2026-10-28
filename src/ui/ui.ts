@@ -42,7 +42,7 @@ import {
   storageBounds,
   PILE_REASON_LABEL,
   isLineType,
-  revealPreview,
+  siteLabels,
   type MachineStats,
   type PatchReport,
   type UseResult,
@@ -52,7 +52,7 @@ import { blueprintCode, blueprintPreview, defaultBlueprintName, saveBlueprint } 
 import { copyText } from './clipboard';
 import { GUIDE, findTarget, type GuideFocus } from './guide';
 import { goalFocus } from './goal-focus';
-import { CHALLENGES, MAIN_GOALS, PROJECT_GOAL, currentGoal, type GoalHint } from '../sim/goals';
+import { MAIN_GOALS, PROJECT_GOAL, REGION_NEED, REGION_STAGES, currentGoal, currentStage, goalNeedsStage, stageCleared, type GoalHint } from '../sim/goals';
 import { ACH_BY_ID, Q60_ITEMS, achProgress, activeAchievements, sustainedSecs, type AchDef, type AchKind } from '../sim/achievements';
 import { Codex, depositName, type DepositId } from './codex';
 import { buildingIconUrl, depositIconUrl, itemIcon, itemLink, lockIcon, mapIcon, techIcon, techTabIcon, truckIconUrl, withBuildingIcons } from './icons';
@@ -243,6 +243,8 @@ export class UI {
   private achSeen: { world: World | null; got: Set<string> } = { world: null, got: new Set() };
   /** 확장 세계: 지난번에 본 이룬 목표 수, 완성 알림을 보였는지 */
   private goalCount = 0;
+  /** 지난번에 본 지역 단계 (새 땅이 열렸을 때만 알리려고) */
+  private stageCount = 0;
   /** 회수 더미를 차례로 보여 줄 때 지금 차례 */
   private pileCycle = -1;
   private finaleShown = false;
@@ -1007,7 +1009,7 @@ export class UI {
     if ($('time-pop').innerHTML !== html) $('time-pop').innerHTML = html;
   }
 
-  /** 목표판 (O): 확장 세계는 메인 목표 36개 + 선택 도전, 기본 세계는 안내 목표 전체 */
+  /** 목표판 (O): 확장 세계는 메인 목표 36개 + 지역 과제, 기본 세계는 안내 목표 전체 */
   private updateGoalsPanel(w: World): void {
     const tracked = this.trackedChallenge();
     const key = w.regional
@@ -1026,15 +1028,20 @@ export class UI {
         return `${head}<li class="${cls}"><span class="mark">${done ? '✓' : g === cur ? '▶' : '·'}</span><small class="muted">${g.id}</small> ${g.title}</li>`;
       });
       const done = MAIN_GOALS.filter((g) => w.goals.has(g.id)).length;
-      const ch = CHALLENGES.map(
-        (c) =>
-          `<li class="${w.challenges.has(c.id) ? 'done' : c.id === tracked ? 'cur' : ''}"><span class="mark">${w.challenges.has(c.id) ? '✓' : c.id === tracked ? '◆' : '·'}</span>${c.title} <small class="muted">${c.hint}</small></li>`,
-      ).join('');
+      const stageNow = currentStage(w);
+      const stages = REGION_STAGES.map((s, i) => {
+        const cleared = stageCleared(w, s);
+        const tasks = s.tasks
+          .map((t) => `<li class="${w.challenges.has(t.id) ? 'done' : ''}"><span class="mark">${w.challenges.has(t.id) ? '✓' : '·'}</span>${t.title} <small class="muted">${t.hint}</small></li>`)
+          .join('');
+        const state = cleared ? '✓ 열림' : i === stageNow ? '▶ 지금 지역' : '잠김';
+        return `<h3>${s.name} <small>${state} · 보상: ${siteLabels(s.opens).join(', ')}</small></h3>${i <= stageNow ? `<ul class="steps goal-list">${tasks}</ul>` : ''}`;
+      }).join('');
       body = `<p class="muted">메인 목표 ${done}/${MAIN_GOALS.length} · 지금 목표는 왼쪽 카드에서 자세히 볼 수 있어요.</p>
         <ul class="steps goal-list">${rows.join('')}</ul>
-        <h3>선택 도전 <small>${w.challenges.size}/${CHALLENGES.length}</small></h3>
-        <p class="muted">◆ = 왼쪽 카드에서 추적 중 (고르기는 왼쪽 카드의 선택 도전 칸)</p>
-        <ul class="steps goal-list">${ch}</ul>`;
+        <h3>지역 과제</h3>
+        <p class="muted">지역마다 과제 ${REGION_NEED}개를 이루면 다음 땅이 열려요 (셋 다 할 필요는 없어요).</p>
+        ${stages}`;
     } else {
       const cur = GUIDE.findIndex((s) => !w.guideDone.has(s.title));
       const rows = GUIDE.map((s, i) => {
@@ -1401,10 +1408,17 @@ export class UI {
     if (w === this.guideWorld && done > this.goalCount) {
       sound.play('goal');
       const last = MAIN_GOALS.filter((g) => w.goals.has(g.id)).at(-1);
-      const opened = last ? revealPreview(last.id) : [];
-      if (last) this.notice(`목표 달성: ${last.title}`, opened.length ? `지도에 새로 열린 곳: ${opened.join(', ')}` : '');
+      if (last) this.notice(`목표 달성: ${last.title}`);
       if (w.goals.has('MG36') && !this.finaleShown) this.showFinale(w);
     }
+    // 지역 과제를 마쳐 새 땅이 열렸으면 알린다
+    const stage = currentStage(w);
+    if (w === this.guideWorld && stage > this.stageCount) {
+      sound.play('goal');
+      const opened = REGION_STAGES.slice(this.stageCount, stage).flatMap((s) => siteLabels(s.opens));
+      this.notice(`${mapIcon()} 새 지역이 열렸어요`, opened.join(', '));
+    }
+    this.stageCount = stage;
     this.goalCount = done;
     this.guideWorld = w;
     const cur = currentGoal(w);
@@ -1423,12 +1437,13 @@ export class UI {
         return `<li class="${ok ? 'done' : ''}"><span class="mark">${ok ? '✓' : '·'}</span>${this.checkIcon(w, hint)}${label} <b>${Math.min(have, need).toLocaleString()}/${need.toLocaleString()}</b></li>`;
       })
       .join('');
-    const opens = w.revealed ? revealPreview(g.id) : [];
+    // 이 목표의 자원이 아직 안 열린 땅에 있으면: 지역 과제부터
+    const need = goalNeedsStage(w, g);
     const html = `${head}
       <div class="now"><small class="muted">${g.chapter} · ${g.id}</small><b>${g.title}</b><p>${withBuildingIcons(g.hint)}</p></div>
       <ul class="steps">${checks}</ul>
-      ${opens.length ? `<p class="reward">보상: ${mapIcon()} ${opens.join(', ')}</p>` : ''}
-      ${this.challengeHtml(w)}${this.trackedAchHtml(w)}`;
+      ${need ? `<p class="reward">${mapIcon()} 다음 지역이 필요해요: 아래 "${need.name}" 지역 과제 ${need.tasks.filter((t) => w.challenges.has(t.id)).length}/${REGION_NEED}</p>` : ''}
+      ${this.regionHtml(w)}${this.trackedAchHtml(w)}`;
     // 선택 도전 목록을 펼친 동안 다시 그리면 목록이 바로 닫힌다: 고르는 중이면 그대로 둔다
     if (html === this.guideHtml || $('guide').contains(document.activeElement) && document.activeElement instanceof HTMLSelectElement) return;
     this.guideHtml = html;
@@ -1436,15 +1451,22 @@ export class UI {
   }
   private guideHtml = '';
 
-  /** 선택 도전 하나를 골라 목표 카드 아래에 추적 (고른 것은 이 PC에만 기억, 이룬 기록은 공장에 저장) */
-  /** 선택 도전 다섯 개를 한눈에 (이름·진행률). 줄을 누르면 그 도전의 세부가 펼쳐진다. 고르지 않아도 모두 기록된다 */
-  private challengeHtml(w: World): string {
+  /**
+   * 지금 지역의 과제 셋 (이름·진행률), 그중 REGION_NEED개를 이루면 보상으로 다음 땅이 열린다.
+   * 줄을 누르면 그 과제의 세부가 펼쳐진다 (펼친 것은 이 PC에만 기억)
+   */
+  private regionHtml(w: World): string {
+    if (!w.revealed) return '';
+    const i = currentStage(w);
+    const s = REGION_STAGES[i];
+    if (!s) return '<p class="muted">지역 과제를 모두 마쳐 지도 전체가 열렸어요.</p>';
     const open = this.trackedChallenge();
-    const pct = (c: (typeof CHALLENGES)[number]) => {
+    const pct = (c: (typeof s.tasks)[number]) => {
       const cs = c.checks(w);
       return Math.round((cs.reduce((a, [, have, need]) => a + Math.min(1, need ? have / need : 1), 0) / Math.max(1, cs.length)) * 100);
     };
-    const rows = CHALLENGES.map((c) => {
+    const got = s.tasks.filter((t) => w.challenges.has(t.id)).length;
+    const rows = s.tasks.map((c) => {
       const done = w.challenges.has(c.id);
       const head = `<li class="chal ${done ? 'done' : ''} ${c.id === open ? 'open' : ''}" data-chal="${c.id}" title="눌러서 자세히">
         <span class="mark">${done ? '✓' : c.id === open ? '▾' : '▸'}</span>${c.title} <b>${done ? '완료' : `${pct(c)}%`}</b></li>`;
@@ -1455,8 +1477,9 @@ export class UI {
         .join('');
       return `${head}<li class="sub muted">${c.hint}</li>${detail}`;
     }).join('');
-    return `<div class="row"><span>선택 도전 <small class="muted">고르지 않아도 모두 기록</small></span><b>${w.challenges.size}/${CHALLENGES.length}</b></div>
-      <ul class="steps chals">${rows}</ul>`;
+    return `<div class="row"><span>지역 과제 · ${s.name} <small class="muted">셋 중 ${REGION_NEED}개</small></span><b>${got}/${REGION_NEED}</b></div>
+      <ul class="steps chals">${rows}</ul>
+      <p class="reward">보상: ${mapIcon()} ${siteLabels(s.opens).join(', ')}</p>`;
   }
 
   private trackedChallenge(): string {

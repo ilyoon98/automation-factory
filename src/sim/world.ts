@@ -329,17 +329,6 @@ const ORE_TECH: Partial<Record<ItemId, string>> = {
   sap: 'industrial-motor',
 };
 
-/** 메인 목표를 이루면 열리는 거점 ('*' = 지도 전체) */
-const REVEAL_ON_GOAL: Record<string, string[]> = {
-  MG07: ['B', 'H'],
-  MG11: ['C'],
-  MG14: ['D', 'E'],
-  MG19: ['F'],
-  MG20: ['G'],
-  MG28: ['tin2', 'bauxite2', 'oil2', 'brine2', 'sulfur2', 'rubber2'],
-  MG32: ['*'],
-};
-
 const SITE_LABEL: Record<string, string> = {
   B: '눈밭 (주석)',
   C: '숲 (고무나무)',
@@ -356,11 +345,9 @@ const SITE_LABEL: Record<string, string> = {
   rubber2: '두 번째 고무나무',
 };
 
-/** 이 목표를 이루면 지도에 열리는 곳 이름들 (화면 안내용) */
-export function revealPreview(id: string): string[] {
-  const list = REVEAL_ON_GOAL[id];
-  if (!list) return [];
-  return list[0] === '*' ? ['지도 전체'] : list.map((k) => SITE_LABEL[k] ?? k);
+/** 거점 키들의 화면 이름 ('*' = 지도 전체). 지역 과제의 보상 안내용 */
+export function siteLabels(keys: string[]): string[] {
+  return keys[0] === '*' ? ['지도 전체'] : keys.map((k) => SITE_LABEL[k] ?? k);
 }
 
 
@@ -663,11 +650,12 @@ export class World {
     step(x, a[1], x, y);
   }
 
-  /** 목표를 이루면 열리는 거점 (기획의 생산 순서: 주석·조립 부지 → 숲 → 사막 → 화산·염호 → 두 번째 자원지 → 전체) */
-  revealForGoal(id: string): string[] {
-    if (!this.revealed) return [];
-    const list = REVEAL_ON_GOAL[id];
-    if (!list) return [];
+  /**
+   * 거점들을 허브에서 이어진 길과 함께 연다 (지역 과제를 마쳤을 때: 주석·조립 부지 → 숲 → 사막 → 화산·염호 → 두 번째 자원지 → 전체).
+   * '*'면 지도 전체. 연 곳 이름
+   */
+  revealSites(list: string[]): string[] {
+    if (!this.revealed || !list.length) return [];
     if (list[0] === '*') {
       this.revealed.fill(1);
       this.revealedCount = this.revealed.length;

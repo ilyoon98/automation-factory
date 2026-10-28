@@ -23,8 +23,11 @@ import { setupUpdateBanner } from './ui/update';
 const REGIONAL_DEV = new URLSearchParams(location.search).has('regional-dev');
 const SAVE_KEY = REGIONAL_DEV ? 'automation-game/save-regional-dev' : 'automation-game/save-v1';
 
-/** 새 세계 (개발용 regional-dev면 확장 지도에 연구 완료·재고) */
-function newWorld(rules: RuleProfile = REGIONAL_DEV ? 'regional-v1' : 'legacy-v042'): World {
+/**
+ * 새 세계: 새 게임은 지역 생산망 확장 지도만 (기본 지도 저장은 그대로 열고 이어서 할 수 있다).
+ * 개발용 regional-dev면 연구 완료·재고
+ */
+function newWorld(rules: RuleProfile = 'regional-v1'): World {
   const seed = (Math.random() * 2 ** 31) | 0;
   const w = rules === 'regional-v1' ? generateRegionalWorld(seed) : generateWorld(seed);
   if (REGIONAL_DEV) {

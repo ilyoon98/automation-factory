@@ -51,7 +51,8 @@ import {
 import { blueprintCode, blueprintPreview, defaultBlueprintName, saveBlueprint } from './blueprints';
 import { copyText } from './clipboard';
 import { GUIDE, findTarget, type GuideFocus } from './guide';
-import { CHALLENGES, CHALLENGE_BY_ID, MAIN_GOALS, PROJECT_GOAL, currentGoal, type MainGoal } from '../sim/goals';
+import { goalFocus } from './goal-focus';
+import { CHALLENGES, MAIN_GOALS, PROJECT_GOAL, currentGoal } from '../sim/goals';
 import { ACH_BY_ID, Q60_ITEMS, achProgress, activeAchievements, sustainedSecs, type AchDef, type AchKind } from '../sim/achievements';
 import { Codex, depositName, type DepositId } from './codex';
 import { buildingIconUrl, depositIconUrl, itemIcon, itemLink, lockIcon, mapIcon, truckIconUrl, withBuildingIcons } from './icons';
@@ -161,52 +162,6 @@ function incomingItems(w: World, b: Building): ItemId[] {
 
 /** Shift + 1~4 정보 보기 */
 const LAYER_KEYS: MapLayer[] = ['base', 'power', 'transport', 'resource'];
-/** 땅에서 캐는 것: 그것을 캐는 건물 */
-const RAW_MAKER: Partial<Record<ItemId, BuildingType>> = {
-  'iron-ore': 'miner',
-  'copper-ore': 'miner',
-  coal: 'miner',
-  stone: 'miner',
-  'tin-ore': 'miner',
-  bauxite: 'miner',
-  sulfur: 'miner',
-  log: 'lumberjack',
-  sapling: 'lumberjack',
-  sap: 'sap-extractor',
-  'crude-oil': 'drill',
-  brine: 'drill',
-  water: 'pump',
-};
-
-/**
- * 메인 목표의 다음 할 일을 반짝일 곳: 못 마친 확인 항목 순서대로, 안 한 연구면 그 연구,
- * 만들어야 할 재료면 그것을 만드는 건물이 아직 하나도 없을 때 그 건물(잠겼으면 그 건물을 여는 연구)
- */
-function goalFocus(w: World, g: MainGoal): GuideFocus | null {
-  for (const [, have, need, hint] of g.checks(w)) {
-    if (have >= need || !hint) continue;
-    if (hint.tech) {
-      if (!w.researched.has(hint.tech)) return { research: hint.tech };
-      continue;
-    }
-    if (!hint.item) continue;
-    const type = RAW_MAKER[hint.item] ?? (Object.values(RECIPES).find((r) => r.outputs.some((o) => o.item === hint.item))?.machine as BuildingType | undefined);
-    if (!type) continue;
-    let built = false;
-    for (const b of w.buildings.values()) {
-      if (b.type === type) {
-        built = true;
-        break;
-      }
-    }
-    if (built) continue;
-    if (w.unlockedBuildings.has(type)) return { build: type };
-    const tech = w.techs.find((t) => t.unlockBuildings?.includes(type));
-    if (tech && !w.researched.has(tech.id)) return { research: tech.id };
-  }
-  return null;
-}
-
 /** 허브 재고를 접었을 때 보이는 줄 수 */
 const STOCK_FOLD = 8;
 
@@ -539,11 +494,12 @@ export class UI {
 
     // 목록이 다시 그려져도 놓치지 않게 click 대신 pointerdown
     // 선택 도전 고르기 (개인 설정)
-    $('guide').addEventListener('change', (e) => {
-      const sel = e.target as HTMLSelectElement;
-      if (sel.dataset.act !== 'challenge') return;
+    // 선택 도전 줄을 누르면 그 도전의 세부를 펼친다 (다시 누르면 접기, 개인 설정)
+    $('guide').addEventListener('pointerdown', (e) => {
+      const id = (e.target as HTMLElement).closest<HTMLElement>('[data-chal]')?.dataset.chal;
+      if (!id) return;
       try {
-        localStorage.setItem('automation-challenge', sel.value);
+        localStorage.setItem('automation-challenge', this.trackedChallenge() === id ? '' : id);
       } catch {
         // 저장 공간이 없으면 이번 실행 동안만
       }
@@ -565,14 +521,8 @@ export class UI {
         this.pileCycle = (this.pileCycle + 1) % tiles.length;
         const t = tiles[this.pileCycle];
         const w0 = game.getWorld().width;
+        // 누를 때마다 다음 더미로 화면만 옮긴다 (옮기기는 맵에서 더미를 눌러서)
         game.focus((t % w0) + 0.5, Math.floor(t / w0) + 0.5);
-        // 빈 땅의 더미면 바로 골라 정보창(옮기기)을 연다
-        if (!game.getWorld().buildingAt(t % w0, Math.floor(t / w0))) {
-          game.input.selectedId = null;
-          game.input.selectedVehicle = null;
-          game.input.selectedPile = t;
-        }
-        this.update();
       }
     });
     // 허브 재고 펼치기·접기 (다시 그려져도 놓치지 않게 pointerdown)
@@ -1348,7 +1298,7 @@ export class UI {
     let pileN = 0;
     for (const n of piles.values()) pileN += n;
     $('piles').hidden = !piles.size;
-    const pileHtml = piles.size ? `<p class="power-src" data-piles title="누르면 회수 더미로 (누를 때마다 다음 곳)">📦 회수 대기 ${piles.size}곳 · ${pileN}개 <span class="muted">눌러서 보기</span></p>` : '';
+    const pileHtml = piles.size ? `<p class="power-src" data-piles title="누를 때마다 다음 회수 더미로">📦 회수 대기 ${piles.size}곳 · ${pileN}개</p>` : '';
     if ($('piles').innerHTML !== pileHtml) $('piles').innerHTML = pileHtml;
     // 허브 재고: 처음엔 STOCK_FOLD개만, 펼치면 전부 (들어오는 속도가 있는 것부터)
     const items = ITEM_IDS.filter((i) => w.stockOf(i) > 0 || w.incomePerMinute(i) > 0);
@@ -1359,8 +1309,9 @@ export class UI {
         return `<div class="row stock-row" data-item="${i}" title="클릭: 도감">${itemIcon(i)}<span>${ITEMS[i].name}</span><b>${w.stockOf(i)}</b><em>${rate ? `+${rate}/분` : ''}</em></div>`;
       })
       .join('');
-    const more = items.length > STOCK_FOLD ? `<button class="stock-more" data-stock-toggle>${this.stockOpen ? '접기 ▲' : `펼치기 ▼ (${items.length - STOCK_FOLD}개 더)`}</button>` : '';
-    $('stock').innerHTML = `<h3>허브 재고 <small class="muted">${items.length}종</small></h3>${rows || '<p class="muted">비어 있음</p>'}${more}`;
+    // 펼치기·접기는 제목 줄에 (펼친 뒤 접으려고 맨 아래까지 내려가지 않게)
+    const more = items.length > STOCK_FOLD ? `<button class="stock-more" data-stock-toggle>${this.stockOpen ? '접기 ▲' : `펼치기 ▼ +${items.length - STOCK_FOLD}`}</button>` : '';
+    $('stock').innerHTML = `<h3 class="stock-head">허브 재고 <small class="muted">${items.length}종</small>${more}</h3>${rows || '<p class="muted">비어 있음</p>'}`;
   }
   private stockOpen = false;
 
@@ -1458,27 +1409,26 @@ export class UI {
   private guideHtml = '';
 
   /** 선택 도전 하나를 골라 목표 카드 아래에 추적 (고른 것은 이 PC에만 기억, 이룬 기록은 공장에 저장) */
+  /** 선택 도전 다섯 개를 한눈에 (이름·진행률). 줄을 누르면 그 도전의 세부가 펼쳐진다. 고르지 않아도 모두 기록된다 */
   private challengeHtml(w: World): string {
-    const id = this.trackedChallenge();
-    // 고르지 않았으면 아직 못 이룬 도전 중 가장 가까운 것을 보여 준다 (도전은 고르지 않아도 모두 저절로 기록된다)
-    const near = (c: (typeof CHALLENGES)[number]) => {
+    const open = this.trackedChallenge();
+    const pct = (c: (typeof CHALLENGES)[number]) => {
       const cs = c.checks(w);
-      return cs.reduce((a, [, have, need]) => a + Math.min(1, need ? have / need : 1), 0) / Math.max(1, cs.length);
+      return Math.round((cs.reduce((a, [, have, need]) => a + Math.min(1, need ? have / need : 1), 0) / Math.max(1, cs.length)) * 100);
     };
-    const auto = CHALLENGES.filter((c) => !w.challenges.has(c.id)).sort((a, b) => near(b) - near(a))[0];
-    const opts = CHALLENGES.map((c) => `<option value="${c.id}" ${c.id === id ? 'selected' : ''}>${w.challenges.has(c.id) ? '✓ ' : ''}${c.title}</option>`).join('');
-    let html = `<div class="row"><span>선택 도전</span><b>${w.challenges.size}/${CHALLENGES.length}</b></div>
-      <select data-act="challenge" style="width:100%"><option value="">가장 가까운 도전 (자동)</option>${opts}</select>`;
-    const c = id ? CHALLENGE_BY_ID[id] : auto;
-    if (!id) html += '<p class="muted">고르지 않아도 다섯 도전 모두 저절로 기록돼요.</p>';
-    if (c) {
+    const rows = CHALLENGES.map((c) => {
       const done = w.challenges.has(c.id);
-      html += `<p class="muted">${done ? '✓ 이룬 도전이에요. ' : ''}${c.hint}</p><ul class="steps">${c
+      const head = `<li class="chal ${done ? 'done' : ''} ${c.id === open ? 'open' : ''}" data-chal="${c.id}" title="눌러서 자세히">
+        <span class="mark">${done ? '✓' : c.id === open ? '▾' : '▸'}</span>${c.title} <b>${done ? '완료' : `${pct(c)}%`}</b></li>`;
+      if (c.id !== open) return head;
+      const detail = c
         .checks(w)
-        .map(([label, have, need]) => `<li class="${have >= need ? 'done' : ''}"><span class="mark">${have >= need ? '✓' : '·'}</span>${label} <b>${Math.min(have, need).toLocaleString()}/${need.toLocaleString()}</b></li>`)
-        .join('')}</ul>`;
-    }
-    return html;
+        .map(([label, have, need]) => `<li class="sub ${have >= need ? 'done' : ''}"><span class="mark">${have >= need ? '✓' : '·'}</span>${label} <b>${Math.min(have, need).toLocaleString()}/${need.toLocaleString()}</b></li>`)
+        .join('');
+      return `${head}<li class="sub muted">${c.hint}</li>${detail}`;
+    }).join('');
+    return `<div class="row"><span>선택 도전 <small class="muted">고르지 않아도 모두 기록</small></span><b>${w.challenges.size}/${CHALLENGES.length}</b></div>
+      <ul class="steps chals">${rows}</ul>`;
   }
 
   private trackedChallenge(): string {

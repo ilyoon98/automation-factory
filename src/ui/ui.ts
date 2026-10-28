@@ -316,6 +316,11 @@ export class UI {
     $('btn-goals').addEventListener('click', () => this.toggleModal('goals'));
     $('notice').addEventListener('click', (e) => {
       if ((e.target as HTMLElement).closest('.x')) this.hideNotice();
+      const ach = (e.target as HTMLElement).closest<HTMLElement>('[data-ach]')?.dataset.ach;
+      if (ach) {
+        this.hideNotice();
+        this.openAch(ach);
+      }
     });
     // 툴바에서 잠긴 건물을 눌렀을 때 상세 줄의 "연구 보기"
     $('holding').addEventListener('click', (e) => {
@@ -884,7 +889,10 @@ export class UI {
       this.researchKey = '';
       this.researchFocus = null;
     }
-    if (id === 'ach') this.achKey = '';
+    if (id === 'ach') {
+      this.achKey = '';
+      this.achFocus = null;
+    }
     if (id === 'goals') this.goalsKey = '';
     if (id === 'stats') this.statsAt = 0;
     this.update();
@@ -1422,7 +1430,8 @@ export class UI {
         const names = fresh.map((k) => {
           const [id, n] = k.split(':');
           const a = ACH_BY_ID[id];
-          return a ? `${a.name}${n ? ` ${MEDAL[Number(n) - 1]}` : ''}` : k;
+          // 누르면 업적 창에서 그 업적으로
+          return a ? `<a data-ach="${a.id}" title="눌러서 업적 보기">${a.name}${n ? ` ${MEDAL[Number(n) - 1]}` : ''}</a>` : k;
         });
         this.notice(`🏅 업적: ${names.slice(0, 3).join(', ')}${names.length > 3 ? ` 외 ${names.length - 3}개` : ''}`);
         sound.play('goal');
@@ -1453,7 +1462,7 @@ export class UI {
     }
     const state = tiered(a) ? (level >= 4 ? 'done' : level > 0 ? 'open' : 'locked') : done ? 'done' : 'open';
     const canTrack = a.kind !== 'hidden' && !(done || level >= 4);
-    return `<div class="tech ${state}">
+    return `<div class="tech ${state}" data-ach-id="${a.id}">
       <h4><span class="ticon">${a.kind === 'hidden' ? '🌟' : done || level >= 4 ? '🏅' : '·'}</span>${a.name} <small class="muted">${a.code ?? a.id} · ${a.area}</small></h4>
       <p>${a.desc}</p>${body}
       ${canTrack ? `<button data-achtrack="${a.id}">${tracked === a.id ? '추적 그만' : '추적'}</button>` : done ? '<div class="badge">완료</div>' : ''}
@@ -1505,7 +1514,32 @@ export class UI {
         ${this.achTab !== 'hidden' ? `<select data-achf="sort"><option value="">순서대로</option><option value="near" ${this.achSort ? 'selected' : ''}>다음 단계가 가까운 순</option></select>` : ''}
       </div>
       <div class="techs">${list.map((a) => this.achCard(w, a, tracked)).join('') || '<p class="muted">해당하는 업적이 없어요.</p>'}</div></div>`;
+    // 알림에서 연 업적: 반짝이고, 처음 한 번 그 카드로 스크롤
+    if (this.achFocus) {
+      const card = $('ach').querySelector<HTMLElement>(`[data-ach-id="${CSS.escape(this.achFocus)}"]`);
+      card?.classList.add('guide-pulse');
+      if (card && this.achScroll) {
+        this.achScroll = false;
+        card.scrollIntoView({ block: 'center' });
+      }
+    }
   }
+
+  /** 업적 하나를 업적 창에서 보여 준다 (그 탭으로, 필터를 풀고) */
+  private openAch(id: string): void {
+    const a = ACH_BY_ID[id];
+    if (!a) return;
+    if ($('ach').hidden) this.toggleModal('ach');
+    this.achTab = a.kind;
+    this.achTodo = false;
+    this.achArea = '';
+    this.achFocus = id;
+    this.achScroll = true;
+    this.achKey = '';
+    this.update();
+  }
+  private achFocus: string | null = null;
+  private achScroll = false;
 
   /** 목표 카드 아래: 추적 중인 업적 한 줄 */
   private trackedAchHtml(w: World): string {

@@ -424,6 +424,15 @@ h3 small {
 #notice[hidden] {
   display: none;
 }
+/* 업적 알림의 이름: 누르면 업적 창에서 그 업적 */
+#notice [data-ach] {
+  cursor: pointer;
+  text-decoration: underline dotted;
+  text-underline-offset: 3px;
+}
+#notice [data-ach]:hover {
+  color: var(--accent, #9e7526);
+}
 #notice header {
   display: flex;
   align-items: center;

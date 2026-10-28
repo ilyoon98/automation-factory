@@ -776,13 +776,25 @@ describe('회수 더미 옮기기', () => {
     expect(countOf(near.inBuf, 'iron-plate')).toBe(30);
   });
 
-  it('자리만큼만 옮기고 나머지는 더미에 남는다. 가까운 곳이 없으면 이유를 알린다 (허브로는 보내지 않는다)', () => {
+  it('가까운 창고가 없으면 허브로, 창고 자리가 모자라면 나머지는 허브로 (실물 개수는 그대로)', () => {
+    const a = withPile(30);
+    const hub = a.w.stockOf('iron-plate');
+    expect(applyCommand(a.w, 0, { t: 'pile-collect', rid: 'p2', tile: a.tile })).toMatchObject({ ok: true, moved: 30, from: 0 });
+    expect(a.w.stockOf('iron-plate')).toBe(hub + 30);
     const { w, tile } = withPile(30);
-    expect(applyCommand(w, 0, { t: 'pile-collect', rid: 'p2', tile })).toMatchObject({ ok: false });
     const st = w.place('storage', 13, 13, 0)!;
     st.inBuf.set('stone', 190);
-    expect(applyCommand(w, 0, { t: 'pile-collect', rid: 'p3', tile })).toMatchObject({ ok: true, moved: 10 });
-    expect(w.pileCount(tile, 'iron-plate')).toBe(20);
+    const before = total(w, 'iron-plate');
+    expect(applyCommand(w, 0, { t: 'pile-collect', rid: 'p3', tile })).toMatchObject({ ok: true, moved: 30, from: st.id });
+    expect(countOf(st.inBuf, 'iron-plate')).toBe(10);
+    expect(w.pileAt(tile).size).toBe(0);
+    expect(total(w, 'iron-plate')).toBe(before);
+  });
+
+  it('버리기: 더미가 없어진다', () => {
+    const { w, tile } = withPile(5);
+    expect(applyCommand(w, 0, { t: 'pile-discard', rid: 'p5', tile })).toMatchObject({ ok: true, moved: 5 });
+    expect(w.pileAt(tile).size).toBe(0);
   });
 
   it('내리기 정류장은 내보내는 칸으로 넣는다, 저장·중간 참가 해시가 같다', () => {
@@ -794,5 +806,27 @@ describe('회수 더미 옮기기', () => {
     expect(countOf(st.outBuf, 'iron-plate')).toBe(5);
     const g = World.fromSnapshot(JSON.parse(JSON.stringify(w.snapshot())));
     expect(g.checksum()).toBe(w.checksum());
+  });
+});
+
+describe('컨베이어 줄에서 잘못 들어간 아이템 빼기', () => {
+  it('철판 줄에 섞인 구리선만 이어진 줄 전체(옆에서 합류한 줄 포함)에서 빼고, 철판은 그대로', () => {
+    const w = makeRegional();
+    // (10..14, 15) 오른쪽으로 가는 줄 + (12, 13..14) 아래로 내려와 옆에서 합류
+    const line = [10, 11, 12, 13, 14].map((x) => w.place('belt', x, 15, 1)!);
+    const side = [13, 14].map((y) => w.place('belt', 12, y, 2)!);
+    expect(line.every(Boolean) && side.every(Boolean)).toBe(true);
+    line[0].items.push({ item: 'iron-plate', pos: 0.1, n: 1 });
+    line[2].items.push({ item: 'copper-wire', pos: 0.1, n: 1 });
+    side[0].items.push({ item: 'copper-wire', pos: 0.1, n: 1 });
+    const other = w.place('belt', 20, 20, 1)!;
+    other.items.push({ item: 'copper-wire', pos: 0.1, n: 1 });
+    expect(w.beltLine(line[4]).length).toBe(7);
+    expect([...w.lineItems(line[1])]).toEqual([['iron-plate', 1], ['copper-wire', 2]]);
+    const hub = w.stockOf('copper-wire');
+    expect(applyCommand(w, 0, { t: 'line-take', rid: 'l1', id: line[3].id, item: 'copper-wire' })).toMatchObject({ ok: true, moved: 2 });
+    expect(w.stockOf('copper-wire')).toBe(hub + 2);
+    expect([...w.lineItems(line[1])]).toEqual([['iron-plate', 1]]);
+    expect(other.items).toHaveLength(1); // 이어지지 않은 줄은 그대로
   });
 });

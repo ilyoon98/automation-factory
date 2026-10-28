@@ -41,7 +41,7 @@ import {
   patchAlert,
   storageBounds,
   PILE_REASON_LABEL,
-  PILE_REACH,
+  isLineType,
   revealPreview,
   type MachineStats,
   type PatchReport,
@@ -1204,7 +1204,17 @@ export class UI {
       ${p.charge > 0 ? `<p class="muted power-src">사용 중 ${Math.round(p.charge)} kW는 트럭 충전</p>` : ''}`;
   }
 
-  /** 회수 더미 정보창: 든 것·생긴 이유, 8칸 안의 창고·정류장으로 옮기기 (없으면 하역기 안내) */
+  /** 컨베이어: 이 줄에 올라 있는 아이템과, 잘못 들어간 것만 빼는 버튼 (기계가 막혔을 때) */
+  private lineBlock(w: World, b: Building): string {
+    const items = w.lineItems(b);
+    if (!items.size) return '<p class="muted">이 줄에 올라 있는 아이템이 없어요.</p>';
+    const rows = [...items]
+      .map(([i, n]) => `<div class="row"><span>${itemIcon(i)}${ITEMS[i].name} ${n}개</span><button data-line-take="${i}" title="이어진 줄 전체에서 이 아이템만 빼서 가까운 창고(없으면 허브)로">빼기</button></div>`)
+      .join('');
+    return `<div class="line-items"><b>이 줄의 아이템</b>${rows}<p class="muted">잘못 들어간 아이템 때문에 기계가 막혔으면 그 아이템만 빼요. 이어진 줄 전체에서 빠져요.</p></div>`;
+  }
+
+  /** 회수 더미 정보창: 든 것·생긴 이유, 줍기(가까운 창고·정류장, 없으면 허브)·버리기 */
   private updatePileInfo(w: World, tile: number): void {
     const el = $('info');
     el.hidden = false;
@@ -1216,13 +1226,15 @@ export class UI {
     this.infoKey = key;
     const why = [...new Set(w.piles.filter((p) => p.tile === tile).map((p) => PILE_REASON_LABEL[p.why]))].join(', ');
     const total = [...pile.values()].reduce((a, n) => a + n, 0);
-    const move = t
-      ? `<button data-act="pile-collect" ${busy ? 'disabled' : ''}>📦 ${BUILDINGS[t.b.type].name}로 옮기기 <span class="muted">${t.dist}칸 · 자리 ${t.room}개${t.room < total ? ' (일부만)' : ''}</span></button>`
-      : `<p class="muted">${PILE_REACH}칸 안에 자리가 남은 창고·정류장이 없어요. 창고를 가까이 짓거나, 더미 옆에 하역기를 놓아 꺼내요.</p>`;
+    // 줍기: 8칸 안의 창고·정류장, 없거나 자리가 모자라면 허브로
+    const where = t ? `${BUILDINGS[t.b.type].name} (${t.dist}칸)${t.room < total ? ' · 넘치는 건 허브' : ''}` : '허브';
     el.innerHTML = `<header><h3>📦 회수 더미</h3><button class="x" data-act="pile-close">×</button></header>
       <div class="row"><span>${why}</span><b>${[...pile].map(([i, n]) => `${itemIcon(i)}${n}`).join(' ')}</b></div>
-      <p class="muted">철거·분리·반송으로 이 자리에 남은 실물이에요. 가까운 창고·정류장으로 옮기거나 하역기로 꺼내요 (허브로 바로 보내지는 않아요).</p>
-      <div class="actions">${move}</div>`;
+      <p class="muted">철거·분리·반송으로 이 자리에 남은 실물이에요. 칸을 막거나 벨트에 섞이지는 않아요.</p>
+      <div class="actions">
+        <button data-act="pile-collect" ${busy ? 'disabled' : ''}>📦 줍기 <span class="muted">→ ${where}</span></button>
+        <button data-act="pile-discard" ${busy ? 'disabled' : ''}>버리기</button>
+      </div>`;
   }
 
   /** regional-v1: 지도에 있는 땅마다 지금 날씨와 영향 (화면 가운데 땅을 굵게). 예보는 없다 */
@@ -1688,6 +1700,8 @@ export class UI {
     }
     // 레시피 기계는 들어오는 재료가 바뀌면 레시피 목록 순서를 다시 만든다
     if (isRecipeMachine(b.type)) srcKey = incomingItems(w, b).join(',');
+    // 컨베이어는 줄에 오른 아이템 종류가 바뀌면 빼기 버튼을 다시 (개수만 바뀔 때는 그대로 두어 누르는 중에 사라지지 않게)
+    if (isLineType(b.type)) srcKey = [...w.lineItems(b).keys()].join(',');
     // 정류장은 트럭 목록과 "트럭 만들기" 버튼 상태가 바뀌면 다시 만든다
     if (b.type === 'station') {
       srcKey = `${b.stationMode}:${w
@@ -1813,6 +1827,7 @@ export class UI {
       if (w.regional) html += this.dockBlock(w, b);
     }
     if (w.regional && w.isPowerUser(b)) html += this.powerNodeBlock(w, b);
+    if (isLineType(b.type)) html += this.lineBlock(w, b);
     if (b.type === 'charger' && w.regional) html += this.budgetBlock(w, b);
     if (isRecipeMachine(b.type)) {
       // 들어오는 재료로 만들 수 있는 레시피를 위로, 일부만 들어오는 것, 나머지 순 (아무것도 안 이어졌으면 그대로)
@@ -2516,14 +2531,28 @@ export class UI {
   private onInfoClick(e: MouseEvent): void {
     const act = (e.target as HTMLElement).closest<HTMLElement>('[data-act]')?.dataset.act;
     const input = this.game.input;
-    if (act === 'pile-collect' || act === 'pile-close') {
+    if (act === 'pile-collect' || act === 'pile-discard' || act === 'pile-close') {
       const tile = input.selectedPile;
       if (act === 'pile-close' || tile == null) input.selectedPile = null;
-      else
+      else if (act === 'pile-discard') {
+        if (confirm('이 회수 더미를 버릴까요? 되돌릴 수 없어요.'))
+          this.sendUse(`pile:${tile}`, { t: 'pile-discard', rid: newRid(), tile }, (r) => this.toast(`${r.moved}개를 버렸어요`, 2500));
+      } else
         this.sendUse(`pile:${tile}`, { t: 'pile-collect', rid: newRid(), tile }, (r) => {
           const to = r.from ? this.game.getWorld().buildings.get(r.from) : undefined;
-          this.toast(`${r.moved}개를 ${to ? BUILDINGS[to.type].name : '창고'}로 옮겼어요`, 2500);
+          this.toast(`${r.moved}개를 주워 ${to ? BUILDINGS[to.type].name : '허브'}로 옮겼어요`, 2500);
         });
+      this.update();
+      return;
+    }
+    // 컨베이어 줄에서 잘못 들어간 아이템만 빼기
+    const take = (e.target as HTMLElement).closest<HTMLElement>('[data-line-take]')?.dataset.lineTake as ItemId | undefined;
+    const sel = this.selected();
+    if (take && sel) {
+      this.sendUse(`line:${sel.id}`, { t: 'line-take', rid: newRid(), id: sel.id, item: take }, (r) => {
+        const to = r.from ? this.game.getWorld().buildings.get(r.from) : undefined;
+        this.toast(`줄에서 ${ITEMS[take].name} ${r.moved}개를 빼서 ${to ? BUILDINGS[to.type].name : '허브'}로 옮겼어요`, 3000);
+      });
       this.update();
       return;
     }

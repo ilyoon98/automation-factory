@@ -1666,25 +1666,83 @@ export class World {
     return best;
   }
 
-  /** 회수 더미를 가까운 창고·정류장으로 옮긴다 (먼저 생긴 사건부터, 자리만큼만). 남은 건 그대로 */
+  /**
+   * 손으로 주운 물건을 둔다: tile에서 PILE_REACH칸 안에 자리가 남은 창고·정류장이 있으면 거기 (자리만큼),
+   * 나머지는 허브로. 넣은 곳 (창고·정류장 id, 모두 허브면 0)
+   */
+  private stashNear(tile: number, list: [ItemId, number][]): number {
+    const t = this.pileTarget(tile);
+    const buf = t ? (t.b.type === 'station' && t.b.stationMode === 'unload' ? t.b.outBuf : t.b.inBuf) : null;
+    let room = t?.room ?? 0;
+    for (const [item, n] of list) {
+      const k = buf ? Math.min(room, n) : 0;
+      if (k > 0) addTo(buf!, item, k);
+      room -= k;
+      if (n - k > 0) addTo(this.stock, item, n - k);
+    }
+    return t && t.room > 0 ? t.b.id : 0;
+  }
+
+  /** 회수 더미를 줍는다: 가까운 창고·정류장(없거나 모자라면 허브)으로. 먼저 생긴 사건부터 */
   collectPile(tile: number): UseResult {
     if (!this.regional) return { ok: false, reason: '이 세계에는 회수 더미가 없어요' };
-    if (!this.piles.some((p) => p.tile === tile)) return { ok: false, reason: '회수 더미가 없어요' };
-    const t = this.pileTarget(tile);
-    if (!t) return { ok: false, reason: `${PILE_REACH}칸 안에 자리가 남은 창고·정류장이 없어요` };
-    const buf = t.b.type === 'station' && t.b.stationMode === 'unload' ? t.b.outBuf : t.b.inBuf;
-    let room = t.room;
-    let moved = 0;
-    for (const p of [...this.piles].filter((q) => q.tile === tile).sort((a, c) => a.ev - c.ev || ITEM_IDS.indexOf(a.item) - ITEM_IDS.indexOf(c.item))) {
-      if (room <= 0) break;
-      const k = Math.min(room, p.n);
-      p.n -= k;
-      addTo(buf, p.item, k);
-      room -= k;
-      moved += k;
+    const list = this.piles.filter((p) => p.tile === tile).sort((a, c) => a.ev - c.ev || ITEM_IDS.indexOf(a.item) - ITEM_IDS.indexOf(c.item));
+    if (!list.length) return { ok: false, reason: '회수 더미가 없어요' };
+    const moved = list.reduce((a, p) => a + p.n, 0);
+    const from = this.stashNear(tile, list.map((p): [ItemId, number] => [p.item, p.n]));
+    this.piles = this.piles.filter((p) => p.tile !== tile);
+    return { ok: true, moved, from };
+  }
+
+  /** 회수 더미를 버린다 (쓸모없는 것). 없어진 개수 */
+  discardPile(tile: number): UseResult {
+    const n = this.piles.filter((p) => p.tile === tile).reduce((a, p) => a + p.n, 0);
+    if (!n) return { ok: false, reason: '회수 더미가 없어요' };
+    this.piles = this.piles.filter((p) => p.tile !== tile);
+    return { ok: true, moved: n };
+  }
+
+  /** 이 컨베이어와 이어진 한 줄 (컨베이어·지하 컨베이어만. 분배기·기계에서 끊긴다) */
+  beltLine(start: Building): Building[] {
+    if (!isLineType(start.type)) return [];
+    const seen = new Set<number>([start.id]);
+    const queue = [start];
+    const out: Building[] = [];
+    while (queue.length && out.length < 5000) {
+      const b = queue.shift()!;
+      out.push(b);
+      const near: (Building | null)[] = [this.buildingAt(b.x + DX[b.dir], b.y + DY[b.dir]), b.type === 'underground' ? this.partnerOf(b) : null];
+      // 이 칸으로 흘려 넣는 컨베이어
+      for (const d of [0, 1, 2, 3] as Dir[]) {
+        const n = this.buildingAt(b.x + DX[d], b.y + DY[d]);
+        if (n && isLineType(n.type) && n.x + DX[n.dir] === b.x && n.y + DY[n.dir] === b.y) near.push(n);
+      }
+      for (const n of near) {
+        if (!n || !isLineType(n.type) || seen.has(n.id)) continue;
+        seen.add(n.id);
+        queue.push(n);
+      }
     }
-    this.piles = this.piles.filter((p) => p.n > 0);
-    return { ok: true, moved, from: t.b.id };
+    return out;
+  }
+
+  /** 이 줄에 올라 있는 아이템별 개수 (잘못 들어간 것을 빼려고) */
+  lineItems(start: Building): Map<ItemId, number> {
+    const m = new Map<ItemId, number>();
+    for (const b of this.beltLine(start)) for (const it of b.items) addTo(m, it.item, it.n);
+    return new Map(ITEM_IDS.filter((i) => countOf(m, i) > 0).map((i) => [i, countOf(m, i)]));
+  }
+
+  /** 줄에서 item만 모두 빼서 가까운 창고·정류장(없으면 허브)으로. 막혔던 기계가 다시 받게 된다 */
+  takeFromLine(start: Building, item: ItemId): UseResult {
+    let n = 0;
+    for (const b of this.beltLine(start)) {
+      for (const it of b.items) if (it.item === item) n += it.n;
+      b.items = b.items.filter((it) => it.item !== item);
+    }
+    if (!n) return { ok: false, reason: '이 줄에 그 아이템이 없어요' };
+    const from = this.stashNear(this.idx(start.x, start.y), [[item, n]]);
+    return { ok: true, moved: n, from };
   }
 
   // ───────────────────────── 자동화 설비 모듈 (regional-v1) ─────────────────────────

@@ -40,6 +40,8 @@ export type Command =
   | { t: 'module-install'; rid: string; id: number; storage: number; key: string }
   /** normal = 바로 또는 제작 완료 후 분리, cancel-request = 분리 예약 취소, force = 작업 취소 후 즉시 분리 */
   | { t: 'module-detach'; rid: string; id: number; mode: 'normal' | 'cancel-request' | 'force' }
+  /** 회수 더미(칸)를 가까운 창고·정류장으로 옮기기 */
+  | { t: 'pile-collect'; rid: string; tile: number }
   /** 정류장 자체 또는 직접 붙은 창고군(key, '' = 정류장만)의 조립품 1개로 고급 트럭. copy = 노선을 베낄 트럭 */
   | { t: 'build-adv-truck'; rid: string; station: number; key: string; copy?: number }
   /** 전력망: 기계·정류장·충전기·축전기가 접속할 노드를 공급 범위 안에서 고른다 */
@@ -93,6 +95,7 @@ export interface CommandResults {
   'truck-filter': void;
   'module-install': UseResult;
   'module-detach': UseResult;
+  'pile-collect': UseResult;
   'build-adv-truck': UseResult;
   'power-node': UseResult;
   'zone-budget': boolean;
@@ -205,6 +208,8 @@ function run(w: World, c: Command): CommandResults[Command['t']] {
         if (!b) return { ok: false, reason: '기계가 없어요' };
         return w.installModule(b, Number(c.storage), String(c.key ?? ''));
       });
+    case 'pile-collect':
+      return applyOnce(w, c.rid, () => w.collectPile(Number(c.tile)));
     case 'module-detach':
       return applyOnce(w, c.rid, () => {
         const b = w.buildings.get(c.id);

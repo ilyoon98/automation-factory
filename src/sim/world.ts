@@ -312,7 +312,12 @@ export interface UseResult {
   vehicle?: number;
   /** 실제로 차감한 보관물 (정류장·창고 건물 id) */
   from?: number;
+  /** 회수 더미에서 옮긴 개수 */
+  moved?: number;
 }
+
+/** 회수 더미를 손으로 옮길 수 있는 거리: 창고·정류장 몸체까지 체비쇼프 칸 */
+export const PILE_REACH = 8;
 
 /** 채굴·채취에 연구가 필요한 자원 (regional-v1). 원유·염수는 시추기, 수액은 수액 채취기 */
 const ORE_TECH: Partial<Record<ItemId, string>> = {
@@ -1629,6 +1634,61 @@ export class World {
     }
     if (got) this.piles = this.piles.filter((p) => p.n > 0);
     return got;
+  }
+
+  /** 정류장·창고(군)에 지금 더 넣을 수 있는 개수 (트럭 입고 예약 공간은 비워 둔다) */
+  private holderRoom(b: Building): number {
+    if (b.type === 'storage') {
+      const g = this.storageGroup(b);
+      return Math.max(0, this.storageCapacity(b) - this.storageTotal(b) - (this.reservations.length ? this.groupInReserved(g) : 0));
+    }
+    return Math.max(0, STATION_CAPACITY - sumOf(b.stationMode === 'unload' ? b.outBuf : b.inBuf) - this.inReserved(b));
+  }
+
+  /**
+   * 회수 더미를 옮길 곳: 몸체가 PILE_REACH칸 안이고 자리가 남은 창고(군)·정류장 중 가장 가까운 것 (같으면 작은 id).
+   * 허브로는 보내지 않는다 (현지 실물이 트럭 없이 허브로 가지 않게)
+   */
+  pileTarget(tile: number): { b: Building; dist: number; room: number } | null {
+    const x = tile % this.width;
+    const y = Math.floor(tile / this.width);
+    // 창고군은 군 하나로, 몸체가 가장 가까운 창고까지의 거리로 잰다
+    const near = new Map<Building, number>();
+    for (const b of this.buildings.values()) {
+      if (b.type !== 'storage' && b.type !== 'station') continue;
+      const dist = Math.max(Math.max(0, b.x - x, x - (b.x + b.size - 1)), Math.max(0, b.y - y, y - (b.y + b.size - 1)));
+      if (dist > PILE_REACH) continue;
+      const lead = b.type === 'storage' ? this.storageGroup(b)[0] : b;
+      near.set(lead, Math.min(dist, near.get(lead) ?? Infinity));
+    }
+    let best: { b: Building; dist: number; room: number } | null = null;
+    for (const [b, dist] of near) {
+      const room = this.holderRoom(b);
+      if (room <= 0) continue;
+      if (!best || dist < best.dist || (dist === best.dist && b.id < best.b.id)) best = { b, dist, room };
+    }
+    return best;
+  }
+
+  /** 회수 더미를 가까운 창고·정류장으로 옮긴다 (먼저 생긴 사건부터, 자리만큼만). 남은 건 그대로 */
+  collectPile(tile: number): UseResult {
+    if (!this.regional) return { ok: false, reason: '이 세계에는 회수 더미가 없어요' };
+    if (!this.piles.some((p) => p.tile === tile)) return { ok: false, reason: '회수 더미가 없어요' };
+    const t = this.pileTarget(tile);
+    if (!t) return { ok: false, reason: `${PILE_REACH}칸 안에 자리가 남은 창고·정류장이 없어요` };
+    const buf = t.b.type === 'station' && t.b.stationMode === 'unload' ? t.b.outBuf : t.b.inBuf;
+    let room = t.room;
+    let moved = 0;
+    for (const p of [...this.piles].filter((q) => q.tile === tile).sort((a, c) => a.ev - c.ev || ITEM_IDS.indexOf(a.item) - ITEM_IDS.indexOf(c.item))) {
+      if (room <= 0) break;
+      const k = Math.min(room, p.n);
+      p.n -= k;
+      addTo(buf, p.item, k);
+      room -= k;
+      moved += k;
+    }
+    this.piles = this.piles.filter((p) => p.n > 0);
+    return { ok: true, moved, from: t.b.id };
   }
 
   // ───────────────────────── 자동화 설비 모듈 (regional-v1) ─────────────────────────

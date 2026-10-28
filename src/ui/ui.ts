@@ -41,6 +41,7 @@ import {
   patchAlert,
   storageBounds,
   PILE_REASON_LABEL,
+  PILE_REACH,
   revealPreview,
   type MachineStats,
   type PatchReport,
@@ -499,6 +500,13 @@ export class UI {
         const t = tiles[this.pileCycle];
         const w0 = game.getWorld().width;
         game.focus((t % w0) + 0.5, Math.floor(t / w0) + 0.5);
+        // 빈 땅의 더미면 바로 골라 정보창(옮기기)을 연다
+        if (!game.getWorld().buildingAt(t % w0, Math.floor(t / w0))) {
+          game.input.selectedId = null;
+          game.input.selectedVehicle = null;
+          game.input.selectedPile = t;
+        }
+        this.update();
         return;
       }
       const id = Number((e.target as HTMLElement).closest<HTMLElement>('[data-net]')?.dataset.net);
@@ -1155,6 +1163,27 @@ export class UI {
       ${p.charge > 0 ? `<p class="muted power-src">사용 중 ${Math.round(p.charge)} kW는 트럭 충전</p>` : ''}`;
   }
 
+  /** 회수 더미 정보창: 든 것·생긴 이유, 8칸 안의 창고·정류장으로 옮기기 (없으면 하역기 안내) */
+  private updatePileInfo(w: World, tile: number): void {
+    const el = $('info');
+    el.hidden = false;
+    const pile = w.pileAt(tile);
+    const t = w.pileTarget(tile);
+    const busy = this.useBusy.has(`pile:${tile}`);
+    const key = `pile|${tile}|${[...pile].join(',')}|${t ? `${t.b.id}:${t.room}` : ''}|${busy}`;
+    if (key === this.infoKey) return;
+    this.infoKey = key;
+    const why = [...new Set(w.piles.filter((p) => p.tile === tile).map((p) => PILE_REASON_LABEL[p.why]))].join(', ');
+    const total = [...pile.values()].reduce((a, n) => a + n, 0);
+    const move = t
+      ? `<button data-act="pile-collect" ${busy ? 'disabled' : ''}>📦 ${BUILDINGS[t.b.type].name}로 옮기기 <span class="muted">${t.dist}칸 · 자리 ${t.room}개${t.room < total ? ' (일부만)' : ''}</span></button>`
+      : `<p class="muted">${PILE_REACH}칸 안에 자리가 남은 창고·정류장이 없어요. 창고를 가까이 짓거나, 더미 옆에 하역기를 놓아 꺼내요.</p>`;
+    el.innerHTML = `<header><h3>📦 회수 더미</h3><button class="x" data-act="pile-close">×</button></header>
+      <div class="row"><span>${why}</span><b>${[...pile].map(([i, n]) => `${itemIcon(i)}${n}`).join(' ')}</b></div>
+      <p class="muted">철거·분리·반송으로 이 자리에 남은 실물이에요. 가까운 창고·정류장으로 옮기거나 하역기로 꺼내요 (허브로 바로 보내지는 않아요).</p>
+      <div class="actions">${move}</div>`;
+  }
+
   /** regional-v1: 지도에 있는 땅마다 지금 날씨와 영향 (화면 가운데 땅을 굵게). 예보는 없다 */
   private terrainWeatherTable(w: World): string {
     if (this.terrainKinds.world !== w) this.terrainKinds = { world: w, kinds: [...new Set(w.terrain ? [...w.terrain] : [])].sort((a, b) => a - b).map((i) => TERRAIN_IDS[i]) };
@@ -1544,6 +1573,11 @@ export class UI {
     const b = this.selected();
     if (!b && this.game.input.paste) {
       this.updatePasteInfo(this.game.input.paste, this.game.input.pasteName);
+      return;
+    }
+    const pileTile = this.game.input.selectedPile;
+    if (!b && pileTile != null && w.piles.some((p) => p.tile === pileTile)) {
+      this.updatePileInfo(w, pileTile);
       return;
     }
     if (!b) {
@@ -2384,6 +2418,17 @@ export class UI {
   private onInfoClick(e: MouseEvent): void {
     const act = (e.target as HTMLElement).closest<HTMLElement>('[data-act]')?.dataset.act;
     const input = this.game.input;
+    if (act === 'pile-collect' || act === 'pile-close') {
+      const tile = input.selectedPile;
+      if (act === 'pile-close' || tile == null) input.selectedPile = null;
+      else
+        this.sendUse(`pile:${tile}`, { t: 'pile-collect', rid: newRid(), tile }, (r) => {
+          const to = r.from ? this.game.getWorld().buildings.get(r.from) : undefined;
+          this.toast(`${r.moved}개를 ${to ? BUILDINGS[to.type].name : '창고'}로 옮겼어요`, 2500);
+        });
+      this.update();
+      return;
+    }
     // 정류장 정보창의 트럭 목록: 그 트럭으로
     const truck = (e.target as HTMLElement).closest<HTMLElement>('[data-truck]')?.dataset.truck;
     if (truck) {

@@ -76,6 +76,8 @@ export class Input implements ViewState {
   selectedId: number | null = null;
   /** 고른 트럭 (건물과 동시에 고르지 않는다) */
   selectedVehicle: number | null = null;
+  /** 고른 회수 더미 칸 (빈 땅의 더미를 눌렀을 때) */
+  selectedPile: number | null = null;
   /** Ctrl 드래그 중인 복사 영역 */
   selection: { x0: number; y0: number; x1: number; y1: number } | null = null;
   /** Ctrl + 우클릭 드래그 중인 철거 영역 */
@@ -142,6 +144,7 @@ export class Input implements ViewState {
     if (this.tool) {
       this.selectedId = null;
       this.selectedVehicle = null;
+      this.selectedPile = null;
       this.paste = null;
       this.multi = [];
     }
@@ -350,6 +353,9 @@ export class Input implements ViewState {
       const b = v ? null : w.buildingAt(Math.floor(wx), Math.floor(wy));
       this.selectedVehicle = v ? v.id : null;
       this.selectedId = b ? b.id : null;
+      // 빈 땅의 회수 더미
+      const tile = w.inBounds(Math.floor(wx), Math.floor(wy)) ? w.idx(Math.floor(wx), Math.floor(wy)) : -1;
+      this.selectedPile = !v && !b && tile >= 0 && w.piles.some((p) => p.tile === tile) ? tile : null;
       this.cb.changed();
     }
     this.mode = 'none';
@@ -393,6 +399,7 @@ export class Input implements ViewState {
         this.multi = [];
         this.selectedId = null;
         this.selectedVehicle = null;
+        this.selectedPile = null;
         this.cb.changed();
         break;
       case ' ':

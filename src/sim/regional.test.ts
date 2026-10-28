@@ -748,3 +748,51 @@ describe('저장·같이 하기 (S01~S02)', () => {
     expect(total(a.w, 'module')).toBe(2);
   });
 });
+
+describe('회수 더미 옮기기', () => {
+  /** 제련로를 철거해 (10,10)에 철판 더미를 만든다 */
+  function withPile(n = 30) {
+    const w = makeRegional();
+    const s = w.place('smelter', 10, 10, 0)!;
+    s.outBuf.set('iron-plate', n);
+    w.remove(s);
+    return { w, tile: w.idx(10, 10) };
+  }
+
+  it('8칸 안의 가장 가까운 창고로 옮기고, 실물 개수는 그대로', () => {
+    const { w, tile } = withPile();
+    const far = w.place('storage', 20, 10, 0)!; // 몸체까지 10칸: 닿지 않는다
+    const near = w.place('storage', 14, 10, 0)!; // 4칸
+    const before = total(w, 'iron-plate');
+    expect(w.pileTarget(tile)?.b).toBe(near);
+    const r = applyCommand(w, 0, { t: 'pile-collect', rid: 'p1', tile });
+    expect(r).toMatchObject({ ok: true, moved: 30, from: near.id });
+    expect(countOf(near.inBuf, 'iron-plate')).toBe(30);
+    expect(countOf(far.inBuf, 'iron-plate')).toBe(0);
+    expect(w.pileAt(tile).size).toBe(0);
+    expect(total(w, 'iron-plate')).toBe(before);
+    // 같은 명령을 다시 받아도 한 번만
+    expect(applyCommand(w, 0, { t: 'pile-collect', rid: 'p1', tile })).toMatchObject({ ok: true, moved: 30 });
+    expect(countOf(near.inBuf, 'iron-plate')).toBe(30);
+  });
+
+  it('자리만큼만 옮기고 나머지는 더미에 남는다. 가까운 곳이 없으면 이유를 알린다 (허브로는 보내지 않는다)', () => {
+    const { w, tile } = withPile(30);
+    expect(applyCommand(w, 0, { t: 'pile-collect', rid: 'p2', tile })).toMatchObject({ ok: false });
+    const st = w.place('storage', 13, 13, 0)!;
+    st.inBuf.set('stone', 190);
+    expect(applyCommand(w, 0, { t: 'pile-collect', rid: 'p3', tile })).toMatchObject({ ok: true, moved: 10 });
+    expect(w.pileCount(tile, 'iron-plate')).toBe(20);
+  });
+
+  it('내리기 정류장은 내보내는 칸으로 넣는다, 저장·중간 참가 해시가 같다', () => {
+    const { w, tile } = withPile(5);
+    for (let x = 12; x <= 18; x++) w.place('road', x, 14, 0);
+    const st = w.place('station', 14, 12, 0)!;
+    st.stationMode = 'unload';
+    expect(applyCommand(w, 0, { t: 'pile-collect', rid: 'p4', tile }).ok).toBe(true);
+    expect(countOf(st.outBuf, 'iron-plate')).toBe(5);
+    const g = World.fromSnapshot(JSON.parse(JSON.stringify(w.snapshot())));
+    expect(g.checksum()).toBe(w.checksum());
+  });
+});

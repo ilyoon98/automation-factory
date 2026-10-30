@@ -8,4 +8,3 @@ export type Activity =
   | { kind: 'charge'; id: number; amount: number }
   | { kind: 'cargo'; id: number; station: number; item: ItemId; loading: boolean }
   | { kind: 'station-port'; id: number; from: number; to: number; item: ItemId };
-

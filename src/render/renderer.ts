@@ -1,8 +1,10 @@
 import {
   BUILDINGS,
   FOREST,
+  GENERATOR_POWER,
+  HYDRO_POWER,
+  GRID as POWER_GRID,
   STATION_CAPACITY,
-  TRUCK,
   UNDERGROUND_MAX_GAP,
   isBeltType,
   isGeneratorType,
@@ -11,7 +13,7 @@ import {
 } from '../data/buildings';
 import { ITEMS, type ItemId } from '../data/items';
 import { LOCAL_WEATHER_ICON } from '../sim/weather-v1';
-import { TERRAIN, TERRAIN_IDS } from '../data/terrain';
+import { TERRAIN, TERRAIN_IDS, type TerrainKind } from '../data/terrain';
 import { RECIPES } from '../data/recipes';
 import type { Presence } from '../net/session';
 import type { Blueprint } from '../sim/blueprint';
@@ -22,14 +24,28 @@ import { BELT_SPEED, World, isLineType, patchAlert, portTiles, storageBounds } f
 import { ambientEnabled, darkness, sunset, weatherAt } from './ambient';
 import type { Camera } from './camera';
 import { roundRect } from './draw-item';
+import { PILE_MARKER } from './pile-marker';
+import { constructionCheck, type PointerFeedback } from '../input/pointer';
+import type { RoadPlan } from '../sim/road-plan';
 import { FOG_COLOR, NUM_ADVANCE, ORE_GROUND, PAL, TILE, TREE_LEAF, hash, loadSpriteOverrides, sprite, spriteHalf, tone } from './pixel';
 import { MACHINE, MACHINE3 } from './pixel-buildings';
+import { reducedEffects } from './effects';
+import { ActivityPhases, cargoFrame } from './activity';
+import type { Activity } from '../sim/activity';
+import { representativeWires, wireKey } from './wires';
+import { sound } from '../ui/sound';
+import type { Wire } from '../sim/world';
+import { queueStationTransfer, stationRoadPreview, stationTransfer, transferEndpoints, transferLabel, transferSample, TRANSFER_DURATION, type StationTransfer } from './station-feedback';
 
 /** 목표 표시 색 (진분홍: 모래·광맥·숲·호수 어디에도 없는 색이라 눈에 띈다. style.css .guide-pulse와 같게) */
 const GUIDE_COLOR = '#ff3d8b';
 
 /** 렌더러가 입력 상태에서 필요로 하는 것 */
 export interface ViewState {
+  /** 실제 클릭과 같은 대상·조작 판정. 입력이 없는 장면 예시에서는 생략 가능. */
+  readonly pointerFeedback?: PointerFeedback | null;
+  readonly straightPlacement?: { x0: number; y0: number; x1: number; y1: number; axis: 'x' | 'y' | null } | null;
+  readonly roadPreview?: RoadPlan | null;
   tool: BuildingType | null;
   toolDir: Dir;
   hover: { x: number; y: number } | null;
@@ -87,6 +103,9 @@ const STATION_COLOR: Record<StationMode, string> = { load: PAL.green, unload: PA
 /** 상태 표시 그림 (badge:<이름>) */
 const STATUS_BADGE: Partial<Record<Status, string>> = {
   'low-power': 'power',
+  'no-power': 'power',
+  'no-trees': 'empty',
+  'no-room': 'full',
   'no-input': 'wait',
   'output-full': 'full',
   'no-recipe': 'what',
@@ -129,8 +148,8 @@ interface Puff {
 
 /** 먼지가 남아 있는 시간 (초) */
 const PUFF_SEC = 0.45;
-/** 한꺼번에 보여 줄 먼지 수 (큰 붙여넣기·영역 철거에서 너무 많아지지 않게) */
-const PUFF_MAX = 160;
+/** 실제 알갱이+파편 수. 카드 20·허브 8·화물 4·산출 강조 8과 합쳐 최대 128 */
+const PUFF_MAX = 88;
 /** 지을 때 이는 먼지 색 (바닥보다 조금 진한 모래색) */
 const PUFF_DUST = '#b89a63';
 /** 지은 건물이 위에서 툭 떨어져 내려앉는 시간 (초). 앞은 떨어지기, 뒤는 작게 한 번 더 튀기 */
@@ -193,12 +212,94 @@ export class Renderer {
   private hops = new Map<number, number>();
   /** 지난 프레임까지 끝난 연구 수, 허브 반짝임이 시작된 시각 (없으면 -1) */
   private seenResearch = 0;
+  private seenFinale = false;
   private sparkleT0 = -1;
+  private finalSparkle = false;
   /** 밤 어둠을 그리는 화면 크기 캔버스 (불빛 자리를 도려낸 뒤 덮는다) */
   private shade: HTMLCanvasElement | null = null;
   /** 빗줄기 (화면 좌표, 0~1) */
   private drops: { x: number; y: number; s: number }[] = [];
   private lastRainAt = 0;
+  private activity = new ActivityPhases();
+  private generatorPhase = new Map<number, number>();
+  private lastGameTime = 0;
+  private wires: readonly Wire[] | null = null;
+  private representatives = new Set<string>();
+  private wireBorn = new Map<string, number>();
+  private batchAt = new Map<number, number>();
+  private stationTransfers = new Map<number, StationTransfer>();
+  private flights: StationTransfer[] = [];
+  private layer: MapLayer = 'base';
+  private previousLayer: MapLayer = 'base';
+  private layerAt = -Infinity;
+  private knownReveal: Uint8Array | null = null;
+  private knownRevealCount = -1;
+  private revealTiles: number[] = [];
+  private revealAt = -Infinity;
+  private lastArrival = -Infinity;
+  private selectedVehicle: number | null = null;
+  private maskKey = '';
+  private maskWorld: World | null = null;
+  private mask = new Path2D();
+  private deviceMask = new Path2D();
+  private weatherPaths = new Map<TerrainKind, Path2D>();
+  private rejection: { x: number; y: number; size: number; reason: string; until: number } | null = null;
+  private accumulatorEnergy = new Map<number, number>();
+  private accumulatorFlow = new Map<number, { at: number; dir: number }>();
+  private vehicleKey = '';
+
+  rejectPlacement(x: number, y: number, type: BuildingType, reason: string): void {
+    this.rejection = { x, y, size: BUILDINGS[type].size, reason, until: performance.now() / 1000 + 0.25 };
+  }
+
+  /** 탭 복귀 시 밀린 장식을 재생하지 않는다. */
+  clearEffects(): void {
+    this.rejection = null;
+    this.puffs = []; this.hops.clear(); this.flights = []; this.batchAt.clear(); this.sparkleT0 = -1;
+    this.stationTransfers.clear();
+    if (this.seenWorld) {
+      this.seenResearch = researchCount(this.seenWorld);
+      this.seenFinale = this.seenWorld.goals.has('MG36');
+      this.lastGameTime = this.seenWorld.time;
+      this.lastRainAt = this.seenWorld.time;
+      this.revealTiles = [];
+      if (this.knownRevealCount !== this.seenWorld.revealedCount) {
+        this.knownReveal = this.seenWorld.revealed?.slice() ?? null;
+        this.knownRevealCount = this.seenWorld.revealedCount;
+      }
+    }
+  }
+
+  private onScreen(x: number, y: number, size = 1): boolean {
+    const [sx, sy] = this.cam.worldToScreen(x, y), z = this.cam.zoom;
+    return sx + size * z >= 0 && sy + size * z >= 0 && sx <= this.cam.viewW && sy <= this.cam.viewH;
+  }
+
+  private recordActivity(world: World, e: Activity): void {
+    this.activity.record(e);
+    if (document.hidden) return;
+    const now = performance.now() / 1000;
+    if (e.kind === 'batch') {
+      if (reducedEffects() || this.lod) return;
+      const b = world.buildings.get(e.id);
+      if ([...this.batchAt.values()].filter((t) => now - t < 0.15).length >= 8) return;
+      if (b && this.onScreen(b.x, b.y, b.size) && now - (this.batchAt.get(e.id) ?? -Infinity) >= 1) this.batchAt.set(e.id, now);
+    }
+    const transfer = stationTransfer(world, e, now);
+    if (!transfer) return;
+    const st = world.buildings.get(transfer.station)!;
+    if (!this.onScreen(st.x, st.y, st.size)) return;
+    this.stationTransfers.set(st.id, transfer);
+    if (e.kind === 'station-port') {
+      for (const id of [e.from, e.to]) {
+        const endpoint = world.buildings.get(id);
+        if (endpoint?.type === 'station' && endpoint.id !== st.id) this.stationTransfers.set(endpoint.id, { ...transfer, station: endpoint.id, entering: endpoint.id === e.to });
+      }
+    }
+    if (reducedEffects() || this.lod) return;
+    this.flights = queueStationTransfer(this.flights, transfer, now);
+    if (transfer.vehicle === this.selectedVehicle && now - this.lastArrival >= 1) { sound.play('truck'); this.lastArrival = now; }
+  }
 
   constructor(private canvas: HTMLCanvasElement) {
     this.ctx = canvas.getContext('2d')!;
@@ -227,6 +328,14 @@ export class Renderer {
     this.u = cam.zoom / TILE;
     this.n = this.u * dpr;
     this.lod = this.n < LOD_SCALE;
+    if (this.layer !== view.layer) {
+      this.previousLayer = this.layer; this.layerAt = performance.now() / 1000; this.layer = view.layer;
+    }
+    const blend = reducedEffects() ? 1 : Math.min(1, (performance.now() / 1000 - this.layerAt) / 0.15);
+    this.selectedVehicle = view.selectedVehicle;
+    if (reducedEffects()) {
+      this.puffs = []; this.hops.clear(); this.flights = []; this.batchAt.clear(); this.sparkleT0 = -1;
+    }
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.imageSmoothingEnabled = false;
     ctx.fillStyle = BG;
@@ -248,6 +357,21 @@ export class Renderer {
     this.drawGround(world, x0, y0, x1, y1);
     if (view.tool || view.paste) this.drawGrid(x0, y0, x1, y1);
     this.trackBuildings(world);
+    const dt = Math.max(0, world.time - this.lastGameTime);
+    this.lastGameTime = world.time;
+    const feedbackNow = performance.now() / 1000;
+    for (const [id, transfer] of this.stationTransfers) if (feedbackNow - transfer.born >= 0.65 || !world.buildings.has(id)) this.stationTransfers.delete(id);
+    const vehicleKey = `${world.nextVehicleId}:${world.vehicles.size}`;
+    if (vehicleKey !== this.vehicleKey) {
+      this.vehicleKey = vehicleKey;
+      for (const map of [this.activity.wheels, this.activity.charge]) for (const id of map.keys()) if (!world.vehicles.has(id)) map.delete(id);
+    }
+    for (const b of world.buildings.values()) {
+      if (!isGeneratorType(b.type)) continue;
+      const rated = b.type === 'hydro' ? HYDRO_POWER : b.type === 'fuel-generator' ? POWER_GRID.fuel.power : b.type === 'geothermal' ? POWER_GRID.geothermal : GENERATOR_POWER;
+      const rate = b.type === 'wind' ? world.windAt(b) / 150 : Math.max(0, b.load / rated);
+      this.generatorPhase.set(b.id, (this.generatorPhase.get(b.id) ?? 0) + dt * rate);
+    }
 
     const visible: Building[] = [];
     for (const b of world.buildings.values()) {
@@ -258,7 +382,12 @@ export class Renderer {
     // 컨베이어 무늬가 흐르는 위치 (칸 단위, 0~0.5. 종류마다 속도가 다르다)
     const phase = (b: Building) => (world.time * (b.def.speed ?? BELT_SPEED) * world.boost('endless-belt')) % 0.5;
     const isLine = (b: Building) => isLineType(b.type);
-    if (world.regional && (view.layer === 'power' || (view.layer === 'base' && this.showGrid(view)))) this.drawGridCoverage(world);
+    if (world.regional) {
+      if (blend < 1 && this.previousLayer === 'power') { ctx.save(); ctx.globalAlpha = 1 - blend; this.drawGridCoverage(world); ctx.restore(); }
+      if (view.layer === 'power' || (view.layer === 'base' && this.showGrid(view))) {
+        ctx.save(); ctx.globalAlpha = blend; this.drawGridCoverage(world); ctx.restore();
+      }
+    }
     for (const b of visible) if (b.type === 'road') this.drawRoad(world, b);
     for (const b of visible) {
       if (isBeltType(b.type)) this.drawBelt(b, phase(b));
@@ -271,7 +400,7 @@ export class Renderer {
       }
     }
     for (const b of visible) if (!isLine(b) && b.type !== 'road') this.drawBuilding(world, b);
-    if (world.regional && z >= 6) this.drawWires(world, x0, y0, x1, y1);
+    if (world.regional && z >= 6) this.drawWires(world, view, x0, y0, x1, y1);
     // 창고는 묶음마다 한 번 (묶음 일부만 화면에 보여도)
     if (!this.lod) {
       const storages = new Set(visible.filter((b) => b.type === 'storage').map((b) => world.storageGroup(b)[0]));
@@ -283,14 +412,26 @@ export class Renderer {
     for (const v of world.vehicles.values()) {
       const p = spots.get(v.id) ?? v;
       if (p.x < x0 - 1 || p.y < y0 - 1 || p.x > x1 + 2 || p.y > y1 + 2) continue;
-      this.drawTruck(v, v.id === view.selectedVehicle, p);
+      this.drawTruck(world, v, v.id === view.selectedVehicle, p);
     }
+    ctx.save(); this.clipRevealed(world);
     this.drawPuffs();
     this.drawSparkle(world);
-    if (world.regional && view.layer !== 'base') this.drawLayer(world, view.layer, x0, y0, x1, y1);
+    ctx.restore();
+    if (world.regional) {
+      ctx.save(); this.clipRevealed(world);
+      if (blend < 1 && this.previousLayer !== 'base') { ctx.globalAlpha = 1 - blend; this.drawLayer(world, this.previousLayer, x0, y0, x1, y1); }
+      if (view.layer !== 'base') { ctx.globalAlpha = blend; this.drawLayer(world, view.layer, x0, y0, x1, y1); }
+      ctx.restore();
+    }
     // 낮·밤과 날씨: 땅·건물·트럭 위, 상태 표시·선택 같은 덧그림 아래
     if (ambientEnabled()) this.drawAmbient(world, visible, spots);
-    if (this.n >= 1) {
+    this.drawReveal(world);
+    // 화물은 기상·정보 면 위에서 읽히되 미공개 지형을 넘어 드러나지 않는다.
+    ctx.save(); this.clipRevealed(world);
+    this.drawCargoFlights(world, spots);
+    ctx.restore();
+    {
       const low = new Set<number>();
       for (const r of world.patchReports()) if (patchAlert(r) === 'low') for (const m of r.miners) low.add(m.id);
       for (const b of visible) if (!isLine(b)) this.drawBadge(b, low.has(b.id) ? ORE_LOW_BADGE : undefined);
@@ -382,28 +523,84 @@ export class Renderer {
       this.text(doomed.length ? `${doomed.length}개 철거` : '철거할 것 없음', sx + 2, sy - 4, '#fbf3df', 12, PAL.red, 'left', 'bottom');
     }
 
+    const road = view.roadPreview;
+    if (road && world.buildings.has(road.from) && world.buildings.has(road.to)) {
+      ctx.save(); this.clipRevealed(world);
+      ctx.strokeStyle = '#3f86c4'; ctx.lineWidth = Math.max(2, z * .22); ctx.lineJoin = 'miter';
+      ctx.beginPath();
+      road.path.forEach((t, i) => {
+        const [sx, sy] = cam.worldToScreen(t % world.width + .5, Math.floor(t / world.width) + .5);
+        if (i) ctx.lineTo(sx, sy); else ctx.moveTo(sx, sy);
+      });
+      ctx.stroke();
+      for (const t of road.newTiles) {
+        const [sx, sy] = cam.worldToScreen(t % world.width, Math.floor(t / world.width));
+        ctx.fillStyle = 'rgba(63,138,58,.32)'; ctx.fillRect(sx, sy, z, z);
+        ctx.strokeStyle = '#3f8a3a'; ctx.lineWidth = 1; ctx.strokeRect(sx + .5, sy + .5, z - 1, z - 1);
+      }
+      for (const [t, label] of road.path.length === 1 ? [[road.path[0], 'A/B'] as const] : [[road.path[0], 'A'] as const, [road.path.at(-1)!, 'B'] as const]) {
+        const [sx, sy] = cam.worldToScreen(t % world.width + .5, Math.floor(t / world.width) + .5);
+        this.text(label, sx, sy, '#fbf3df', 12, '#3b2716', 'center', 'middle');
+      }
+      ctx.restore();
+    }
+    const straight = view.straightPlacement;
+    if (straight?.axis) {
+      const [ax, ay] = cam.worldToScreen(straight.x0 + .5, straight.y0 + .5);
+      const [bx, by] = cam.worldToScreen(straight.x1 + .5, straight.y1 + .5);
+      ctx.save();
+      this.clipRevealed(world);
+      ctx.strokeStyle = '#3f8a3a'; ctx.lineWidth = 2; ctx.setLineDash([4, 4]);
+      ctx.beginPath(); ctx.moveTo(ax, ay); ctx.lineTo(bx, by); ctx.stroke();
+      ctx.setLineDash([]);
+      this.text(straight.axis === 'x' ? '가로 직선' : '세로 직선', ax, ay - z * .65, '#3b2716', 10, CREAM, 'center', 'bottom');
+      ctx.restore();
+    }
+
     // 배치 미리보기 / 마우스 칸
     if (view.hover) {
-      if (view.paste) {
+      const action = view.pointerFeedback;
+      const editing = action && ['remove', 'pan', 'copy', 'multi', 'ping'].includes(action.kind);
+      if (editing) {
+        if (action.target) {
+          const t = action.target, [sx, sy] = cam.worldToScreen(t.x, t.y);
+          this.outline(sx, sy, t.size * z, t.size * z, action.color, true);
+          if (action.kind === 'remove') {
+            ctx.strokeStyle = action.color; ctx.lineWidth = 2;
+            ctx.beginPath(); ctx.moveTo(sx + z * .2, sy + z * .2); ctx.lineTo(sx + z * .8, sy + z * .8);
+            ctx.moveTo(sx + z * .8, sy + z * .2); ctx.lineTo(sx + z * .2, sy + z * .8); ctx.stroke();
+          }
+        }
+      } else if (view.paste) {
         for (const e of view.paste.entries) {
           this.drawGhost(world, e.type, e.dir, view.hover.x + e.dx, view.hover.y + e.dy, false);
         }
       } else if (view.tool) {
         // 도구를 든 채 건물 위에 있으면 클릭 = 설정 열기, R = 그 건물 회전이라 미리보기 대신 건물을 강조한다
         const hb = world.buildingAt(view.hover.x, view.hover.y);
-        if (hb && !isBeltType(hb.type) && !(view.tool === 'road' && hb.type === 'road')) {
+        if (hb && (action?.kind === 'select' || (!action && !isBeltType(hb.type) && !(view.tool === 'road' && hb.type === 'road')))) {
           const [bx, by] = cam.worldToScreen(hb.x, hb.y);
           this.outline(bx, by, hb.size * z, hb.size * z, SELECT, true);
         } else {
-          this.drawGhost(world, view.tool, view.toolDir, view.hover.x, view.hover.y, true, view.toolSetting);
+          this.drawGhost(world, view.tool, view.toolDir, view.hover.x, view.hover.y, true, view.toolSetting, action ? action.kind === 'build' : undefined);
           if (world.regional && world.nodeRadius({ type: view.tool }) > 0) this.drawNodePreview(world, view.tool, view.hover.x, view.hover.y);
         }
       } else {
-        const [sx, sy] = cam.worldToScreen(view.hover.x, view.hover.y);
-        ctx.strokeStyle = 'rgba(59,39,22,0.4)';
-        ctx.lineWidth = 1;
-        ctx.strokeRect(sx + 0.5, sy + 0.5, z - 1, z - 1);
+        const t = action?.target ?? { ...view.hover, size: 1 };
+        const [sx, sy] = cam.worldToScreen(t.x, t.y);
+        if (action?.kind === 'pickup' || action?.kind === 'select') {
+          this.outline(sx, sy, t.size * z, t.size * z, action.color);
+        } else {
+          ctx.strokeStyle = 'rgba(59,39,22,0.4)'; ctx.lineWidth = 1;
+          ctx.strokeRect(sx + 0.5, sy + 0.5, t.size * z - 1, t.size * z - 1);
+        }
       }
+    }
+    const rejection = this.rejection;
+    if (rejection && performance.now() / 1000 < rejection.until && this.onScreen(rejection.x, rejection.y, rejection.size)) {
+      const [sx, sy] = cam.worldToScreen(rejection.x, rejection.y);
+      this.outline(sx, sy, rejection.size * z, rejection.size * z, PAL.red);
+      this.text(rejection.reason, sx + rejection.size * z / 2, sy - 4, CREAM, 12, PAL.ink, 'center', 'bottom');
     }
   }
 
@@ -414,21 +611,37 @@ export class Renderer {
     const remember = (b: Building) => this.seen.set(b.id, { x: b.x, y: b.y, size: b.size, art: artOf(b) });
     // 공장이 통째로 바뀌면(새 게임·불러오기·방 참가) 먼지 없이 기억만 새로
     if (world !== this.seenWorld) {
+      if (this.seenWorld) this.seenWorld.onActivity = undefined;
       this.seenWorld = world;
+      this.activity.clear(); this.generatorPhase.clear(); this.clearEffects();
+      this.accumulatorEnergy.clear(); this.accumulatorFlow.clear();
+      this.wires = null; this.representatives.clear(); this.wireBorn.clear(); this.stationTransfers.clear();
+      this.lastGameTime = world.time;
+      this.knownReveal = world.revealed?.slice() ?? null; this.knownRevealCount = world.revealedCount; this.revealTiles = [];
+      world.onActivity = (e) => this.recordActivity(world, e);
       this.seen.clear();
       for (const b of world.buildings.values()) remember(b);
       this.puffs = [];
       this.hops.clear();
       this.seenResearch = researchCount(world);
+      this.seenFinale = world.goals.has('MG36');
       this.sparkleT0 = -1;
       return;
     }
     const now = performance.now() / 1000;
+    if (this.knownRevealCount !== world.revealedCount) {
+      this.revealTiles = [];
+      if (world.revealed && this.knownReveal && !reducedEffects() && !document.hidden) {
+        for (let i = 0; i < world.revealed.length; i++) if (world.revealed[i] && !this.knownReveal[i]) this.revealTiles.push(i);
+      }
+      this.knownReveal = world.revealed?.slice() ?? null; this.knownRevealCount = world.revealedCount; this.revealAt = now;
+    }
     if (world.nextId !== this.seenNextId || world.buildings.size !== this.seenCount) {
       for (const b of world.buildings.values()) {
         if (this.seen.has(b.id)) continue;
         remember(b);
         // 건물은 위에서 툭 떨어져 내려앉고, 땅에 닿을 때 먼지 (컨베이어·도로는 끌어 놓으니 먼지만)
+        if (reducedEffects() || this.lod || !this.onScreen(b.x, b.y, b.size) || document.hidden) continue;
         const hop = !isLineType(b.type) && b.type !== 'road';
         if (hop) this.hops.set(b.id, now);
         this.addPuff(b.x, b.y, b.size, true, hop ? now + HOP_FALL : now);
@@ -437,7 +650,8 @@ export class Renderer {
         if (world.buildings.has(id)) continue;
         this.seen.delete(id);
         this.hops.delete(id);
-        this.addPuff(s.x, s.y, s.size, false, now, s.art);
+        if (!reducedEffects() && !this.lod && this.onScreen(s.x, s.y, s.size) && !document.hidden) this.addPuff(s.x, s.y, s.size, false, now, s.art);
+        this.activity.work.delete(id); this.generatorPhase.delete(id); this.batchAt.delete(id); this.accumulatorEnergy.delete(id); this.accumulatorFlow.delete(id);
       }
     }
     this.seenNextId = world.nextId;
@@ -446,7 +660,11 @@ export class Renderer {
     for (const [id, t0] of this.hops) if (now - t0 >= HOP_SEC) this.hops.delete(id);
     // 연구를 마치면 (누가 했든) 허브에서 반짝
     const done = researchCount(world);
-    if (done > this.seenResearch) this.sparkleT0 = now;
+    const finale = world.goals.has('MG36') && !this.seenFinale;
+    if ((done > this.seenResearch || finale) && !document.hidden && !reducedEffects() && world.hub && this.onScreen(world.hub.x, world.hub.y, world.hub.size)) {
+      this.sparkleT0 = now; this.finalSparkle = finale;
+    }
+    this.seenFinale = world.goals.has('MG36');
     this.seenResearch = done;
   }
 
@@ -468,10 +686,23 @@ export class Renderer {
     return Math.round((h / 3) * Math.sin((Math.PI * (t - HOP_FALL)) / (HOP_SEC - HOP_FALL)));
   }
 
+  private drawReveal(world: World): void {
+    const age = performance.now() / 1000 - this.revealAt;
+    if (age >= 0.6 || reducedEffects()) { this.revealTiles = []; return; }
+    const ctx = this.ctx; ctx.save();
+    ctx.fillStyle = FOG_COLOR; ctx.globalAlpha = 0.3 * (1 - age / 0.6); ctx.beginPath();
+    for (const i of this.revealTiles) {
+      const x = i % world.width, y = Math.floor(i / world.width);
+      if (!world.isRevealed(i) || !this.onScreen(x, y)) continue;
+      const [sx, sy] = this.cam.worldToScreen(x, y); ctx.rect(sx, sy, this.cam.zoom, this.cam.zoom);
+    }
+    ctx.fill(); ctx.restore();
+  }
+
   private addPuff(x: number, y: number, size: number, build: boolean, now: number, art?: string): void {
-    if (this.puffs.length >= PUFF_MAX) return;
+    this.puffs = this.puffs.filter((p) => now - p.t0 < PUFF_SEC);
     const w = size * TILE;
-    const n = size === 1 ? 4 : 8;
+    const n = size === 1 ? 2 : 6;
     const dots: Puff['dots'] = [];
     for (let i = 0; i < n; i++) {
       // 아래 가장자리를 따라 고르게 놓고 바깥쪽 위로 튄다 (지으면 내려앉으며 이는 먼지, 철거하면 이는 흙먼지)
@@ -487,12 +718,12 @@ export class Renderer {
     let shards: Puff['shards'];
     if (art && sprite(art)) {
       shards = [];
-      const s = w / 4;
+      const s = w / 2;
       const power = size === 1 ? 0.6 : 1;
-      for (let j = 0; j < 4; j++) {
-        for (let i = 0; i < 4; i++) {
-          const dx = (i - 1.5) / 1.5;
-          const dy = (j - 1.5) / 1.5;
+      for (let j = 0; j < 2; j++) {
+        for (let i = 0; i < 2; i++) {
+          const dx = (i - 0.5) * 2;
+          const dy = (j - 0.5) * 2;
           shards.push({
             x: i * s,
             y: j * s,
@@ -503,6 +734,7 @@ export class Renderer {
         }
       }
     }
+    while (this.puffs.reduce((sum, p) => sum + p.dots.length + (p.shards?.length ?? 0), 0) + dots.length + (shards?.length ?? 0) > PUFF_MAX) this.puffs.shift();
     this.puffs.push({ x, y, size, t0: now, build, dots, art, shards });
   }
 
@@ -514,6 +746,7 @@ export class Renderer {
     const ctx = this.ctx;
     const u = this.u;
     for (const p of this.puffs) {
+      if (!this.onScreen(p.x, p.y, p.size)) continue;
       const t = now - p.t0;
       // 지을 때 먼지는 건물이 땅에 닿을 때부터
       if (t < 0) continue;
@@ -559,14 +792,14 @@ export class Renderer {
       this.sparkleT0 = -1;
       return;
     }
-    if (this.lod) return;
+    if (this.lod || !this.onScreen(hub.x, hub.y, hub.size)) return;
     const ctx = this.ctx;
     const u = this.u;
     const k = t / SPARKLE_SEC;
     const [sx, sy] = this.cam.worldToScreen(hub.x, hub.y);
     const half = (hub.size * TILE) / 2;
     // 처음 0.15초는 허브 테두리가 놋쇠색으로 반짝
-    if (t < 0.15) this.outline(sx - u, sy - u, (half * 2 + 2) * u, (half * 2 + 2) * u, PAL.brass.hi);
+    if (t < (this.finalSparkle ? 0.3 : 0.15)) this.outline(sx - u, sy - u, (half * 2 + 2) * u, (half * 2 + 2) * u, PAL.brass.hi);
     const ease = 1 - (1 - k) * (1 - k);
     const r = half - 4 + 22 * ease;
     const arm = k < 0.35 ? 2 : k < 0.7 ? 1 : 0;
@@ -576,7 +809,7 @@ export class Renderer {
       ctx.fillRect(sx + x * u, sy + (y - arm) * u, u, (arm * 2 + 1) * u);
     };
     ctx.globalAlpha = k < 0.7 ? 1 : 1 - (k - 0.7) / 0.3;
-    const n = 12;
+    const n = 8;
     for (let i = 0; i < n; i++) {
       // 바깥 별과 안쪽 별이 번갈아 (안쪽은 조금 늦게, 반대 방향으로 살짝 돈다)
       const inner = i % 2 === 1;
@@ -585,13 +818,6 @@ export class Renderer {
       const x = Math.round(half + Math.cos(a) * rr);
       const y = Math.round(half + Math.sin(a) * rr);
       star(x, y, inner ? PAL.brass.hi : '#fffbe8');
-    }
-    // 굴뚝 쪽으로 올라가는 작은 불티
-    ctx.fillStyle = PAL.brass.hi;
-    for (let i = 0; i < 5; i++) {
-      const x = Math.round(half - 12 + i * 6 + Math.sin(k * 9 + i) * 2);
-      const y = Math.round(half - 6 - (20 + (i % 3) * 6) * ease);
-      ctx.fillRect(sx + x * u, sy + y * u, u, u);
     }
     ctx.globalAlpha = 1;
   }
@@ -938,10 +1164,10 @@ export class Renderer {
     if (this.lod) return this.blit(b.type === 'station' ? `station-${b.stationMode}` : b.type, 0, sx, sy);
     const u = this.u;
     const t = world.time;
+    const phase = isGeneratorType(b.type) ? this.generatorPhase.get(b.id) ?? 0 : this.activity.work.get(b.id) ?? 0;
     const working = b.status === 'working' || b.status === 'low-power';
-    /** 일하는 동안 1~4 프레임을 돈다 (전력 부족이면 반 속도) */
-    const anim = (on: boolean, fps = 8) =>
-      on ? 1 + (Math.floor(t * (b.status === 'low-power' ? fps / 2 : fps) + b.id) % 4) : 0;
+    /** 실제 누적 작업량/발전량. 일시정지·전력 0에서는 같은 프레임에 머문다. */
+    const anim = (on: boolean, fps = 8) => on && !reducedEffects() ? 1 + (Math.floor(phase * fps + b.id) % 4) : 0;
     /** 앞면 이름표에 아이템 */
     const plate = (item: ItemId | null | undefined) => {
       if (item) this.blit(`item:${item}`, 0, sx + MACHINE.plate.x * u, sy + MACHINE.plate.y * u);
@@ -982,16 +1208,16 @@ export class Renderer {
         // 패널 위로 가끔 반짝임이 지나간다
         const step = Math.floor(t * 6 + b.id * 5) % 16;
         // 해가 없으면(밤) 반짝이지 않는다
-        this.blit('solar', b.load > 0 && step < 4 ? step + 1 : 0, sx, sy);
+        this.blit('solar', !reducedEffects() && b.load > 0 && step < 4 ? step + 1 : 0, sx, sy);
         break;
       }
       case 'wind':
         // 바람이 셀수록 빨리 돈다
-        this.blit('wind', anim(true, 3 + (b.load / 150) * 9), sx, sy);
+        this.blit('wind', anim(world.windAt(b) > 0, 10), sx, sy);
         break;
       case 'hydro':
         // 물이 많을수록 빨리 돈다. 물 눈금은 진행 막대 자리에
-        this.blit('hydro', anim(b.load > 0, 4 + (b.load / 600) * 8), sx, sy);
+        this.blit('hydro', anim(b.load > 0, 10), sx, sy);
         this.drawBar(sx, sy, b.fuel / 10, PAL.water.mid);
         break;
       case 'splitter':
@@ -1017,10 +1243,21 @@ export class Renderer {
       case 'pole':
       case 'accumulator':
         this.blit(b.type, 0, sx, sy);
-        if (b.type === 'accumulator') this.drawBar(sx, sy, b.energy / 10000, '#4aa36a');
+        if (b.type === 'accumulator') {
+          this.drawBar(sx, sy, b.energy / POWER_GRID.accumulator.capacity, '#4aa36a');
+          const before = this.accumulatorEnergy.get(b.id);
+          if (before !== undefined && Math.abs(before - b.energy) > 1e-6) this.accumulatorFlow.set(b.id, { at: world.time, dir: b.energy > before ? 1 : -1 });
+          this.accumulatorEnergy.set(b.id, b.energy);
+          const flow = this.accumulatorFlow.get(b.id);
+          if (flow && world.time - flow.at < 0.1) {
+            this.artRect(sx, sy, 23, 6, 5, 1, flow.dir > 0 ? PAL.green : PAL.orange);
+            if (flow.dir > 0) this.artRect(sx, sy, 25, 4, 1, 5, PAL.green);
+          }
+        }
         break;
       case 'substation':
         this.blit(b.type, 0, sx, sy);
+        this.artRect(sx, sy, 6, 6, 2, 2, !world.netHasSource(world.netOf(b)) ? '#7d7567' : world.satOf(b) < 1 ? PAL.orange : PAL.green);
         break;
       case 'fuel-generator':
       case 'geothermal':
@@ -1063,12 +1300,18 @@ export class Renderer {
     if (b.def.ports) this.drawPortTiles(b, sx, sy);
     else if (HAS_PORTS.includes(b.type)) this.drawPorts(b.type, b.dir, sx, sy, b.stationMode);
     // 자동화 설비 모듈: 윗면 오른쪽 위에 보라 표식 (분리 예약이면 깜빡)
-    if (b.module && (!b.detach || Math.floor(t * 2) % 2 === 0)) {
+    if (b.module) {
       const mx = b.size * TILE - 7;
       this.artRect(sx, sy, mx, 2, 5, 5, PAL.ink);
       this.artRect(sx, sy, mx + 1, 3, 3, 3, b.modBatch ? '#b48cf2' : '#8f5fd9');
     }
 
+    const flash = performance.now() / 1000 - (this.batchAt.get(b.id) ?? -Infinity);
+    if (flash < 0.15 && !reducedEffects()) {
+      const [ox, oy] = portTiles(b, 'out')[0] ?? [b.x + b.size / 2, b.y + b.size - 1];
+      const [px, py] = this.cam.worldToScreen(ox + 0.5, oy + 0.5);
+      this.ctx.fillStyle = PAL.brass.hi; this.ctx.fillRect(Math.round(px), Math.round(py), 2 * u, u);
+    }
     // 진행 막대
     if (b.crafting) {
       const p = Math.min(1, b.progress / world.craftTime(b));
@@ -1180,24 +1423,51 @@ export class Renderer {
   }
 
   /** 노드 사이 전선: 전봇대는 가로대에, 허브·발전기·변전소는 기준 칸 가운데에. 길이에 따라 살짝 처진다 */
-  private drawWires(world: World, x0: number, y0: number, x1: number, y1: number): void {
+  private drawWires(world: World, view: ViewState, x0: number, y0: number, x1: number, y1: number): void {
     const ctx = this.ctx;
     const z = this.cam.zoom;
+    const now = performance.now() / 1000;
+    const edges = world.powerWires();
+    if (edges !== this.wires) {
+      const old = new Set((this.wires ?? edges).map(wireKey));
+      this.representatives = representativeWires(edges, this.representatives);
+      for (const e of edges) if (!old.has(wireKey(e)) && this.onScreen(e[0], e[1])) this.wireBorn.set(wireKey(e), now);
+      this.wires = edges;
+      const keys = new Set(edges.map(wireKey));
+      for (const key of this.wireBorn.keys()) if (!keys.has(key)) this.wireBorn.delete(key);
+    }
+    const selected = view.selectedId ? world.buildings.get(view.selectedId) : null;
+    const at = selected && world.nodeRadius(selected) > 0 ? [selected.x + Math.floor(selected.size / 2), selected.y + Math.floor(selected.size / 2)] : null;
     const end = (x: number, y: number, pole: boolean) => this.cam.worldToScreen(x + (pole ? 0.53 : 0.5), y + (pole ? 0.22 : 0.5));
     ctx.save();
+    this.clipRevealed(world);
     ctx.lineWidth = Math.max(1, z / 16);
-    for (const [ax, ay, bx, by, poles] of world.powerWires()) {
+    for (const e of edges) {
+      const [ax, ay, bx, by, poles] = e;
+      const key = wireKey(e), main = this.representatives.has(key);
+      const related = !!at && (ax === at[0] && ay === at[1] || bx === at[0] && by === at[1]);
+      if (!main && !related && view.layer !== 'power') continue;
+      if (!world.isRevealed(world.idx(ax, ay)) || !world.isRevealed(world.idx(bx, by))) continue;
       if (Math.max(ax, bx) < x0 - 1 || Math.min(ax, bx) > x1 + 1 || Math.max(ay, by) < y0 - 1 || Math.min(ay, by) > y1 + 1) continue;
       const [sx, sy] = end(ax, ay, (poles & 1) !== 0);
       const [ex, ey] = end(bx, by, (poles & 2) !== 0);
       const sag = Math.hypot(ex - sx, ey - sy) * 0.06;
-      ctx.strokeStyle = 'rgba(30,22,16,0.75)';
+      ctx.globalAlpha = reducedEffects() ? 1 : Math.min(1, (now - (this.wireBorn.get(key) ?? -Infinity)) / 0.15);
+      ctx.strokeStyle = related ? '#b35c12' : main ? 'rgba(30,22,16,0.75)' : 'rgba(59,39,22,0.18)';
       ctx.beginPath();
       ctx.moveTo(sx, sy);
       ctx.quadraticCurveTo((sx + ex) / 2, (sy + ey) / 2 + sag * 2, ex, ey);
       ctx.stroke();
     }
     ctx.restore();
+    if (selected && at) {
+      const r = world.nodeRadius(selected);
+      const [rx, ry] = this.cam.worldToScreen(at[0] - r, at[1] - r);
+      ctx.save(); this.clipRevealed(world); this.outline(rx, ry, (r * 2 + 1) * z, (r * 2 + 1) * z, SELECT); ctx.restore();
+      const impact = world.removalPreview(selected);
+      const [sx, sy] = this.cam.worldToScreen(at[0] + 0.5, at[1] + 0.5);
+      if (impact) this.text(`철거 시 연결 ${impact.cut}개 · 분리 ${impact.split}망 · 전력 끊김 ${impact.lost}대`, sx, sy - z, CREAM, 10, PAL.ink, 'center', 'bottom');
+    }
   }
 
   /**
@@ -1213,21 +1483,52 @@ export class Renderer {
   private drawGridCoverage(world: World): void {
     const ctx = this.ctx;
     const z = this.cam.zoom;
-    const named = new Set<number>();
+    const groups = new Map<number, [number, number, number][]>();
     for (const [nx, ny, r, net] of world.powerNodes()) {
-      const live = world.netHasSource(net);
-      const hue = (net * 67) % 360;
-      ctx.fillStyle = live ? `hsla(${hue}, 70%, 55%, 0.12)` : 'rgba(90,90,90,0.14)';
-      const [sx, sy] = this.cam.worldToScreen(nx - r, ny - r);
-      ctx.fillRect(sx, sy, (r * 2 + 1) * z, (r * 2 + 1) * z);
-      // 망 이름은 망 id인 노드(가장 먼저 지은 노드) 자리에 한 번
-      if (!named.has(net) && world.buildings.get(net)) {
-        const nb = world.buildings.get(net)!;
-        if (nb.x === nx - Math.floor(nb.size / 2) && nb.y === ny - Math.floor(nb.size / 2)) {
-          named.add(net);
-          const [cx, cy] = this.cam.worldToScreen(nx + 0.5, ny + 0.5);
-          this.text(live ? `전력망 ${net}` : `전력망 ${net} · 공급원 없음`, cx, cy - z, live ? `hsl(${hue}, 60%, 30%)` : '#5a5a5a', 12);
-        }
+      if (!world.isRevealed(world.idx(nx, ny))) continue;
+      if (!groups.has(net)) groups.set(net, []);
+      groups.get(net)!.push([nx, ny, r]);
+    }
+    ctx.save(); this.clipRevealed(world);
+    for (const [net, nodes] of groups) {
+      ctx.fillStyle = world.netHasSource(net) ? `hsla(${net * 67 % 360},70%,55%,0.12)` : 'rgba(90,90,90,0.14)';
+      // 하나의 경로를 한 번만 채워 같은 망 안의 겹침은 진해지지 않는다.
+      ctx.beginPath();
+      for (const [x, y, r] of nodes) {
+        if (!this.onScreen(x - r, y - r, r * 2 + 1)) continue;
+        const [sx, sy] = this.cam.worldToScreen(x - r, y - r);
+        ctx.rect(sx, sy, (r * 2 + 1) * z, (r * 2 + 1) * z);
+      }
+      ctx.fill();
+    }
+    ctx.restore();
+  }
+
+  /** 모든 정보·장식보다 접근 마스크를 먼저 적용한다. */
+  private clipRevealed(world: World, device = false): void {
+    this.cacheMasks(world);
+    this.ctx.clip(device ? this.deviceMask : this.mask);
+  }
+
+  /** 화면·공개 범위가 그대로면 경로를 재사용한다. 먼 지도에서도 지형별 전면 순회를 반복하지 않는다. */
+  private cacheMasks(world: World): void {
+    const z = this.cam.zoom, k = this.dpr;
+    const key = `${this.cam.x}:${this.cam.y}:${z}:${this.cam.viewW}:${this.cam.viewH}:${k}:${world.revealedCount}`;
+    if (this.maskWorld === world && this.maskKey === key) return;
+    this.maskWorld = world; this.maskKey = key;
+    this.mask = new Path2D(); this.deviceMask = new Path2D(); this.weatherPaths.clear();
+    const [x0, y0] = this.cam.screenToWorld(0, 0), [x1, y1] = this.cam.screenToWorld(this.cam.viewW, this.cam.viewH);
+    for (let y = Math.max(0, Math.floor(y0)); y <= Math.min(world.height - 1, Math.ceil(y1)); y++) {
+      for (let x = Math.max(0, Math.floor(x0)); x <= Math.min(world.width - 1, Math.ceil(x1));) {
+        if (!world.isRevealed(world.idx(x, y))) { x++; continue; }
+        const terrain = world.terrainAt(world.idx(x, y));
+        const start = x++;
+        while (x <= Math.min(world.width - 1, Math.ceil(x1)) && world.isRevealed(world.idx(x, y)) && world.terrainAt(world.idx(x, y)) === terrain) x++;
+        const [sx, sy] = this.cam.worldToScreen(start, y);
+        this.mask.rect(sx, sy, (x - start) * z, z);
+        this.deviceMask.rect(sx * k, sy * k, (x - start) * z * k, z * k);
+        if (!this.weatherPaths.has(terrain)) this.weatherPaths.set(terrain, new Path2D());
+        this.weatherPaths.get(terrain)!.rect(sx * k, sy * k, (x - start) * z * k, z * k);
       }
     }
   }
@@ -1235,16 +1536,30 @@ export class Renderer {
   /** 노드를 놓으려 할 때: 12칸 안에서 이어질 노드로 점선, 둘 이상의 망이면 합쳐진다고 알린다 */
   private drawNodePreview(world: World, type: BuildingType, x: number, y: number): void {
     const size = BUILDINGS[type].size;
-    const rx = x + Math.floor(size / 2);
-    const ry = y + Math.floor(size / 2);
+    const [ox, oy] = World.originFor(type, x, y);
+    const rx = ox + Math.floor(size / 2);
+    const ry = oy + Math.floor(size / 2);
     const { links, nets } = world.nodePreview(rx, ry);
     const ctx = this.ctx;
     const [ax, ay] = this.cam.worldToScreen(rx + 0.5, ry + 0.3);
     ctx.save();
+    this.clipRevealed(world);
+    const r = world.nodeRadius({ type }), cover = world.powerCover(), z = this.cam.zoom;
+    ctx.beginPath();
+    for (let cy = Math.max(0, ry - r); cy <= Math.min(world.height - 1, ry + r); cy++) {
+      for (let cx = Math.max(0, rx - r); cx <= Math.min(world.width - 1, rx + r); cx++) {
+        if (cover[world.idx(cx, cy)] || !world.isRevealed(world.idx(cx, cy))) continue;
+        const [sx, sy] = this.cam.worldToScreen(cx, cy); ctx.rect(sx, sy, z, z);
+      }
+    }
+    ctx.fillStyle = 'rgba(215,166,61,0.16)'; ctx.fill();
+    const [rx0, ry0] = this.cam.worldToScreen(rx - r, ry - r);
+    this.outline(rx0, ry0, (r * 2 + 1) * z, (r * 2 + 1) * z, SELECT);
     ctx.setLineDash([5, 4]);
     ctx.strokeStyle = 'rgba(30,22,16,0.7)';
     ctx.lineWidth = 1.5;
     for (const [nx, ny] of links) {
+      if (!world.isRevealed(world.idx(nx, ny))) continue;
       const [bx, by] = this.cam.worldToScreen(nx + 0.5, ny + 0.3);
       ctx.beginPath();
       ctx.moveTo(ax, ay);
@@ -1266,7 +1581,7 @@ export class Renderer {
       let top: ItemId | null = null;
       let max = 0;
       for (const [item, n] of world.pileAt(tile)) if (n > max) [top, max] = [item, n];
-      this.artRect(sx, sy, 5, 5, 11, 11, PAL.ink);
+      this.artRect(sx, sy, PILE_MARKER.x, PILE_MARKER.y, PILE_MARKER.size, PILE_MARKER.size, PAL.ink);
       this.artRect(sx, sy, 6, 6, 9, 9, '#c9a46a');
       if (top) this.blit(`item:${top}`, 0, sx + 6 * this.u, sy + 6 * this.u);
     }
@@ -1315,7 +1630,9 @@ export class Renderer {
     this.drawNum(no, sx + (MACHINE.stationNo.cx - Math.floor(w / 2)) * u, sy + MACHINE.stationNo.y * u, true);
     if (top) this.blit(`item:${top}`, 0, sx + MACHINE.plate.x * u, sy + MACHINE.plate.y * u);
     this.drawBar(sx, sy, total / STATION_CAPACITY, STATION_COLOR[mode]);
-    this.label(mode === 'load' ? '싣기' : '내리기', sx, sy, MACHINE.faceText, CREAM);
+    const transfer = this.stationTransfers.get(b.id);
+    const active = transfer && performance.now() / 1000 - transfer.born < 0.65;
+    this.label(active ? transferLabel(transfer) : mode === 'load' ? '싣기' : '내리기', sx, sy, MACHINE.faceText, active ? PAL.brass.hi : CREAM);
   }
 
   /** 앞면 막대 (틀 + 안쪽 2줄). 기본 자리는 2×2 기계 공통 */
@@ -1381,22 +1698,69 @@ export class Renderer {
 
   /** 트럭: 가까운 네 방향 그림, 짐 양에 따라 빈 차·조금·가득. 멈춘 이유가 있으면 ! */
   /** at: 그릴 자리 (줄 선 트럭은 실제 자리와 다르다) */
-  private drawTruck(v: Vehicle, selected: boolean, at: { x: number; y: number; angle: number }): void {
+  private drawTruck(world: World, v: Vehicle, selected: boolean, at: { x: number; y: number; angle: number }): void {
     const u = this.u;
     const dir = (((Math.round(at.angle / (Math.PI / 2)) + 1) % 4) + 4) % 4;
-    const fill = v.load / TRUCK.capacity;
+    const fill = cargoFrame(v.load, world.truckCapacity(v));
     const [sx, sy] = this.cam.worldToScreen(Math.round(at.x * TILE - 8) / TILE, Math.round(at.y * TILE - 8) / TILE);
     if (selected) {
       // 차 모양(가로 16×12, 세로 12×16)에 맞춘 테두리
       const side = dir % 2 === 1;
       this.outline(sx + (side ? -1 : 1) * u, sy + (side ? 1 : -1) * u, (side ? 18 : 14) * u, (side ? 14 : 18) * u, SELECT);
     }
-    this.blit(`truck:${dir}`, fill <= 0 ? 0 : fill < 0.5 ? 1 : 2, sx, sy);
-    if (this.lod) return;
-    if (v.status === 'no-route' || v.status === 'no-station' || v.status === 'unload-full' || v.status === 'no-battery') {
-      // 꽉 참·배터리 없음은 주황(멈추지는 않음), 나머지는 빨강
-      const orange = v.status === 'unload-full' || v.status === 'no-battery';
-      this.blit(orange ? 'badge:alert-full' : 'badge:alert', 0, sx + 4 * u, sy - 7 * u);
+    this.blit(`truck:${dir}`, fill, sx, sy);
+    if (!this.lod && !reducedEffects()) {
+      const wheel = Math.floor((this.activity.wheels.get(v.id) ?? 0) * 8) % 2;
+      const map = (x: number, y: number): [number, number] => dir === 1 ? [x, y] : dir === 2 ? [15 - y, x] : dir === 3 ? [15 - x, 15 - y] : [y, 15 - x];
+      for (const x of [3, 11]) for (const y of [3, 12]) {
+        const [px, py] = map(x + wheel, y); this.artRect(sx, sy, px, py, 1, 1, '#a7b1bc');
+      }
+    }
+    const problems: Partial<Record<Vehicle['status'], string>> = { 'no-route': '길 없음', 'no-station': '정류장?', 'unload-full': '공간 없음', 'no-battery': '빈 배터리', 'no-supply': '재료 없음', waiting: '짐 대기' };
+    const problem = problems[v.status];
+    if (this.lod) {
+      if (problem) { this.ctx.fillStyle = PAL.orange; this.ctx.fillRect(sx + 4 * u, sy - 2, 3, 3); }
+      return;
+    }
+    const charging = v.receivedCharge > 0;
+    if (selected || v.status === 'charging' || charging) {
+      const p = v.battery / world.truckBattery(v);
+      this.artRect(sx, sy, 3, -5, 9, 4, PAL.ink);
+      this.artRect(sx, sy, 4, -4, Math.round(7 * p), 2, p > 0.2 ? PAL.green : PAL.orange);
+      if (charging && !reducedEffects()) this.artRect(sx, sy, 4 + Math.floor((this.activity.charge.get(v.id) ?? 0) / 10) % 7, -4, 1, 2, CREAM);
+    }
+    if (problem) {
+      const icon = v.status === 'no-route' ? 'alert' : v.status === 'no-station' ? 'what' : v.status === 'unload-full' ? 'full' : v.status === 'no-battery' ? 'power' : 'wait';
+      this.blit(`badge:${icon}`, 0, sx + 12 * u, sy - 7 * u);
+      this.text(problem, sx + 8 * u, sy - 8 * u, CREAM, 10, PAL.ink, 'center', 'bottom');
+    }
+    else if (['queued', 'scheduled', 'satisfied', 'paused', 'charging'].includes(v.status)) {
+      this.text(v.status === 'charging' ? charging ? '충전 중' : '충전 대기' : '대기', sx + 8 * u, sy - 8 * u, CREAM, 10, '#5f6350', 'center', 'bottom');
+    }
+  }
+
+  private drawCargoFlights(world: World, spots: ReadonlyMap<number, { x: number; y: number }>): void {
+    const now = performance.now() / 1000;
+    this.flights = this.flights.filter((f) => now - f.born < TRANSFER_DURATION);
+    if (reducedEffects() || this.lod) return;
+    const ctx = this.ctx, u = this.u;
+    for (const f of this.flights) {
+      const ends = transferEndpoints(world, f, spots);
+      if (!ends) continue;
+      const p = transferSample(f, now, ends.a, ends.b);
+      const [x, y] = this.cam.worldToScreen(p.point.x, p.point.y);
+      const [tx, ty] = this.cam.worldToScreen(p.trail.x, p.trail.y);
+      const [ex, ey] = this.cam.worldToScreen(ends.b.x, ends.b.y);
+      const color = f.kind === 'truck' ? f.entering ? PAL.orange : PAL.green : f.entering ? PAL.green : PAL.orange;
+      ctx.save(); ctx.globalAlpha = p.alpha;
+      ctx.strokeStyle = color; ctx.lineWidth = Math.max(2, 2 * u);
+      ctx.beginPath(); ctx.moveTo(tx, ty); ctx.lineTo(x, y); ctx.stroke();
+      // 도착 적재함 테두리와 밝은 받침으로 밤에도 아이템 방향을 구분한다.
+      this.outline(Math.round(ex - 4 * u), Math.round(ey - 4 * u), 8 * u, 8 * u, color);
+      ctx.fillStyle = CREAM; ctx.fillRect(Math.round(x - 5 * u), Math.round(y - 5 * u), 10 * u, 10 * u);
+      this.outline(Math.round(x - 5 * u), Math.round(y - 5 * u), 10 * u, 10 * u, PAL.ink);
+      this.blit(`item:${f.item}`, 0, Math.round(x - 4 * u), Math.round(y - 4 * u));
+      ctx.restore();
     }
   }
 
@@ -1487,6 +1851,7 @@ export class Renderer {
     hy: number,
     centered = true,
     setting: string | null = null,
+    allowed?: boolean,
   ): void {
     const ctx = this.ctx;
     const cam = this.cam;
@@ -1505,7 +1870,7 @@ export class Renderer {
       dir = facing;
       setting = 'unload';
     }
-    const ok = world.canPlace(tool, ox, oy, replace).ok;
+    const ok = allowed ?? (centered ? constructionCheck(world, tool, hx, hy).ok : world.canPlace(tool, ox, oy, replace).ok);
     const [sx, sy] = cam.worldToScreen(ox, oy);
     const w = def.size * z;
     ctx.globalAlpha = 0.6;
@@ -1565,6 +1930,31 @@ export class Renderer {
     } else if (isBeltType(tool) || tool === 'underground') {
       this.drawDirArrow(sx + w / 2, sy + w / 2, dir, z, '#fbf3df');
     }
+    if (tool === 'station' && centered) this.drawStationRoadPreview(world, ox, oy, replace);
+  }
+
+  /** 도로와 공유하는 변·실제 정차 가능 칸을 배치 전부터 표시한다. */
+  private drawStationRoadPreview(world: World, x: number, y: number, replace: boolean): void {
+    const preview = stationRoadPreview(world, x, y, replace);
+    const z = this.cam.zoom, ctx = this.ctx, size = BUILDINGS.station.size;
+    const [sx, sy] = this.cam.worldToScreen(x, y);
+    const color = !preview.valid ? PAL.metal.lo : preview.roads.length ? PAL.green : PAL.brass.hi;
+    ctx.save();
+    for (const road of preview.roads) {
+      const [rx, ry] = this.cam.worldToScreen(road.x, road.y);
+      ctx.fillStyle = preview.valid ? 'rgba(95,174,90,0.35)' : 'rgba(167,177,188,0.2)';
+      ctx.fillRect(rx + 1, ry + 1, z - 2, z - 2);
+      this.outline(rx + 1, ry + 1, z - 2, z - 2, color);
+      const cx = Math.max(x, Math.min(x + size, road.x + 0.5)), cy = Math.max(y, Math.min(y + size, road.y + 0.5));
+      const [ex, ey] = this.cam.worldToScreen(cx, cy);
+      ctx.strokeStyle = CREAM; ctx.lineWidth = Math.max(2, z * 0.12);
+      ctx.beginPath(); ctx.moveTo(rx + z / 2, ry + z / 2); ctx.lineTo(ex, ey); ctx.stroke();
+      if (z >= 16) this.text('P', rx + z / 2, ry + z / 2, CREAM, 10, PAL.ink, 'center', 'middle');
+    }
+    if (preview.state === 'no-road') this.outline(sx, sy, size * z, size * z, PAL.brass.hi, true);
+    const caption = preview.state === 'blocked' ? '설치 불가' : preview.state === 'connected' ? `도로 연결 · 정차 ${preview.roads.length}칸` : '도로 미연결';
+    this.text(caption, sx + size * z / 2, sy - z - 5, CREAM, 10, preview.state === 'no-road' ? PAL.wood.dark : PAL.ink, 'center', 'bottom');
+    ctx.restore();
   }
 
   /** 건물 종류만으로 그림 한 장 (미리보기·붙여넣기) */
@@ -1609,7 +1999,6 @@ export class Renderer {
     const dpr = this.dpr;
     const dark = darkness(world.time);
     const glow = sunset(world.time);
-    const sky = this.skyFor(world);
     const W = this.canvas.width;
     const H = this.canvas.height;
     ctx.save();
@@ -1620,13 +2009,16 @@ export class Renderer {
       ctx.fillStyle = `rgba(255,140,70,${(0.13 * glow).toFixed(3)})`;
       ctx.fillRect(0, 0, W, H);
     }
-    // 흐림·비: 잿빛 (확장 지도의 모래 바람은 누런빛, 눈·안개는 하얀빛)
-    if (sky.cloud > 0) {
-      ctx.fillStyle = sky.tint
-        ? `rgba(${sky.tint},${(0.18 * sky.cloud).toFixed(3)})`
-        : `rgba(70,80,95,${(0.16 * sky.cloud + 0.08 * sky.rain).toFixed(3)})`;
-      ctx.fillRect(0, 0, W, H);
+    // 현지 날씨의 색조는 공개된 해당 지형에만 칠한다.
+    ctx.save(); this.clipRevealed(world, true);
+    for (const [terrain, path] of this.weatherPaths) {
+      const lw = world.regional ? world.localWeather(terrain) : null;
+      const sky = lw ? this.weatherStyle(lw.kind, lw.strength) : { ...weatherAt(world.seed, world.time), tint: undefined };
+      if (sky.cloud <= 0) continue;
+      ctx.fillStyle = sky.tint ? `rgba(${sky.tint},${0.14 * sky.cloud})` : `rgba(70,80,95,${0.12 * sky.cloud})`;
+      ctx.fill(path);
     }
+    ctx.restore();
 
     // 밤: 어둠을 따로 칠하고 불빛 자리를 도려내 덮는다
     const lights: { x: number; y: number; r: number }[] = [];
@@ -1652,7 +2044,7 @@ export class Renderer {
       const s = this.shade.getContext('2d')!;
       s.globalCompositeOperation = 'source-over';
       s.clearRect(0, 0, W, H);
-      s.fillStyle = `rgba(14,22,58,${(0.55 * dark).toFixed(3)})`;
+      s.fillStyle = `rgba(14,22,58,${(0.38 * dark).toFixed(3)})`;
       s.fillRect(0, 0, W, H);
       s.globalCompositeOperation = 'destination-out';
       for (const l of lights) {
@@ -1677,51 +2069,49 @@ export class Renderer {
     }
 
     // 비: 화면에 비스듬히 떨어지는 빗줄기 (보이는 것만이라 같이 하는 사람과 똑같지 않아도 된다)
-    const now = performance.now() / 1000;
-    const dt = Math.min(0.1, now - this.lastRainAt);
-    this.lastRainAt = now;
-    const want = Math.round(220 * sky.rain);
+    const dt = Math.max(0, Math.min(1, world.time - this.lastRainAt));
+    this.lastRainAt = world.time;
+    const density = reducedEffects() || this.lod ? 0 : this.layer === 'base' ? 1 : 0.4;
+    const want = Math.round(256 * density);
     while (this.drops.length < want) this.drops.push({ x: Math.random(), y: Math.random(), s: 0.7 + Math.random() * 0.6 });
     if (this.drops.length > want) this.drops.length = want;
     if (this.drops.length) {
-      // 밝은 모래 위에서도 보이게 진한 푸른 회색 (밤에는 조금 밝게). 눈은 흰 송이, 모래 바람은 누런 줄
-      ctx.strokeStyle = sky.snow ? 'rgba(255,255,255,0.85)' : sky.sand ? 'rgba(170,130,70,0.45)' : dark > 0.5 ? 'rgba(170,190,225,0.5)' : 'rgba(70,95,140,0.5)';
-      ctx.lineWidth = Math.max(1.5, 1.5 * dpr);
-      ctx.beginPath();
+      ctx.save(); this.clipRevealed(world, true);
+      ctx.lineWidth = Math.max(1, dpr);
       for (const d of this.drops) {
-        d.y += dt * 1.6 * d.s;
-        d.x -= dt * 0.25 * d.s;
-        if (d.y > 1) {
-          d.y -= 1.05;
-          d.x = Math.random() * 1.1;
-        }
-        if (d.x < -0.05) d.x += 1.1;
-        const x = d.x * W;
-        const y = d.y * H;
-        const len = (sky.snow ? 3 : 14) * d.s * dpr;
+        const [wx, wy] = cam.screenToWorld(d.x * cam.viewW, d.y * cam.viewH);
+        const tx = Math.floor(wx), ty = Math.floor(wy);
+        const known = world.inBounds(tx, ty) && world.isRevealed(world.idx(tx, ty));
+        const lw = known && world.regional ? world.localWeather(world.terrainAt(world.idx(tx, ty))) : null;
+        const sky = !known ? { rain: 0, snow: false, sand: false } : lw ? this.weatherStyle(lw.kind, lw.strength) : { ...weatherAt(world.seed, world.time), snow: false, sand: false };
+        d.y = (d.y + dt * (sky.snow ? 0.09 : sky.sand ? 0.025 : 0.8) * d.s) % 1;
+        d.x = (d.x + dt * (sky.sand ? 0.5 : -0.12) * d.s + 1) % 1;
+        if (sky.rain <= 0 || d.s - 0.7 > Math.min(0.6, sky.rain * 0.45)) continue;
+        const x = Math.round(d.x * W), y = Math.round(d.y * H);
+        const [nx, ny] = cam.screenToWorld(x / dpr, y / dpr);
+        const ix = Math.floor(nx), iy = Math.floor(ny);
+        if (!world.inBounds(ix, iy) || !world.isRevealed(world.idx(ix, iy))) continue;
+        if (lw && world.terrainAt(world.idx(ix, iy)) !== world.terrainAt(world.idx(tx, ty))) continue;
+        ctx.strokeStyle = sky.snow ? 'rgba(255,255,255,0.8)' : sky.sand ? 'rgba(160,120,60,0.4)' : dark > 0.5 ? 'rgba(170,190,225,0.5)' : 'rgba(70,95,140,0.5)';
+        ctx.beginPath();
+        const len = (sky.snow ? 2 : sky.sand ? 7 : 10) * d.s * dpr;
         ctx.moveTo(x, y);
         if (sky.sand) ctx.lineTo(x + len, y - len * 0.1);
         else ctx.lineTo(x + len * 0.25, y - len);
+        ctx.stroke();
       }
-      ctx.stroke();
+      ctx.restore();
     }
     ctx.restore();
   }
 
   /**
-   * 화면에 보일 날씨. 예전 지도는 세계 하나의 180초 날씨, 확장 지도는 화면 가운데 지형의 현지 날씨
-   * (비는 눈밭에서 눈, 사막·염호에서 모래 바람). 시뮬레이션과 같은 값을 쓴다
+   * 시뮬레이션의 현지 날씨를 읽기 위한 색·밀도만 반환한다. 확률이나 배율은 바꾸지 않는다.
    */
-  private skyFor(world: World): { cloud: number; rain: number; tint?: string; snow?: boolean; sand?: boolean } {
-    if (!world.regional) return weatherAt(world.seed, world.time);
-    const x = Math.max(0, Math.min(world.width - 1, Math.floor(this.cam.x)));
-    const y = Math.max(0, Math.min(world.height - 1, Math.floor(this.cam.y)));
-    const lw = world.localWeather(world.terrainAt(world.idx(x, y)));
-    const s = lw.strength;
-    const cloud = { clear: 0, cloudy: 0.6, fog: 0.9, rain: 1, snow: 0.8, sandstorm: 0.9, storm: 1.2 }[lw.kind] * s;
-    const rain = lw.kind === 'rain' || lw.kind === 'storm' || lw.kind === 'snow' || lw.kind === 'sandstorm' ? (lw.kind === 'storm' ? 1.4 : 1) * s : 0;
-    const tint = lw.kind === 'sandstorm' ? '190,150,90' : lw.kind === 'snow' || lw.kind === 'fog' ? '235,240,245' : undefined;
-    return { cloud, rain, tint, snow: lw.kind === 'snow', sand: lw.kind === 'sandstorm' };
+  private weatherStyle(kind: string, strength: number): { cloud: number; rain: number; tint?: string; snow: boolean; sand: boolean } {
+    const cloud = ({ clear: 0, cloudy: 0.6, fog: 0.9, rain: 1, snow: 0.8, sandstorm: 0.9, storm: 1.2 }[kind] ?? 0) * strength;
+    const rain = ['rain', 'storm', 'snow', 'sandstorm'].includes(kind) ? (kind === 'storm' ? 1.4 : 1) * strength : 0;
+    return { cloud, rain, tint: kind === 'sandstorm' ? '190,150,90' : kind === 'snow' || kind === 'fog' ? '235,240,245' : undefined, snow: kind === 'snow', sand: kind === 'sandstorm' };
   }
 
   /** 목표가 가리키는 곳: 핑과 같은 모양 (화면 밖이면 가장자리 화살표), 사라지지 않는다 */

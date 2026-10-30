@@ -54,8 +54,11 @@ function loadSettings(): Settings {
 
 /** 같은 소리를 이 간격(초)보다 빨리 다시 내지 않는다 (컨베이어를 끌면 칸마다 명령이 나오므로) */
 const GAP: Partial<Record<SoundName, number>> = {
-  place: 0.05,
-  remove: 0.05,
+  place: 0.12,
+  remove: 0.12,
+  undo: 0.12,
+  goal: 0.3,
+  research: 0.3,
   rotate: 0.04,
   error: 0.4,
   chat: 0.2,
@@ -124,6 +127,8 @@ class Sound {
   private out: GainNode | null = null;
   private musicOut: GainNode | null = null;
   private last = new Map<SoundName, number>();
+  private lastEdit = -Infinity;
+  private lastSuccess = -Infinity;
   /** 지금 울리고 있는 효과음들이 끝나는 시각 */
   private voices: number[] = [];
   /** 사용자가 화면을 누르거나 키를 눌렀는지. 그 전에는 소리를 내려 하지 않는다 (브라우저가 막고 콘솔에 경고를 남기므로) */
@@ -250,12 +255,18 @@ class Sound {
     const ctx = this.audio();
     if (!ctx || !this.out) return;
     const t = ctx.currentTime;
+    const edit = name === 'place' || name === 'remove' || name === 'undo';
+    const success = name === 'goal' || name === 'research';
+    if (edit && t - this.lastEdit < 0.12) return;
+    if (success && t - this.lastSuccess < 0.3) return;
     const gap = GAP[name] ?? 0.1;
     if (t - (this.last.get(name) ?? -1) < gap) return;
     this.voices = this.voices.filter((end) => end > t);
     if (this.voices.length >= MAX_VOICES) return;
     this.voices.push(t + LENGTH[name]);
     this.last.set(name, t);
+    if (edit) this.lastEdit = t;
+    if (success) this.lastSuccess = t;
     const wobble = [1, 1.06, 0.97, 1.03][this.step++ % 4];
     const out = this.out;
     switch (name) {

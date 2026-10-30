@@ -61,6 +61,34 @@ describe('메인 목표', () => {
     run(legacy, 1);
     expect(legacy.goals.size).toBe(0);
   });
+
+  it('채굴기→제련로→허브로 철판을 바로 보내도 첫 목표와 다음 철판 목표를 인정한다', () => {
+    const w = regional();
+    for (let dy = 0; dy < 2; dy++) for (let dx = 0; dx < 2; dx++) w.setResource(10 + dx, 10 + dy, 'iron-ore', 1000);
+    expect(w.place('miner', 10, 10, 3)).not.toBeNull();
+    expect(w.place('smelter', 5, 10, 3)).not.toBeNull();
+    for (const x of [9, 8, 7, 4, 3]) expect(w.place('belt', x, 10, 3)).not.toBeNull();
+    run(w, 60);
+    expect(w.stats.hubIn.get('iron-ore') ?? 0).toBe(0);
+    expect(w.stats.hubIn.get('iron-plate')).toBeGreaterThanOrEqual(20);
+    expect(w.goals.has('MG01')).toBe(true);
+    expect(w.goals.has('MG02')).toBe(true);
+    expect(World.deserialize(w.serialize()).goals.has('MG01')).toBe(true);
+  });
+
+  it('첫 반입은 철광석/철판 합계로 세고 시작 재고의 재순환만으로는 완료하지 않는다', () => {
+    const w = regional();
+    w.stats.hubIn.set('iron-plate', 10);
+    evaluateGoals(w);
+    expect(w.goals.has('MG01')).toBe(false);
+    w.stats.made.set('iron-plate', 9);
+    evaluateGoals(w);
+    expect(w.goals.has('MG01')).toBe(false);
+    w.stats.made.set('iron-plate', 10);
+    w.stats.hubIn.set('iron-ore', 4); w.stats.hubIn.set('iron-plate', 6);
+    evaluateGoals(w);
+    expect(w.goals.has('MG01')).toBe(true);
+  });
 });
 
 describe('지역 과제', () => {

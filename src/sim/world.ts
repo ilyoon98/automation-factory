@@ -55,6 +55,7 @@ import { ROUTE_MIN, Vehicle, type RouteStop, type VehicleState } from './vehicle
 import { TERRAIN, TERRAIN_IDS, type TerrainKind } from '../data/terrain';
 import { WEATHER_FX, localWeather, type LocalWeather, type WeatherFx } from './weather-v1';
 import { PROJECT_GOAL, evaluateGoals } from './goals';
+import type { Activity } from './activity';
 import { AchState, SPECIALTY, evaluateAchievements } from './achievements';
 
 export const TICK_RATE = 60;
@@ -246,6 +247,7 @@ export interface FactoryStats {
   /** 허브 프로젝트: 납품을 켰는지, 누적 납품 모듈 */
   projectOn: boolean;
   projectDelivered: number;
+  completion?: { time: number; sites: number; delivered: number };
   /** 선택 도전용: 심은 나무가 다 자란 수, 레시피별 완료 수, 지열·수전·한밤 축전이 작업에 준 전기, 현지 날씨별 작업 전기 (kJ) */
   treesMatured: number;
   recipeDone: Map<string, number>;
@@ -459,6 +461,8 @@ export interface MachineStats {
 }
 
 export class World {
+  /** 클라이언트 표현용 확정 사실. 저장·스냅샷·체크섬에서 제외한다. */
+  onActivity?: (event: Activity) => void;
   readonly resItem: (ItemId | null)[];
   /** 남은 매장량. Infinity = 무한 */
   readonly resAmount: Float64Array;
@@ -492,6 +496,8 @@ export class World {
   nextStationNo = 1;
   /** 도로·정류장이 바뀔 때마다 늘어난다. 트럭은 이게 바뀌면 길을 다시 찾는다 (저장하지 않음) */
   private roadVersion = 0;
+  /** 도로 연결 표시용 읽기 전용 개정 번호. UI 캐시는 게임 상태에 포함하지 않는다. */
+  get roadRevision(): number { return this.roadVersion; }
   /** 되돌리기 기록. 같이 하는 사람마다 따로 (플레이어 번호 → 기록). 저장하지 않는다 */
   private histories = new Map<number, EditHistory>();
   /** 지금 명령을 낸 플레이어 (0 = 혼자 하거나 호스트). 되돌리기 기록을 이 사람 것에 남긴다 */
@@ -541,7 +547,7 @@ export class World {
   vents: number[] = [];
   /**
    * 확인한 땅 (regional-v1). null이면 모두 보인다 (예전 지도). 처음엔 허브 둘레만 보이고,
-   * 메인 목표를 이루면 다음 산업의 거점이 길과 함께 열린다. 건물을 지어도 넓어지지 않는다 (지도는 목표로만 열린다)
+   * 지역 과제 셋 중 둘을 이루면 다음 산업의 거점이 길과 함께 열린다. 건물을 지어도 넓어지지 않는다.
    */
   revealed: Uint8Array | null = null;
   /** 확인한 칸 수 (화면 알림·해시용) */
@@ -1028,7 +1034,7 @@ export class World {
     for (let dy = 0; dy < def.size; dy++) {
       for (let dx = 0; dx < def.size; dx++) {
         if (!this.inBounds(x + dx, y + dy)) return { ok: false, reason: '맵 밖' };
-        if (!this.isRevealed(this.idx(x + dx, y + dy))) return { ok: false, reason: '아직 모르는 땅 (메인 목표를 이루면 다음 거점이 열려요)' };
+        if (!this.isRevealed(this.idx(x + dx, y + dy))) return { ok: false, reason: '아직 모르는 땅 (지역 과제 3개 중 2개를 이루면 다음 지역이 열려요)' };
         const occupant = this.buildingAt(x + dx, y + dy);
         if (occupant && !(replacing && isBeltType(occupant.type))) return { ok: false, reason: '이미 건물이 있음' };
       }
@@ -2292,7 +2298,12 @@ export class World {
       else if (b.type === 'station' && b.stationMode === 'unload') this.pushOutputs(b);
     }
     for (const b of this.beltOrder) this.updateBelt(b);
-    for (const v of this.vehicles.values()) this.updateVehicle(v);
+    for (const v of this.vehicles.values()) {
+      const x = v.x, y = v.y;
+      this.updateVehicle(v);
+      const distance = Math.hypot(v.x - x, v.y - y);
+      if (distance > 0) this.onActivity?.({ kind: 'drive', id: v.id, distance });
+    }
 
     this.time += DT;
     this.tickNo++;
@@ -2625,32 +2636,12 @@ export class World {
       b.node = node?.id ?? 0;
       if (node) this.netOfB.set(b.id, topo.net.get(node.id)!);
     }
-    // 그림용 전선: 허브·전봇대·변전소끼리는 모두, 발전기는 가장 가까운 노드 하나로 (발전기 밭이 실타래가 되지 않게)
-    const isLine = (b: Building) => !isGeneratorType(b.type);
-    const near = new Map<number, [Building, number]>();
-    const pick = (g: Building, o: Building) => {
-      const [ax, ay] = topo.at.get(g.id)!;
-      const [bx, by] = topo.at.get(o.id)!;
-      const d = Math.max(Math.abs(ax - bx), Math.abs(ay - by));
-      const cur = near.get(g.id);
-      if (!cur || d < cur[1] || (d === cur[1] && o.id < cur[0].id)) near.set(g.id, [o, d]);
-    };
-    const keys = new Set<string>();
-    this.wireCache = [];
-    const wire = (a: Building, b: Building) => {
-      const k = a.id < b.id ? `${a.id}-${b.id}` : `${b.id}-${a.id}`;
-      if (keys.has(k)) return;
-      keys.add(k);
+    // 실제 그래프를 제공하고 표시 축약은 렌더러에서만 한다.
+    this.wireCache = topo.edges.map(([a, b]) => {
       const [ax, ay] = topo.at.get(a.id)!;
       const [bx, by] = topo.at.get(b.id)!;
-      this.wireCache.push([ax, ay, bx, by, (a.type === 'pole' ? 1 : 0) | (b.type === 'pole' ? 2 : 0)]);
-    };
-    for (const [a, b] of topo.edges) {
-      if (isLine(a) && isLine(b)) wire(a, b);
-      if (!isLine(a)) pick(a, b);
-      if (!isLine(b)) pick(b, a);
-    }
-    for (const [id, [o]] of near) wire(this.buildings.get(id)!, o);
+      return [ax, ay, bx, by, (a.type === 'pole' ? 1 : 0) | (b.type === 'pole' ? 2 : 0)];
+    });
   }
 
   /** 전선 (그림용): [x1, y1, x2, y2, 끝이 전봇대인지 (1: 앞, 2: 뒤)] */
@@ -3097,7 +3088,7 @@ export class World {
   }
 
   /** 트럭이 충전하는 건물 (정류장·길가 충전기) */
-  private chargeSpot(v: Vehicle): Building | null {
+  chargeSpot(v: Vehicle): Building | null {
     if (v.charger) {
       for (const b of this.buildings.values()) {
         if (b.type !== 'charger') continue;
@@ -3243,6 +3234,7 @@ export class World {
       if (countOf(h.inBuf, r.item) > 0) addTo(h.inBuf, r.item, -1);
       else addTo(h.outBuf, r.item, -1);
       addTo(v.cargo, r.item, 1);
+      this.onActivity?.({ kind: 'cargo', id: v.id, station: v.stops[0].id, item: r.item, loading: true });
       r.n--;
       this.reservations = this.reservations.filter((x) => x.n > 0);
       return true;
@@ -3341,6 +3333,7 @@ export class World {
         if (k2 > 0) addTo(g[0].inBuf, item, k2);
         left -= k2;
       }
+      if (left < n) this.onActivity?.({ kind: 'cargo', id: v.id, station: st.id, item, loading: false });
       if (left > 0) this.addPile(this.idx(st.x, st.y), item, left, this.nextPileEv++, 'truck');
       v.cargo.delete(item);
     }
@@ -3431,6 +3424,7 @@ export class World {
         const item = items[(v.planTurn + k) % items.length];
         if (!this.dropInto(st, item)) continue;
         addTo(v.cargo, item, -1);
+        this.onActivity?.({ kind: 'cargo', id: v.id, station: st.id, item, loading: false });
         this.recordDelivery(v, st, item);
         const r = this.reservations.find((x) => x.v === v.id && x.dir === 'in' && x.item === item);
         if (r) r.n--;
@@ -3614,6 +3608,7 @@ export class World {
     const time = this.craftTime(b);
     const speed = sat;
     b.progress += DT * speed;
+    if (speed > 0) this.onActivity?.({ kind: 'work', id: b.id, cycles: DT * speed / time });
     b.status = sat <= 0 && this.regional && !this.netHasSource(this.netOf(b)) ? 'no-power' : sat < 1 ? 'low-power' : 'working';
     if (b.progress < time) return;
 
@@ -3632,6 +3627,7 @@ export class World {
   /** 기계가 만든(캔) 물건을 출력 칸에 넣고 생산 실적으로 센다 */
   private produce(b: Building, item: ItemId, n: number): void {
     addTo(b.outBuf, item, n);
+    if (n > 0) this.onActivity?.({ kind: 'batch', id: b.id });
     addTo(this.stats.made, item, n);
     this.ach.addWin(`m:${item}`, n, this.time);
     this.ach.recProduce(item, n, this.time);
@@ -4060,7 +4056,11 @@ export class World {
 
   /** t에 item을 최대 n개 넣는다. 넣은 개수를 돌려준다 (0 = 못 넣음) */
   private insert(t: OutTarget, item: ItemId, src: Building, n = 1): number {
-    return isLineType(t.b.type) ? this.beltAccept(t.b, item, t.fromSide, n) : this.acceptStack(t.b, item, n, src, t.fromSide);
+    const sent = isLineType(t.b.type) ? this.beltAccept(t.b, item, t.fromSide, n) : this.acceptStack(t.b, item, n, src, t.fromSide);
+    if (sent > 0 && this.onActivity && src.type === 'station' && t.b.type !== 'station') {
+      this.onActivity({ kind: 'station-port', id: src.id, from: src.id, to: t.b.id, item });
+    }
+    return sent;
   }
 
   /** 컨베이어가 아닌 건물이 최대 n개 받는다. 분배기·병합기는 한 묶음을 통째로 들고, 나머지는 받는 만큼 하나씩 */
@@ -4068,6 +4068,10 @@ export class World {
     if (isSplitterType(b.type) || b.type === 'merger') return this.acceptItem(b, item, src, fromSide, n) ? n : 0;
     let k = 0;
     while (k < n && this.acceptItem(b, item, src, fromSide)) k++;
+    if (k > 0 && this.onActivity && b.type === 'station') {
+      const physical = src.type === 'underground' && src.ugMode === 'in' ? this.partnerOf(src) ?? src : src;
+      this.onActivity({ kind: 'station-port', id: b.id, from: physical.id, to: b.id, item });
+    }
     return k;
   }
 
@@ -4397,7 +4401,7 @@ export class World {
   }
 
   /** 트럭이 이 정류장에 서는 칸들: 정류장 테두리에 붙은 도로 */
-  stationStops(st: Building): number[] {
+  stationStops(st: Pick<Building, 'x' | 'y' | 'size'>): number[] {
     const res: number[] = [];
     for (const [nx, ny] of edgeNeighbors(st)) {
       if (!this.inBounds(nx, ny)) continue;
@@ -4843,12 +4847,16 @@ export class World {
   }
 
   private updateVehicle(v: Vehicle): void {
+    v.receivedCharge = 0;
     // 정류장에 서 있으면 충전 (전력이 모자라면 그 비율만큼만). 노선 없는 고급 트럭도 조립한 정류장 옆이면
     const want = this.chargeWant(v);
     if (want > 0) {
       // regional-v1: 구역 충전 예산 안에서 받은 만큼 (예산을 못 받은 트럭은 기다린다)
       const got = this.regional ? (this.chargeGrant.get(v.id) ?? 0) : want * this.power.satisfaction;
+      const before = v.battery;
       v.battery = Math.min(this.truckBattery(v), v.battery + got * DT);
+      v.receivedCharge = v.battery - before;
+      if (v.battery > before) this.onActivity?.({ kind: 'charge', id: v.id, amount: v.battery - before });
       if (this.batteryFull(v)) v.battery = this.truckBattery(v);
     }
     if (this.planExceptions(v)) return;
@@ -4980,6 +4988,7 @@ export class World {
       v.timer -= gap;
       addTo(st.inBuf, item, -1);
       addTo(v.cargo, item, 1);
+      this.onActivity?.({ kind: 'cargo', id: v.id, station: st.id, item, loading: true });
       this.markLoaded(v, st, item);
       return;
     }
@@ -5006,6 +5015,7 @@ export class World {
     }
     v.timer -= gap;
     addTo(v.cargo, item, -1);
+    this.onActivity?.({ kind: 'cargo', id: v.id, station: st.id, item, loading: false });
     addTo(buf, item, 1);
     this.recordDelivery(v, st, item);
     v.lapUnloaded++;
@@ -5840,6 +5850,7 @@ function saveStats(s: FactoryStats) {
     largeStarted: s.largeStarted,
     projectOn: s.projectOn,
     projectDelivered: s.projectDelivered,
+    ...(s.completion ? { completion: { ...s.completion } } : {}),
     treesMatured: s.treesMatured,
     recipeDone: [...s.recipeDone],
     geoWork: s.geoWork,
@@ -5865,6 +5876,7 @@ function loadStats(d: Partial<ReturnType<typeof saveStats>>): FactoryStats {
     largeStarted: d.largeStarted ?? false,
     projectOn: d.projectOn ?? false,
     projectDelivered: d.projectDelivered ?? 0,
+    ...(d.completion ? { completion: { ...d.completion } } : {}),
     treesMatured: d.treesMatured ?? 0,
     recipeDone: new Map(d.recipeDone ?? []),
     geoWork: d.geoWork ?? 0,
@@ -5921,7 +5933,7 @@ function isCrafter(b: Building): boolean {
 }
 
 /** 건물 테두리 바깥 칸들과, 건물에서 그 칸으로 향하는 방향 */
-function edgeNeighbors(b: Building): [number, number, Dir][] {
+function edgeNeighbors(b: Pick<Building, 'x' | 'y' | 'size'>): [number, number, Dir][] {
   const out: [number, number, Dir][] = [];
   const s = b.size;
   for (let i = 0; i < s; i++) {

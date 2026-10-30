@@ -108,6 +108,8 @@ export class Vehicle {
   kit: { item: ItemId; from: number } | null = null;
   /** 고급 트럭을 조립한 정류장. 노선이 없어도 이 정류장 옆 도로에 서 있으면 충전한다 (0 = 없음) */
   home = 0;
+  /** 이번 틱에 실제로 받은 충전량(kJ). 화면용 사실이며 저장·체크섬·운송 판단에는 쓰지 않는다. */
+  receivedCharge = 0;
 
   // 계획 운송 (regional-v1, 싣기 → 내리기 두 정류장)
   /** 품목별 1회 적재 상한 (비어 있으면 예전 방식) */

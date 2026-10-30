@@ -5,6 +5,7 @@ import type { Building, StationMode } from './building';
 import type { Dir } from './dir';
 import { ROUTE_MAX, ROUTE_MIN, type RouteStop, type Vehicle } from './vehicle';
 import { World, applyOnce, type EditOp, type UseResult } from './world';
+import { buildRoad, type RoadBuildResult } from './road-plan';
 
 /**
  * 플레이어가 월드를 바꾸는 일 전부. 마우스·버튼은 월드를 직접 고치지 않고 명령을 낸다.
@@ -17,6 +18,7 @@ export type Command =
   | { t: 'end' }
   /** initial = 드래그가 아닌 첫 클릭. setting = 새 건물에 넣을 레시피·아이템·정류장 종류 */
   | { t: 'place'; tool: BuildingType; x: number; y: number; dir: Dir; initial: boolean; setting: string | null }
+  | { t: 'road-build'; from: number; to: number; path: number[]; newTiles: number[] }
   /** 드래그로 꺾을 때 이전 칸 컨베이어 방향 맞추기 */
   | { t: 'orient'; x: number; y: number; dir: Dir }
   | { t: 'remove-at'; x: number; y: number }
@@ -83,6 +85,7 @@ export interface CommandResults {
   begin: void;
   end: void;
   place: PlaceResult;
+  'road-build': RoadBuildResult;
   orient: void;
   'remove-at': boolean;
   'remove-area': number;
@@ -144,6 +147,8 @@ function run(w: World, c: Command): CommandResults[Command['t']] {
       return w.endEdit();
     case 'place':
       return place(w, c);
+    case 'road-build':
+      return buildRoad(w, c.from, c.to, c.path, c.newTiles);
     case 'orient': {
       const b = w.buildingAt(c.x, c.y);
       if (b && isBeltType(b.type)) w.rotate(b, c.dir);

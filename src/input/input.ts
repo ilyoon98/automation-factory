@@ -5,6 +5,8 @@ import { copyArea, type Blueprint } from '../sim/blueprint';
 import type { Exec, PlaceResult } from '../sim/commands';
 import { dirOf, rotateCW, type Dir } from '../sim/dir';
 import { World, describeEdit } from '../sim/world';
+import { pointerFeedback, type PointerFeedback, type PointerGesture } from './pointer';
+import type { RoadPlan } from '../sim/road-plan';
 
 export interface InputCallbacks {
   getWorld(): World;
@@ -19,7 +21,7 @@ export interface InputCallbacks {
   paletteSlot(i: number): BuildingType | null;
   /** 같이 하기: 모두에게 "여기 보세요" (F 키, Alt + 클릭) */
   ping(x: number, y: number): void;
-  /** 빈 땅의 회수 더미를 눌렀을 때: 바로 줍는다 */
+  /** 회수 더미를 눌렀을 때: 설비와 겹쳐 있어도 바로 줍는다 */
   pickPile(tile: number): void;
 }
 
@@ -57,7 +59,7 @@ const ROTATABLE: BuildingType[] = [
  * 마우스 중심 조작.
  * - 좌클릭: 배치 (도구 선택 시) / 건물 선택 (빈손) / 빈손 드래그는 화면 이동
  * - Ctrl + 좌클릭 드래그: 영역 복사 → 좌클릭으로 붙여넣기, 우클릭(또는 Esc)으로 취소
- * - Shift + 좌클릭 드래그: 단체 선택 (그 안의 가장 많은 한 종류 기계들 → 정보창에서 레시피를 한 번에)
+ * - Shift + 좌클릭 드래그: 건설 도구를 들었으면 직선 설치, 빈손이면 단체 선택
  * - 우클릭(드래그): 철거, Ctrl + 우클릭 드래그: 사각형 영역 철거 (복사와 같은 Ctrl + 드래그라 헷갈리지 않게)
  * - Ctrl+Z / Ctrl+Y: 되돌리기 / 다시 하기 (마우스를 누르고 뗄 때까지가 한 단계)
  * - 가운데 드래그: 화면 이동, 휠: 줌
@@ -78,6 +80,8 @@ export class Input implements ViewState {
   selectedId: number | null = null;
   /** 고른 트럭 (건물과 동시에 고르지 않는다) */
   selectedVehicle: number | null = null;
+  /** 확인 버튼을 누르기 전까지 지도에만 그리는 개인 도로 계획. */
+  roadPreview: RoadPlan | null = null;
   /** Ctrl 드래그 중인 복사 영역 */
   selection: { x0: number; y0: number; x1: number; y1: number } | null = null;
   /** Ctrl + 우클릭 드래그 중인 철거 영역 */
@@ -96,7 +100,10 @@ export class Input implements ViewState {
   private toolSettings = new Map<BuildingType, string>();
 
   private mode: Mode = 'none';
+  private pressPile: number | null = null;
+  private pointerClient: [number, number] | null = null;
   private last: { x: number; y: number } | null = null;
+  private straight: { start: { x: number; y: number }; axis: 'x' | 'y' | null } | null = null;
   private pressAt = { x: 0, y: 0 };
   private panFrom = { sx: 0, sy: 0, cx: 0, cy: 0 };
   private keys = new Set<string>();
@@ -121,15 +128,34 @@ export class Input implements ViewState {
     canvas.addEventListener('pointerleave', () => {
       this.hover = null;
       this.mouse = null;
+      this.pointerClient = null;
+      this.canvas.dataset.action = '';
     });
     canvas.addEventListener('wheel', (e) => this.onWheel(e), { passive: false });
     canvas.addEventListener('contextmenu', (e) => e.preventDefault());
     window.addEventListener('keydown', (e) => this.onKey(e));
-    window.addEventListener('keyup', (e) => this.keys.delete(e.key.toLowerCase()));
-    window.addEventListener('blur', () => this.keys.clear());
+    window.addEventListener('keyup', (e) => {
+      this.keys.delete(e.key.toLowerCase());
+      if (e.key === 'Shift') this.straight = null;
+    });
+    window.addEventListener('blur', () => {
+      this.keys.clear();
+      this.mode = 'none';
+      this.selection = this.removeArea = this.multiArea = null;
+      this.pressPile = null;
+      this.straight = null;
+      this.finishEdit();
+    });
   }
 
   setTool(t: BuildingType | null): void {
+    this.roadPreview = null;
+    if (this.mode === 'place') {
+      this.finishEdit();
+      this.mode = 'none';
+      this.last = null;
+    }
+    this.straight = null;
     const w = this.cb.getWorld();
     // 지을 수 없는 건물은 들지 않고 이유만 (잠김이 재료 부족보다 먼저). 이미 든 도구를 다시 누르면 내려놓기
     const why = !t || t === this.tool ? null : !w.unlockedBuildings.has(t) ? 'locked' : !w.canAfford(BUILDINGS[t].cost) ? 'poor' : null;
@@ -168,6 +194,62 @@ export class Input implements ViewState {
     if (this.keys.has('s') || this.keys.has('arrowdown')) this.cam.y += speed;
     if (this.keys.has('a') || this.keys.has('arrowleft')) this.cam.x -= speed;
     if (this.keys.has('d') || this.keys.has('arrowright')) this.cam.x += speed;
+    // 줌·키보드 이동 후에도 화면의 실제 마우스 위치와 대상 칸을 맞춘다.
+    if (this.pointerClient) {
+      const r = this.canvas.getBoundingClientRect();
+      this.mouse = this.cam.screenToWorld(this.pointerClient[0] - r.left, this.pointerClient[1] - r.top);
+      this.hover = this.projectPlacement({ x: Math.floor(this.mouse[0]), y: Math.floor(this.mouse[1]) });
+    }
+    this.canvas.dataset.action = this.pointerFeedback?.kind ?? '';
+  }
+
+  get pointerFeedback(): PointerFeedback | null {
+    const gesture: PointerGesture = this.mode === 'press' || this.mode === 'none' ? 'idle' : this.mode === 'select' ? 'copy' : this.mode;
+    return pointerFeedback(this.cb.getWorld(), {
+      tool: this.tool, paste: this.paste, hover: this.hover, mouse: this.mouse, gesture,
+      ctrl: this.keys.has('control') || this.keys.has('meta'), shift: this.keys.has('shift'), alt: this.keys.has('alt'),
+    });
+  }
+
+  /** 실제 직선 배치 좌표를 미리보기·커서·가이드에서도 함께 사용한다. */
+  private projectPlacement(t: { x: number; y: number }): { x: number; y: number } {
+    if (this.mode !== 'place' || !this.keys.has('shift') || !this.straight) return t;
+    const { start, axis } = this.straight;
+    return axis === 'x' ? { x: t.x, y: start.y } : axis === 'y' ? { x: start.x, y: t.y } : { ...start };
+  }
+
+  get straightPlacement(): ViewState['straightPlacement'] {
+    if (this.mode !== 'place' || !this.keys.has('shift') || !this.straight || !this.hover) return null;
+    return { x0: this.straight.start.x, y0: this.straight.start.y, x1: this.hover.x, y1: this.hover.y, axis: this.straight.axis };
+  }
+
+  /** 확인 중인 도로를 기존 줌 단계가 허용하는 범위에서 화면에 맞춘다. */
+  frameRoadPreview(): void {
+    const plan = this.roadPreview;
+    if (!plan?.path.length) return;
+    const w = this.cb.getWorld();
+    let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+    for (const t of plan.path) {
+      const x = t % w.width, y = Math.floor(t / w.width);
+      x0 = Math.min(x0, x); y0 = Math.min(y0, y); x1 = Math.max(x1, x + 1); y1 = Math.max(y1, y + 1);
+    }
+    const fit = Math.min(this.cam.viewW * .7 / (x1 - x0 + 4), this.cam.viewH * .6 / (y1 - y0 + 4));
+    this.cam.zoom = Math.min(this.cam.zoom, fit);
+    while (this.cam.zoom > fit) {
+      const before = this.cam.zoom;
+      this.cam.zoomAt(this.cam.viewW / 2, this.cam.viewH / 2, .5);
+      if (this.cam.zoom === before) break;
+    }
+    this.cam.x = (x0 + x1) / 2; this.cam.y = (y0 + y1) / 2;
+  }
+
+  private pointAt(e: PointerEvent): void {
+    this.pointerClient = [e.clientX, e.clientY];
+    this.hover = this.tileAt(e);
+    this.mouse = this.worldAt(e);
+    for (const [k, on] of [['control', e.ctrlKey], ['meta', e.metaKey], ['shift', e.shiftKey], ['alt', e.altKey]] as const) {
+      if (on) this.keys.add(k); else this.keys.delete(k);
+    }
   }
 
   private tileAt(e: PointerEvent | WheelEvent): { x: number; y: number } {
@@ -182,6 +264,9 @@ export class Input implements ViewState {
   }
 
   private onDown(e: PointerEvent): void {
+    this.pointAt(e);
+    this.pressPile = null;
+    this.straight = null;
     this.canvas.setPointerCapture(e.pointerId);
     const t = this.tileAt(e);
     this.last = t;
@@ -218,7 +303,7 @@ export class Input implements ViewState {
       this.selection = { x0: t.x, y0: t.y, x1: t.x, y1: t.y };
       return;
     }
-    if (e.shiftKey && !this.paste) {
+    if (e.shiftKey && !this.tool && !this.paste) {
       this.mode = 'multi';
       this.multiArea = { x0: t.x, y0: t.y, x1: t.x, y1: t.y };
       return;
@@ -240,9 +325,11 @@ export class Input implements ViewState {
         return;
       }
       this.mode = 'place';
+      if (e.shiftKey) this.straight = { start: { ...t }, axis: null };
       this.startEdit();
       this.placeAt(t.x, t.y, this.toolDir, true);
     } else {
+      this.pressPile = this.pointerFeedback?.pileTile ?? null;
       this.mode = 'press';
       this.pressAt = { x: e.clientX, y: e.clientY };
       this.startPan(e, 'press');
@@ -255,9 +342,8 @@ export class Input implements ViewState {
   }
 
   private onMove(e: PointerEvent): void {
-    const t = this.tileAt(e);
-    this.hover = t;
-    this.mouse = this.worldAt(e);
+    this.pointAt(e);
+    let t = this.hover!;
     if (this.mode === 'select' && this.selection) {
       this.selection.x1 = t.x;
       this.selection.y1 = t.y;
@@ -282,6 +368,16 @@ export class Input implements ViewState {
       return;
     }
     if ((this.mode === 'place' || this.mode === 'remove') && this.last) {
+      if (this.mode === 'place') {
+        if (e.shiftKey) {
+          // 드래그 도중 Shift를 누르면 마지막 배치 칸부터 새 직선을 시작한다.
+          this.straight ??= { start: { ...this.last }, axis: null };
+          const dx = t.x - this.straight.start.x, dy = t.y - this.straight.start.y;
+          if (!this.straight.axis && (dx || dy)) this.straight.axis = Math.abs(dx) >= Math.abs(dy) ? 'x' : 'y';
+        } else this.straight = null;
+        t = this.projectPlacement(t);
+        this.hover = t;
+      }
       // 빠르게 움직여도 칸을 건너뛰지 않도록 한 칸씩 따라간다
       let { x, y } = this.last;
       while (x !== t.x || y !== t.y) {
@@ -309,6 +405,7 @@ export class Input implements ViewState {
   }
 
   private onUp(e: PointerEvent): void {
+    this.straight = null;
     if (this.mode === 'remove-area' && this.removeArea) {
       const { x0, y0, x1, y1 } = this.removeArea;
       this.removeArea = null;
@@ -344,6 +441,14 @@ export class Input implements ViewState {
       this.cb.changed();
     }
     if (this.mode === 'press') {
+      // 회수 더미는 밑의 설비보다 먼저 고른다. 드래그로 화면을 움직였으면 이 분기에 들어오지 않는다.
+      if (this.pressPile !== null) {
+        this.cb.pickPile(this.pressPile);
+        this.pressPile = null;
+        this.mode = 'none';
+        this.last = null;
+        return;
+      }
       this.multi = [];
       // 트럭이 도로·정류장 위에 있으므로 트럭을 먼저 본다
       const w = this.cb.getWorld();
@@ -352,12 +457,10 @@ export class Input implements ViewState {
       const b = v ? null : w.buildingAt(Math.floor(wx), Math.floor(wy));
       this.selectedVehicle = v ? v.id : null;
       this.selectedId = b ? b.id : null;
-      // 빈 땅의 회수 더미는 누르면 바로 줍는다
-      const tile = w.inBounds(Math.floor(wx), Math.floor(wy)) ? w.idx(Math.floor(wx), Math.floor(wy)) : -1;
-      if (!v && !b && tile >= 0 && w.piles.some((p) => p.tile === tile)) this.cb.pickPile(tile);
       this.cb.changed();
     }
     this.mode = 'none';
+    this.pressPile = null;
     this.last = null;
   }
 
@@ -368,7 +471,7 @@ export class Input implements ViewState {
   }
 
   private onKey(e: KeyboardEvent): void {
-    if (e.target instanceof HTMLInputElement || e.target instanceof HTMLSelectElement) return;
+    if (e.target instanceof HTMLInputElement || e.target instanceof HTMLSelectElement || e.target instanceof HTMLTextAreaElement) return;
     const k = e.key.toLowerCase();
     if ((e.ctrlKey || e.metaKey) && (k === 'z' || k === 'y')) {
       e.preventDefault();
@@ -392,6 +495,13 @@ export class Input implements ViewState {
         this.pipette();
         break;
       case 'escape':
+        this.roadPreview = null;
+        if (this.mode === 'place') {
+          this.finishEdit();
+          this.mode = 'none';
+          this.last = null;
+        }
+        this.straight = null;
         this.tool = null;
         this.blocked = null;
         this.paste = null;
@@ -436,6 +546,13 @@ export class Input implements ViewState {
 
   /** 청사진을 들고 붙여넣기 대기 (name = 저장함에서 꺼낸 이름) */
   startPaste(bp: Blueprint, name: string | null): void {
+    this.roadPreview = null;
+    if (this.mode === 'place') {
+      this.finishEdit();
+      this.mode = 'none';
+      this.last = null;
+    }
+    this.straight = null;
     this.paste = bp;
     this.pasteName = name;
     this.tool = null;
@@ -508,7 +625,7 @@ export class Input implements ViewState {
       else if (!this.crossTipShown && r.crossRoad) {
         // 컨베이어를 끌다가 도로를 만나면(또는 반대) 조용히 끊기므로, 드래그마다 한 번 알려 준다
         this.crossTipShown = true;
-        this.cb.toast('도로와 컨베이어는 겹칠 수 없어요. 지하 컨베이어(물류 3)로 도로 밑을 지나가게 하세요');
+        this.cb.toast('도로와 컨베이어는 겹칠 수 없어요. 지하 컨베이어(물류 2)로 도로 밑을 지나가게 하세요');
       }
       return;
     }

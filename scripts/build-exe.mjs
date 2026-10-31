@@ -2,6 +2,7 @@
 // exe 만들기. npm run exe / npm run release가 dist를 빌드한 다음 부른다.
 //   (옵션 없음)      설치 파일만 만든다 → release/AutomationFactory-Setup-<버전>.exe
 //   --publish        만든 다음 깃허브 릴리스에 올린다 (GH_TOKEN 필요). 깔려 있는 게임들이 이걸 보고 업데이트한다
+//   --out <폴더>    실행 중인 기존 빌드와 겹치지 않는 별도 출력 폴더
 //   --feed <주소>    시험용: 깃허브 대신 이 주소에서 업데이트를 찾는 exe를 만든다 (예: http://127.0.0.1:8765/)
 // 시험용 환경 변수 GH_API · GH_UPLOADS: --publish가 깃허브 대신 이 주소로 올린다 (가짜 깃허브 서버로 올리기 흐름을 시험할 때)
 import { readFileSync, rmSync, writeFileSync } from 'node:fs';
@@ -18,6 +19,12 @@ const args = process.argv.slice(2);
 const publish = args.includes('--publish');
 const feedAt = args.indexOf('--feed');
 const feed = feedAt >= 0 ? args[feedAt + 1] : null;
+const outAt = args.indexOf('--out');
+if (outAt >= 0 && (!args[outAt + 1] || args[outAt + 1].startsWith('--'))) {
+  console.error('--out 다음에 출력 폴더를 지정해 주세요.');
+  process.exit(1);
+}
+const out = path.resolve(root, outAt >= 0 ? args[outAt + 1] : 'release');
 
 if (publish && !process.env.GH_TOKEN) {
   console.error('GH_TOKEN이 없어요. README의 "새 버전 올리기"를 보고 토큰을 넣은 다음 다시 해 주세요.');
@@ -32,9 +39,12 @@ const pkg = JSON.parse(readFileSync(path.join(root, 'package.json'), 'utf8'));
 const { version } = pkg;
 /** 시험용: package.json의 build 설정을 그대로 쓰되 업데이트 주소만 바꾼 설정 파일 (객체로 넘기면 깃허브 설정과 섞인다) */
 let config;
-if (feed) {
+if (feed || outAt >= 0) {
   config = path.join(tmpdir(), `automation-factory-build-${process.pid}.json`);
-  writeFileSync(config, JSON.stringify({ ...pkg.build, publish: [{ provider: 'generic', url: feed }] }));
+  writeFileSync(config, JSON.stringify({ ...pkg.build,
+    directories: { ...pkg.build.directories, output: out },
+    ...(feed ? { publish: [{ provider: 'generic', url: feed }] } : {}),
+  }));
 }
 // 올릴 릴리스를 먼저 준비한다 (이미 올린 버전이면 빌드하기 전에 멈춘다)
 const gh = publish ? githubRelease(pkg.build.publish[0], `v${version}`) : null;
@@ -45,7 +55,6 @@ try {
 } finally {
   if (config) rmSync(config, { force: true });
 }
-const out = path.join(root, 'release');
 const exe = `AutomationFactory-Setup-${version}.exe`;
 console.log(`\n완성: ${path.join(out, exe)}`);
 if (gh && release) {

@@ -2,7 +2,7 @@
   "name": "automation-game",
   "productName": "자동화 공장",
   "private": true,
-  "version": "0.6.1",
+  "version": "0.6.2",
   "type": "module",
   "main": "electron/main.mjs",
   "scripts": {

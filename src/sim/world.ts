@@ -3194,6 +3194,8 @@ export class World {
    */
   private reserveTrip(v: Vehicle, src: Building, dst: Building): number {
     this.releaseReservations(v);
+    // 적재 중 계획을 고쳐 재예약할 때도 이미 실은 화물의 목적지 공간은 유지한다.
+    for (const [item, n] of v.cargo) if (n > 0) this.reservations.push({ v: v.id, holder: dst.id, item, n, dir: 'in' });
     let room = this.truckCapacity(v) - v.load;
     let space = this.poolFree(dst);
     let total = 0;
@@ -3466,10 +3468,16 @@ export class World {
 
   /** 운송 계획 바꾸기 (품목별 1회 상한, 정기편 주기 초, 조기 출발). 합계가 적재량을 넘으면 거절 */
   setPlan(v: Vehicle, plan: { item: ItemId; cap: number }[], period: number, early: boolean): boolean {
+    // 잘못된 행을 빼고 일부만 적용하면 기존 계획/예약이 조용히 바뀐다. 전체를 먼저 검사한다.
+    if (!Array.isArray(plan) || ![0, 60, 120, 180, 240].includes(period) ||
+      plan.some(p => !p || !ITEM_IDS.includes(p.item) || !Number.isSafeInteger(p.cap) || p.cap < 1) ||
+      new Set(plan.map(p => p.item)).size !== plan.length) return false;
     const total = plan.reduce((a, p) => a + p.cap, 0);
     if (total > this.truckCapacity(v)) return false;
     // 아직 싣지 않은 예약은 다시 계산한다 (이미 실은 화물의 입고 예약은 그대로)
     this.releaseReservations(v, 'out');
+    if (plan.length) this.trimInbound(v);
+    else this.releaseReservations(v);
     v.plan = plan.map((p) => ({ ...p }));
     v.period = period;
     v.early = early;

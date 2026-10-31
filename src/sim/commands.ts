@@ -246,9 +246,8 @@ function run(w: World, c: Command): CommandResults[Command['t']] {
     }
     case 'truck-plan': {
       const v = w.vehicles.get(c.id);
-      const plan = Array.isArray(c.plan) ? c.plan.filter((p) => Object.hasOwn(ITEMS, p?.item) && Number.isInteger(p.cap) && p.cap > 0) : null;
-      if (!v || !plan || ![0, 60, 120, 180, 240].includes(c.period)) return false;
-      return w.setPlan(v, plan, c.period, !!c.early);
+      if (!v) return false;
+      return w.setPlan(v, c.plan, c.period, !!c.early);
     }
     case 'truck-pause': {
       const v = w.vehicles.get(c.id);

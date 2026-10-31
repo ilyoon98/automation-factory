@@ -80,6 +80,73 @@ describe('연결 창고와 계획 적재', () => {
     ).toBe(false);
   });
 
+  it.each([
+    [{ item: 'motor', cap: 0 }],
+    [{ item: 'motor', cap: -1 }],
+    [{ item: 'motor', cap: 1.5 }],
+    [{ item: 'motor', cap: 10 }, { item: 'unknown', cap: 1 }],
+    [{ item: 'motor', cap: 10 }, { item: 'motor', cap: 10 }],
+  ])('잘못된 계획 %j는 일부만 적용하지 않고 기존 계획과 예약을 그대로 둔다', (...entries) => {
+    const { w, a, v } = yard();
+    a.inBuf.set('motor', 30);
+    w.setPlan(v, [{ item: 'motor', cap: 20 }], 60, true);
+    runUntil(w, () => v.load > 0);
+    const before = w.serialize(), hash = w.checksum();
+    expect(applyCommand(w, 0, { t: 'truck-plan', id: v.id, plan: entries as {item: ItemId; cap: number}[], period: 0, early: false })).toBe(false);
+    expect(w.serialize()).toEqual(before);
+    expect(w.checksum()).toBe(hash);
+  });
+
+  it('적재 중 계획을 바꿔도 실은 화물과 남은 출고량이 목적지 입고 예정에 정확히 포함된다', () => {
+    const { w, a, b, v } = yard();
+    a.inBuf.set('motor', 40);
+    w.setTarget(b, 'motor', 40);
+    w.setPlan(v, [{ item: 'motor', cap: 40 }], 0, false);
+    runUntil(w, () => v.load >= 5);
+    w.setPlan(v, [{ item: 'motor', cap: 40 }], 0, false);
+    expect(w.inReserved(b, 'motor')).toBe(v.load);
+    w.tick();
+    const pending = w.reservations.filter(r => r.v === v.id && r.dir === 'out' && r.item === 'motor').reduce((n,r) => n+r.n,0);
+    expect(w.inReserved(b, 'motor')).toBe(v.load + pending);
+    expect(w.requestOf(b, 'motor')).toBe(0);
+    runUntil(w, () => v.stop === 1);
+    expect(v.load).toBe(40);
+    expect(w.inReserved(b, 'motor')).toBe(40);
+  });
+
+  it('계획 재예약 뒤 다른 트럭이 같은 목적지 요청을 중복 예약하지 않는다', () => {
+    const { w, a, b, v } = yard();
+    a.inBuf.set('motor', 80);
+    w.setTarget(b, 'motor', 40);
+    w.setPlan(v, [{ item: 'motor', cap: 40 }], 0, false);
+    runUntil(w, () => v.load >= 5);
+    w.setPlan(v, [{ item: 'motor', cap: 40 }], 0, false);
+    const other = w.buildTruck(a)!;
+    w.setStops(other, [{ id: a.id, act: 'load' }, { id: b.id, act: 'unload' }]);
+    w.setPlan(other, [{ item: 'motor', cap: 40 }], 0, false);
+    run(w, 2);
+    expect(w.inReserved(b, 'motor')).toBe(40);
+    expect(other.load).toBe(0);
+    const loaded = v.load, reserved = w.inReserved(b, 'motor');
+    const copy = World.fromSnapshot(w.snapshot());
+    expect(copy.inReserved(copy.buildings.get(b.id)!, 'motor')).toBe(reserved);
+    expect(copy.vehicles.get(v.id)!.load).toBe(loaded);
+    runUntil(w, () => pool(w, b, 'motor') === 40);
+    expect(pool(w, b, 'motor') + w.inReserved(b, 'motor')).toBe(40);
+  });
+
+  it('계획을 끄면 미적재 물량의 입고·출고 예약을 즉시 풀고 실제 화물은 보존한다', () => {
+    const { w, a, b, v } = yard();
+    a.inBuf.set('motor', 40);
+    w.setPlan(v, [{ item: 'motor', cap: 40 }], 0, false);
+    runUntil(w, () => v.load >= 5);
+    const cargo = [...v.cargo];
+    expect(w.inReserved(b)).toBe(40);
+    expect(w.setPlan(v, [], 0, false)).toBe(true);
+    expect(w.reservations.filter(r => r.v === v.id)).toEqual([]);
+    expect([...v.cargo]).toEqual(cargo);
+  });
+
   it('목적지 요청 = 목표 - 실물 - 입고 예정: 목표 40·실물 20이면 20만 싣는다', () => {
     const { w, a, b, sb, v } = yard();
     a.inBuf.set('motor', 50);

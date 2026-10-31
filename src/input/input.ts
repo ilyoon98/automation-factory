@@ -159,12 +159,7 @@ export class Input implements ViewState {
 
   setTool(t: BuildingType | null): void {
     this.roadPreview = null;
-    if (this.mode === 'place') {
-      this.finishEdit();
-      this.mode = 'none';
-      this.last = null;
-    }
-    this.straight = null;
+    this.cancelGesture();
     const w = this.cb.getWorld();
     // 지을 수 없는 건물은 들지 않고 이유만 (잠김이 재료 부족보다 먼저). 이미 든 도구를 다시 누르면 내려놓기
     const why = !t || t === this.tool ? null : !w.unlockedBuildings.has(t) ? 'locked' : !w.canAfford(BUILDINGS[t].cost) ? 'poor' : null;

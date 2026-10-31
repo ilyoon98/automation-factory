@@ -66,6 +66,20 @@ function inputFixture() {
 afterEach(() => vi.unstubAllGlobals());
 
 describe('창이 열린 동안 입력 보호', () => {
+  it.each(['remove', 'area', 'copy'])('%s 드래그 도중 건설 도구로 바꾸면 이전 드래그가 실행되지 않는다', (mode) => {
+    const f = inputFixture();
+    const a = f.w.place('road', 14, 14, 0)!;
+    const b = f.w.place('road', 16, 14, 0)!;
+    const modifiers = mode === 'remove' ? { button: 2 } : mode === 'area' ? { button: 2, ctrlKey: true } : { ctrlKey: true };
+    f.canvas.fire('pointerdown', f.event(14.5, 14.5, modifiers));
+    f.input.setTool('belt');
+    f.canvas.fire('pointermove', f.event(16.5, 14.5));
+    f.win.fire('pointerup', f.event(16.5, 14.5));
+    expect(f.w.buildings.get(b.id)).toBe(b);
+    if (mode !== 'remove') expect(f.w.buildings.get(a.id)).toBe(a);
+    expect(f.input.paste).toBeNull();
+    expect(f.input.removeArea).toBeNull();
+  });
   it('Space를 길게 눌러도 정지 상태가 자동 반복으로 뒤집히지 않는다', () => {
     const f = inputFixture();
     const event = { key: ' ', preventDefault() {} };

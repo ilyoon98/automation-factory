@@ -34,6 +34,8 @@ app.whenReady().then(async () => {
       window.requestAnimationFrame = () => 0;
       await new Promise((r) => setTimeout(r, 50));
       game.setSpeed(0);
+      // OS의 동작 줄이기 설정에 따라 애니메이션 검증이 건너뛰어지지 않게 시험에서 명시한다.
+      (await import('/src/render/effects.ts')).setReducedEffects(false);
       for (const el of document.querySelectorAll('.modal, #newgame')) el.hidden = true;
       window.testWorld = new (await import('/src/sim/world.ts')).World(100, 65);
       const w = testWorld; w.rules = 'regional-v1'; w.createHub(2, 18);

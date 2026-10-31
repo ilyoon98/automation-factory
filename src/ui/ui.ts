@@ -218,6 +218,7 @@ export class UI {
   private toolbar: Toolbar;
   private codex: Codex;
   private infoKey = '';
+  private infoWorld: World | null = null;
   private roadBuilder: { world: World; from: number; to: number; key: string; plan: RoadPlanResult | null; busy: boolean } | null = null;
   /** 응답을 기다리는 현지 실물 명령 (같은 버튼을 두 번 누르지 않게) */
   private useBusy = new Set<string>();
@@ -480,12 +481,12 @@ export class UI {
       true,
     );
     window.addEventListener('keydown', (e) => {
-      if (isTyping(e.target)) return;
+      if (isTyping(e.target) && e.key !== 'Tab') return;
       const k = e.key.toLowerCase();
       const modal = document.querySelector<HTMLElement>('.modal:not([hidden])');
       if (modal) {
         if (k === 'tab') {
-          const controls = [...modal.querySelectorAll<HTMLElement>('button, input, select, textarea, a[href], [tabindex]')]
+          const controls = [...modal.querySelectorAll<HTMLElement>('button, input, select, textarea, a[href], summary, [contenteditable="true"], [tabindex]')]
             .filter((el) => !el.matches(':disabled, [tabindex="-1"]') && el.getClientRects().length > 0);
           if (controls.length) {
             const first = controls[0], last = controls[controls.length - 1];
@@ -497,6 +498,8 @@ export class UI {
         }
         return;
       }
+      if (isTyping(e.target)) return;
+      if (e.repeat && ['t', 'h', 'i', 'g', 'p', 'o', 'j', 'm'].includes(k)) return;
       // 툴바 탭: Tab / Shift+Tab 으로 돌리기, 탭에 적힌 키로 바로 가기 (Ctrl+C 같은 조합은 무시)
       if (k === 'tab') {
         e.preventDefault();
@@ -1641,7 +1644,13 @@ export class UI {
   private updateAchPanel(w: World): void {
     const now = performance.now();
     const key = `${this.achTab}|${this.achTodo}|${this.achArea}|${this.achSort}|${w.ach.done.size}|${[...w.ach.medals.values()].join('')}`;
-    if (key === this.achKey && now - this.achAt < 1000) return;
+    const modal = $('ach');
+    const focused = modal.contains(document.activeElement) ? document.activeElement as HTMLElement : null;
+    // 열린 필터 목록을 주기 갱신으로 닫지 않는다. 필터를 실제로 바꾼 경우(key 변경)는 즉시 반영한다.
+    if (key === this.achKey && (now - this.achAt < 1000 || focused instanceof HTMLSelectElement)) return;
+    const scroll = modal.querySelector('.panel')?.scrollTop ?? 0;
+    const focusAttr = ['data-achf', 'data-achtab', 'data-achtrack'].find((attr) => focused?.hasAttribute(attr));
+    const focusValue = focusAttr ? focused!.getAttribute(focusAttr) : null;
     this.achKey = key;
     this.achAt = now;
     const all = activeAchievements(w);
@@ -1671,6 +1680,8 @@ export class UI {
         ${this.achTab !== 'hidden' ? `<select data-achf="sort"><option value="">순서대로</option><option value="near" ${this.achSort ? 'selected' : ''}>다음 단계가 가까운 순</option></select>` : ''}
       </div>
       <div class="techs">${list.map((a) => this.achCard(w, a, tracked)).join('') || '<p class="muted">해당하는 업적이 없어요.</p>'}</div></div>`;
+    modal.querySelector('.panel')!.scrollTop = scroll;
+    if (focusAttr && focusValue !== null) modal.querySelector<HTMLElement>(`[${focusAttr}="${CSS.escape(focusValue)}"]`)?.focus({ preventScroll: true });
     // 알림에서 연 업적: 반짝이고, 처음 한 번 그 카드로 스크롤
     if (this.achFocus) {
       const card = $('ach').querySelector<HTMLElement>(`[data-ach-id="${CSS.escape(this.achFocus)}"]`);
@@ -1771,6 +1782,13 @@ export class UI {
 
   private updateInfo(w: World): void {
     const el = $('info');
+    if (this.infoWorld !== w) {
+      this.infoWorld = w;
+      this.infoKey = '';
+      this.planRows.clear();
+      delete el.dataset.transportContext;
+      delete el.dataset.transportPlanVersion;
+    }
     const v = this.selectedVehicle();
     if (v) {
       this.updateVehicleInfo(w, v);
@@ -2585,7 +2603,7 @@ export class UI {
           <p class="muted">싣는 곳에서는 가득 차거나 새 짐 없이 ${TRUCK.wait}초 기다리면 출발하고, 내리는 곳에서는 모두 내린 뒤 출발해요. 운송 계획 사용 시 설정한 주기를 따라요.</p>
           ${v.kind === 'advanced' ? '<p class="muted">고급 트럭은 노선이 없어도 조립한 정류장에서 충전해요.</p>' : ''}`)}
         ${transportSection('manage', '차량 관리', `<div class="actions">${w.regional ? '<button data-act="truck-dump">📦 화물 내려놓기</button>' : ''}<button data-act="remove-truck" class="danger">철거 (Del)</button></div>`)}
-        `, `vehicle:${v.id}`);
+        `, `vehicle:${v.id}`, JSON.stringify([v.plan, v.period, v.early]));
     }
     const lines: string[] = [];
     const st = w.buildings.get(v.stopId);
@@ -2754,19 +2772,28 @@ export class UI {
       if (act === 'plan-apply') {
         const el = $('info');
         const plan: { item: ItemId; cap: number }[] = [];
+        let invalidCap = false;
         el.querySelectorAll<HTMLSelectElement>('select[data-plan-item]').forEach((s) => {
           const cap = Number(el.querySelector<HTMLInputElement>(`input[data-plan-cap="${s.dataset.planItem}"]`)?.value);
-          if (s.value && cap > 0) plan.push({ item: s.value as ItemId, cap: Math.floor(cap) });
+          if (!s.value) return;
+          if (!Number.isSafeInteger(cap) || cap < 1) invalidCap = true;
+          else plan.push({ item: s.value as ItemId, cap });
         });
         const period = Number(el.querySelector<HTMLSelectElement>('select[data-plan-period]')?.value ?? 0);
         const early = !!el.querySelector<HTMLInputElement>('input[data-plan-early]')?.checked;
         const total = plan.reduce((a, p) => a + p.cap, 0);
         const cap = this.game.getWorld().truckCapacity(v);
-        if (total > cap) this.toast(`상한 합계 ${total}개가 한 번에 싣는 ${cap}개보다 많아요. 줄여 주세요`, 3500);
+        if (invalidCap) this.toast('품목별 상한은 1 이상의 정수로 입력해 주세요. 기존 계획은 바꾸지 않았어요', 3500);
+        else if (new Set(plan.map((p) => p.item)).size !== plan.length) this.toast('같은 품목은 한 줄에만 넣어 주세요. 기존 계획은 바꾸지 않았어요', 3500);
+        else if (total > cap) this.toast(`상한 합계 ${total}개가 한 번에 싣는 ${cap}개보다 많아요. 줄여 주세요`, 3500);
         else
           this.game.exec({ t: 'truck-plan', id: v.id, plan, period, early }, (ok) => {
             this.toast(ok ? (plan.length ? '운송 계획을 적용했어요' : '계획을 껐어요') : '계획을 적용하지 못했어요', 2500);
-            this.planRows.delete(v.id);
+            if (ok) {
+              this.planRows.delete(v.id);
+              delete el.dataset.transportPlanVersion;
+              this.infoKey = '';
+            }
             this.update();
           });
       }
@@ -3075,6 +3102,7 @@ export class UI {
         ? `<p>🌲 숲: 다 자란 나무 <b>${trees.grown}</b>그루 · 자라는 중 ${trees.growing}
             ${land.spent ? ` · 다 캔 광맥 땅 ${land.spent}칸 중 <b>${land.revived}</b>칸에 다 자란 나무 <small>(숲 되살리기 ${Math.min(land.revived, FOREST.revive)}/${FOREST.revive})</small>` : ''}</p>`
         : '';
+    const scroll = $('stats').querySelector('.panel')?.scrollTop ?? 0;
     $('stats').innerHTML = `<div class="panel stats-panel"><header><h2>공장 통계</h2><button class="x" data-act="close-modal">×</button></header>
       ${w.regional ? this.overviewHtml(w) : ''}
       <p class="muted">단위: 개/분 · 현재 / 최대 · 증감 = 생산 − 사용</p>
@@ -3083,6 +3111,7 @@ export class UI {
         <thead><tr><th>아이템</th><th title="최근 15초 평균 / 최대 생산량">생산</th><th title="최근 15초 평균 / 최대 사용량">사용</th><th title="현재 생산량 − 현재 사용량. 재고 개수가 아닌 분당 변화">현재 증감</th><th title="최대 생산량 − 최대 사용량">최대 증감</th><th>허브 입고</th><th>허브 재고</th><th title="게임 시간 10초마다 잰 허브 재고. 오른쪽이 지금">재고 흐름 (10분)</th></tr></thead>
         <tbody>${rows || '<tr><td colspan="8" class="muted">아직 아무것도 만들지 않아요</td></tr>'}</tbody>
       </table></div>`;
+    $('stats').querySelector('.panel')!.scrollTop = scroll;
   }
 
   /**

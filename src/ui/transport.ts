@@ -111,13 +111,35 @@ export function transportSection(id: string, label: string, content: string): st
 }
 
 /** 상태 갱신이나 노선 편집 때문에 사용자가 펼친 설명/설정이 다시 닫히지 않게 한다. */
-export function replaceTransportInfo(el: HTMLElement, html: string, context: string): void {
-  const open = el.dataset.transportContext === context
+export function replaceTransportInfo(el: HTMLElement, html: string, context: string, planVersion?: string): void {
+  const same = el.dataset.transportContext === context;
+  const open = same
     ? new Set([...el.querySelectorAll<HTMLDetailsElement>('details[data-transport-section][open]')].map((d) => d.dataset.transportSection))
     : new Set<string>();
+  // 확정된 계획이 그대로면 목록/도로 상태를 다시 그려도 작성 중인 값은 보존한다.
+  // 다른 차량 또는 실제 계획 변경(명령 적용·멀티플레이 갱신)은 새 확정값을 보여 준다.
+  const draft: { selector: string; value: string; checked: boolean; focused: boolean }[] = [];
+  if (same && planVersion !== undefined && el.dataset.transportPlanVersion === planVersion) {
+    for (const attr of ['data-plan-item', 'data-plan-cap', 'data-plan-period', 'data-plan-early']) {
+      for (const field of el.querySelectorAll<HTMLInputElement | HTMLSelectElement>(`[${attr}]`)) {
+        draft.push({ selector: `[${attr}="${field.getAttribute(attr)}"]`, value: field.value,
+          checked: field instanceof HTMLInputElement && field.checked, focused: field === document.activeElement });
+      }
+    }
+  }
+  const scroll = same ? el.scrollTop : 0;
   el.innerHTML = html;
   el.dataset.transportContext = context;
+  el.dataset.transportPlanVersion = planVersion ?? '';
   for (const d of el.querySelectorAll<HTMLDetailsElement>('details[data-transport-section]')) {
     d.open = open.has(d.dataset.transportSection!);
   }
+  for (const saved of draft) {
+    const field = el.querySelector<HTMLInputElement | HTMLSelectElement>(saved.selector);
+    if (!field) continue;
+    field.value = saved.value;
+    if (field instanceof HTMLInputElement) field.checked = saved.checked;
+    if (saved.focused) field.focus({ preventScroll: true });
+  }
+  el.scrollTop = scroll;
 }

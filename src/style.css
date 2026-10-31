@@ -739,6 +739,13 @@ h3 small {
   color: var(--muted);
   white-space: nowrap;
 }
+/* 작은 창에서 탭 여러 줄이 지도·정보창을 덮지 않게 한 줄로 넘긴다. */
+body[data-top='narrow'] #tabs {
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  scrollbar-width: thin;
+  padding: 4px 0;
+}
 /* 좁은 창에서는 탭 오른쪽 안내를 숨긴다 (좁은 칸에 세로로 끼지 않게) */
 @media (max-width: 1000px) {
   #tabs .hint {

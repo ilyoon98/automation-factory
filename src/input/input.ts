@@ -125,6 +125,8 @@ export class Input implements ViewState {
     canvas.addEventListener('pointerdown', (e) => this.onDown(e));
     canvas.addEventListener('pointermove', (e) => this.onMove(e));
     window.addEventListener('pointerup', (e) => this.onUp(e));
+    canvas.addEventListener('pointercancel', () => this.cancelGesture());
+    canvas.addEventListener('lostpointercapture', () => this.cancelGesture());
     canvas.addEventListener('pointerleave', () => {
       this.hover = null;
       this.mouse = null;
@@ -140,12 +142,19 @@ export class Input implements ViewState {
     });
     window.addEventListener('blur', () => {
       this.keys.clear();
-      this.mode = 'none';
-      this.selection = this.removeArea = this.multiArea = null;
-      this.pressPile = null;
-      this.straight = null;
-      this.finishEdit();
+      this.cancelGesture();
     });
+  }
+
+  /** 중단된 드래그는 확정하지 않는다. 이미 지은/지운 부분만 한 번의 되돌리기로 남긴다. */
+  private cancelGesture(): void {
+    this.mode = 'none';
+    this.last = null;
+    this.selection = this.removeArea = this.multiArea = null;
+    this.pressPile = null;
+    this.straight = null;
+    this.canvas.dataset.action = '';
+    this.finishEdit();
   }
 
   setTool(t: BuildingType | null): void {
@@ -191,6 +200,7 @@ export class Input implements ViewState {
   update(dt: number): void {
     if (document.querySelector('.modal:not([hidden])')) {
       this.keys.clear();
+      this.cancelGesture();
       return;
     }
     const speed = (600 / this.cam.zoom) * dt;
@@ -268,6 +278,7 @@ export class Input implements ViewState {
   }
 
   private onDown(e: PointerEvent): void {
+    if (document.querySelector('.modal:not([hidden])')) return;
     this.pointAt(e);
     this.pressPile = null;
     this.straight = null;
@@ -346,6 +357,10 @@ export class Input implements ViewState {
   }
 
   private onMove(e: PointerEvent): void {
+    if (document.querySelector('.modal:not([hidden])')) {
+      this.cancelGesture();
+      return;
+    }
     this.pointAt(e);
     let t = this.hover!;
     if (this.mode === 'select' && this.selection) {
@@ -409,6 +424,10 @@ export class Input implements ViewState {
   }
 
   private onUp(e: PointerEvent): void {
+    if (document.querySelector('.modal:not([hidden])')) {
+      this.cancelGesture();
+      return;
+    }
     this.straight = null;
     if (this.mode === 'remove-area' && this.removeArea) {
       const { x0, y0, x1, y1 } = this.removeArea;
@@ -477,6 +496,7 @@ export class Input implements ViewState {
   private onKey(e: KeyboardEvent): void {
     if (e.target instanceof HTMLElement && e.target.closest('input, select, textarea, [contenteditable="true"]')) return;
     const k = e.key.toLowerCase();
+    if (e.repeat && k === ' ') return;
     if ((k === ' ' || k === 'enter') && e.target instanceof HTMLElement && e.target.closest('button, [role="button"]')) return;
     if (document.querySelector('.modal:not([hidden])') && k !== 'escape' && k !== ' ') return;
     if ((e.ctrlKey || e.metaKey) && (k === 'z' || k === 'y')) {
@@ -502,12 +522,7 @@ export class Input implements ViewState {
         break;
       case 'escape':
         this.roadPreview = null;
-        if (this.mode === 'place') {
-          this.finishEdit();
-          this.mode = 'none';
-          this.last = null;
-        }
-        this.straight = null;
+        this.cancelGesture();
         this.tool = null;
         this.blocked = null;
         this.paste = null;

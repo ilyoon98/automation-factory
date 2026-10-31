@@ -289,6 +289,7 @@ export class Toolbar {
   private renderPalette(): void {
     document.querySelectorAll<HTMLElement>('#tabs .tab').forEach((t) => {
       t.classList.toggle('active', t.dataset.cat === this.category);
+      if (t.dataset.cat === this.category && document.body.dataset.top === 'narrow') t.scrollIntoView({ block: 'nearest', inline: 'nearest' });
     });
     const palette = document.getElementById('palette')!;
     palette.innerHTML = '';

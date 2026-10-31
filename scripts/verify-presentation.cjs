@@ -198,9 +198,9 @@ app.whenReady().then(async () => {
     if (errors.length) throw new Error(errors.join('\n'));
     fs.writeFileSync(path.join(out, 'results.json'), JSON.stringify({ passed: true, results, errors }, null, 2));
     console.log(JSON.stringify({ passed: true, checks: results.length, out }));
-    win.destroy(); await server.close(); app.exit(0);
+    await server.close(); app.exit(0);
   } catch (error) {
     fs.writeFileSync(path.join(out, 'results.json'), JSON.stringify({ passed: false, results, errors, error: String(error) }, null, 2));
-    console.error(error); win.destroy(); await server.close(); app.exit(1);
+    console.error(error); await server.close(); app.exit(1);
   }
 });

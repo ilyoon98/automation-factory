@@ -49,8 +49,9 @@ function inputFixture() {
     done?.(result);
   };
   const pickPile = vi.fn((target: number) => applyCommand(w, 0, { t: 'pile-collect', rid: `input-${++rid}`, tile: target }));
+  const togglePause = vi.fn();
   const input = new Input(canvas as unknown as HTMLCanvasElement, cam, {
-    getWorld: () => w, exec, pickPile, changed: vi.fn(), toast: vi.fn(), togglePause: vi.fn(), paletteSlot: () => null, ping: vi.fn(),
+    getWorld: () => w, exec, pickPile, changed: vi.fn(), toast: vi.fn(), togglePause, paletteSlot: () => null, ping: vi.fn(),
   });
   const event = (wx: number, wy: number, values = {}) => {
     const [clientX, clientY] = cam.worldToScreen(wx, wy);
@@ -59,12 +60,22 @@ function inputFixture() {
   const click = (wx: number, wy: number, values = {}) => {
     canvas.fire('pointerdown', event(wx, wy, values)); win.fire('pointerup', event(wx, wy, values));
   };
-  return { w, belt, tile, cam, input, canvas, win, pickPile, event, click };
+  return { w, belt, tile, cam, input, canvas, win, pickPile, togglePause, event, click };
 }
 
 afterEach(() => vi.unstubAllGlobals());
 
 describe('창이 열린 동안 입력 보호', () => {
+  it('Space를 길게 눌러도 정지 상태가 자동 반복으로 뒤집히지 않는다', () => {
+    const f = inputFixture();
+    const event = { key: ' ', preventDefault() {} };
+    f.win.fire('keydown', event);
+    for (let i = 0; i < 5; i++) f.win.fire('keydown', { ...event, repeat: true });
+    expect(f.togglePause).toHaveBeenCalledTimes(1);
+    f.win.fire('keyup', event);
+    f.win.fire('keydown', event);
+    expect(f.togglePause).toHaveBeenCalledTimes(2);
+  });
   it('이동 키를 지우고, 창을 닫은 뒤에도 눌린 상태가 남지 않는다', () => {
     const { input, cam, win } = inputFixture();
     win.fire('keydown', { key: 'd' });
@@ -75,6 +86,53 @@ describe('창이 열린 동안 입력 보호', () => {
     vi.stubGlobal('document', { querySelector: () => null });
     input.update(1);
     expect(cam.x).toBe(x);
+  });
+
+  it.each(['frame', 'move', 'up'])('모달이 열리면 %s 경로에서도 건설 드래그가 중단되고 이미 지은 부분만 한 번에 되돌린다', (path) => {
+    const f = inputFixture();
+    const before = [...f.w.stock];
+    f.input.setTool('road');
+    f.canvas.fire('pointerdown', f.event(14.5, 14.5));
+    f.canvas.fire('pointermove', f.event(18.5, 14.5));
+    expect(f.w.buildingAt(18, 14)?.type).toBe('road');
+    vi.stubGlobal('document', { querySelector: () => ({}) });
+    if (path === 'frame') f.input.update(0);
+    if (path === 'move') f.canvas.fire('pointermove', f.event(24.5, 14.5));
+    if (path === 'up') f.win.fire('pointerup', f.event(24.5, 14.5));
+    vi.stubGlobal('document', { querySelector: () => null });
+    f.canvas.fire('pointermove', f.event(26.5, 14.5));
+    f.win.fire('pointerup', f.event(26.5, 14.5));
+    expect(f.w.buildingAt(19, 14)).toBeNull();
+    expect(f.w.buildingAt(26, 14)).toBeNull();
+    f.input.undoRedo(false);
+    expect([...f.w.stock]).toEqual(before);
+    expect(f.w.buildingAt(14, 14)).toBeNull();
+  });
+
+  it.each(['escape', 'pointercancel', 'lostpointercapture'])('%s로 영역 철거를 취소하면 마우스를 뗐을 때도 철거하지 않는다', (reason) => {
+    const f = inputFixture();
+    const first = f.w.place('road', 14, 14, 0)!;
+    f.w.place('road', 15, 14, 0);
+    const before = [...f.w.stock];
+    f.canvas.fire('pointerdown', f.event(14.5, 14.5, { button: 2, ctrlKey: true }));
+    f.canvas.fire('pointermove', f.event(16.5, 15.5, { button: 2, ctrlKey: true }));
+    expect(f.input.removeArea).not.toBeNull();
+    if (reason === 'escape') f.win.fire('keydown', { key: 'Escape' });
+    else f.canvas.fire(reason);
+    f.win.fire('pointerup', f.event(16.5, 15.5, { button: 2, ctrlKey: true }));
+    expect(f.input.removeArea).toBeNull();
+    expect(f.w.buildings.get(first.id)).toBe(first);
+    expect([...f.w.stock]).toEqual(before);
+  });
+
+  it('복사 영역을 그리다 포인터가 취소되면 나중에 뗐을 때 청사진을 만들지 않는다', () => {
+    const f = inputFixture();
+    f.canvas.fire('pointerdown', f.event(9.5, 9.5, { ctrlKey: true }));
+    f.canvas.fire('pointermove', f.event(12.5, 12.5, { ctrlKey: true }));
+    f.canvas.fire('pointercancel');
+    f.win.fire('pointerup', f.event(12.5, 12.5));
+    expect(f.input.selection).toBeNull();
+    expect(f.input.paste).toBeNull();
   });
 });
 

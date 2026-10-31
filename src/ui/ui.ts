@@ -66,6 +66,7 @@ import { focusRouteStation, reachableStations, refreshTransportItemSelect, repla
 import { chargerInfo, equipmentHelp, unloaderInfo } from './equipment-info';
 import { planRoad, type RoadPlanResult } from '../sim/road-plan';
 import { replaceRoadBuilder, roadBuilderHtml, roadPlanKey } from './road-builder';
+import { replacePanel } from './panel';
 
 export interface GameApi {
   getWorld(): World;
@@ -485,6 +486,13 @@ export class UI {
       const k = e.key.toLowerCase();
       const modal = document.querySelector<HTMLElement>('.modal:not([hidden])');
       if (modal) {
+        const ownKey: Record<string, string> = { research: 't', help: 'h', codex: 'g', stats: 'p', goals: 'o', ach: 'j' };
+        if (!e.ctrlKey && !e.metaKey && !e.altKey && !e.repeat && ownKey[modal.id] === k) {
+          if (modal.id === 'codex') this.codex.close();
+          else modal.hidden = true;
+          this.update();
+          return;
+        }
         if (k === 'tab') {
           const controls = [...modal.querySelectorAll<HTMLElement>('button, input, select, textarea, a[href], summary, [contenteditable="true"], [tabindex]')]
             .filter((el) => !el.matches(':disabled, [tabindex="-1"]') && el.getClientRects().length > 0);
@@ -1130,7 +1138,7 @@ export class UI {
       body = `<p class="muted">목표 ${GUIDE.filter((s) => w.guideDone.has(s.title)).length}/${GUIDE.length} · 지금 목표는 왼쪽 카드에서 자세히 볼 수 있어요.</p>
         <ul class="steps goal-list">${rows}</ul>`;
     }
-    $('goals').innerHTML = `<div class="panel"><header><h2>목표판</h2><button class="x" data-act="close-modal">×</button></header>${body}</div>`;
+    replacePanel($('goals'), `<div class="panel"><header><h2>목표판</h2><button class="x" data-act="close-modal">×</button></header>${body}</div>`, `goals:${w.rules}`);
   }
 
   private selected(): Building | null {
@@ -3004,9 +3012,9 @@ export class UI {
           ${done ? '<div class="badge">완료</div>' : `<button data-tech="${t.id}" ${check.ok ? '' : 'disabled'}>${check.ok ? '연구하기' : (check.reason ?? '')}</button>`}
         </div>`;
       }).join('');
-      el.innerHTML = `<div class="panel"><header><h2>연구</h2><button class="x" data-act="close-modal">×</button></header>
+      replacePanel(el, `<div class="panel"><header><h2>연구</h2><button class="x" data-act="close-modal">×</button></header>
         <p class="muted">허브 재고에서 재료를 내고 즉시 해금해요. 초록 점 = 지금 연구할 수 있는 게 있는 탭</p>
-        <div class="rtabs">${tabs}</div><div class="techs">${cards}</div></div>`;
+        <div class="rtabs">${tabs}</div><div class="techs">${cards}</div></div>`, `research:${tab}`);
     }
     // 목표가 가리키는 연구: 그 탭(다른 탭이면)과 카드를 반짝인다
     const want = this.guideFocus?.research ?? null;
@@ -3102,16 +3110,14 @@ export class UI {
         ? `<p>🌲 숲: 다 자란 나무 <b>${trees.grown}</b>그루 · 자라는 중 ${trees.growing}
             ${land.spent ? ` · 다 캔 광맥 땅 ${land.spent}칸 중 <b>${land.revived}</b>칸에 다 자란 나무 <small>(숲 되살리기 ${Math.min(land.revived, FOREST.revive)}/${FOREST.revive})</small>` : ''}</p>`
         : '';
-    const scroll = $('stats').querySelector('.panel')?.scrollTop ?? 0;
-    $('stats').innerHTML = `<div class="panel stats-panel"><header><h2>공장 통계</h2><button class="x" data-act="close-modal">×</button></header>
+    replacePanel($('stats'), `<div class="panel stats-panel"><header><h2>공장 통계</h2><button class="x" data-act="close-modal">×</button></header>
       ${w.regional ? this.overviewHtml(w) : ''}
       <p class="muted">단위: 개/분 · 현재 / 최대 · 증감 = 생산 − 사용</p>
       ${forest}
       <table class="stats-table">
         <thead><tr><th>아이템</th><th title="최근 15초 평균 / 최대 생산량">생산</th><th title="최근 15초 평균 / 최대 사용량">사용</th><th title="현재 생산량 − 현재 사용량. 재고 개수가 아닌 분당 변화">현재 증감</th><th title="최대 생산량 − 최대 사용량">최대 증감</th><th>허브 입고</th><th>허브 재고</th><th title="게임 시간 10초마다 잰 허브 재고. 오른쪽이 지금">재고 흐름 (10분)</th></tr></thead>
         <tbody>${rows || '<tr><td colspan="8" class="muted">아직 아무것도 만들지 않아요</td></tr>'}</tbody>
-      </table></div>`;
-    $('stats').querySelector('.panel')!.scrollTop = scroll;
+      </table></div>`, 'stats');
   }
 
   /**

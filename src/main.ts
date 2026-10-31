@@ -115,12 +115,20 @@ function commandSound(cmd: Command, r: unknown): void {
     case 'place': {
       const p = r as PlaceResult;
       if (p.ok) sound.play('place');
+      else if (cmd.initial && p.reason) {
+        const [x, y] = World.originFor(cmd.tool, cmd.x, cmd.y);
+        renderer.rejectPlacement(x, y, cmd.tool, p.reason);
+      }
       // 드래그 중 막힌 칸마다 소리를 내면 시끄러우니 처음 클릭에서만
-      else if (cmd.initial && (p.swap || (p.reason && p.reason !== '이미 건물이 있음'))) sound.play('error');
+      if (!p.ok && cmd.initial && (p.swap || (p.reason && p.reason !== '이미 건물이 있음'))) sound.play('error');
       break;
     }
     case 'paste':
       if ((r as ResultOf<typeof cmd>).placed > 0) sound.play('place');
+      break;
+    case 'road-build':
+      sound.play((r as ResultOf<typeof cmd>).ok ? 'place' : 'error');
+      sound.endStroke();
       break;
     case 'remove-at':
     case 'remove':
@@ -134,7 +142,7 @@ function commandSound(cmd: Command, r: unknown): void {
       sound.play('rotate');
       break;
     case 'research':
-      sound.play(r ? 'research' : 'error');
+      if (!r) sound.play('error');
       break;
     case 'build-truck':
     case 'clone-truck':
@@ -381,6 +389,8 @@ function frame(now: number): void {
 
   session.advance(dt);
 
+  if (document.hidden) { requestAnimationFrame(frame); return; }
+
   game.input.update(dt);
   // 맵 글씨도 "글자 또렷하게" 배율을 따른다
   renderer.textZoom = uiZoom();
@@ -418,6 +428,9 @@ session.connect();
 window.addEventListener('beforeunload', () => game.save());
 document.addEventListener('visibilitychange', () => {
   if (document.hidden) game.save();
+  renderer.clearEffects();
+  ui.silenceEffects();
+  if (!document.hidden) ui.update();
 });
 
 if (!loaded) ui.showHelp();
@@ -430,6 +443,8 @@ if (import.meta.env.DEV) {
     game,
     camera,
     session,
+    renderer,
+    ui,
     /** 탭이 숨겨져 rAF가 멈춰도 콘솔에서 n초 진행시키고 다시 그린다 (혼자 할 때만) */
     step(seconds: number) {
       for (let i = 0; i < seconds / DT; i++) world.tick();

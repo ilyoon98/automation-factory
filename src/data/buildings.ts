@@ -45,32 +45,33 @@ export type BuildingType =
   | 'fuel-generator'
   | 'geothermal';
 
-export type Category = 'logistics' | 'production' | 'power' | 'storage' | 'transport' | 'forest' | 'industry';
+export type Category = 'logistics' | 'production' | 'generation' | 'power' | 'storage' | 'transport' | 'forest' | 'industry';
 
 /**
  * 하단 툴바 카테고리. key로 탭을 바꾸고, 숫자 1~9로 items의 순서대로 고른다.
- * 순서가 곧 단축키 번호라 바꾸면 손에 익은 번호가 달라진다.
+ * 초기 설비 → 목표·연구 진행 순서의 고정 배치. 연구 완료 여부로 재정렬하지 않아 번호가 움직이지 않는다.
  */
 export const CATEGORIES: { id: Category; name: string; key: string; items: BuildingType[] }[] = [
   {
     id: 'logistics',
     name: '물류',
     key: 'z',
-    items: ['belt', 'fast-belt', 'underground', 'splitter', 'overflow', 'sorter', 'merger'],
+    items: ['belt', 'underground', 'splitter', 'merger', 'overflow', 'sorter', 'fast-belt'],
   },
   {
     id: 'production',
     name: '생산',
     key: 'x',
-    items: ['miner', 'smelter', 'assembler', 'miner-2', 'crusher', 'washer', 'separator', 'pump', 'electric-furnace'],
+    items: ['miner', 'smelter', 'assembler', 'miner-2', 'pump', 'crusher', 'washer', 'separator', 'electric-furnace'],
   },
-  // 기존 발전 4종의 순서·번호는 그대로, 확장 세계에서 발전·전력망·저장을 뒤에 더한다 (별도 배전 탭 없음)
-  { id: 'power', name: '전력', key: 'c', items: ['generator', 'solar', 'hydro', 'wind', 'fuel-generator', 'geothermal', 'pole', 'substation', 'accumulator'] },
+  // C는 발전 설비, U는 연결·공급·저장. 풍력을 먼저 보여 주되 석탄 발전도 같은 단계에서 선택 가능하다.
+  { id: 'generation', name: '발전', key: 'c', items: ['wind', 'generator', 'solar', 'hydro', 'fuel-generator', 'geothermal'] },
+  { id: 'power', name: '전력', key: 'u', items: ['pole', 'substation', 'accumulator'] },
   { id: 'storage', name: '보관', key: 'v', items: ['storage', 'unloader'] },
   { id: 'transport', name: '운송', key: 'b', items: ['road', 'station', 'charger'] },
-  { id: 'forest', name: '숲', key: 'n', items: ['lumberjack', 'planter', 'sawmill'] },
+  { id: 'forest', name: '숲', key: 'n', items: ['lumberjack', 'sawmill', 'planter'] },
   // regional-v1 세계에서만 탭이 보인다
-  { id: 'industry', name: '산업', key: 'l', items: ['sap-extractor', 'drill', 'chem-reactor', 'refinery', 'electrolyzer', 'large-assembler'] },
+  { id: 'industry', name: '산업', key: 'l', items: ['sap-extractor', 'chem-reactor', 'drill', 'refinery', 'electrolyzer', 'large-assembler'] },
 ];
 
 /** 지역 생산망 확장 세계에서만 쓰는 건물 (예전 세계의 탭·도감에는 보이지 않는다) */
@@ -88,9 +89,6 @@ export function categoryItems(id: Category, regional: boolean): BuildingType[] {
   const items = CATEGORIES.find((c) => c.id === id)?.items ?? [];
   return regional ? items : items.filter((t) => !REGIONAL_ONLY.has(t));
 }
-
-/** 전력 탭 안의 묶음 (확장 세계): 그 묶음의 첫 건물 앞에 이름을 붙인다 */
-export const POWER_GROUP: Partial<Record<BuildingType, string>> = { generator: '발전', pole: '전력망', accumulator: '저장' };
 
 /**
  * 지정 칸 입출구. 앞면이 남쪽(↓)일 때 몸체 왼쪽 위 (0,0) 기준 "몸체 바깥에 벨트를 놓는 칸".

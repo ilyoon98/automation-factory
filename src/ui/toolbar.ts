@@ -1,4 +1,4 @@
-import { BUILDINGS, CATEGORIES, POWER_GROUP, categoryItems, type BuildingType, type Category } from '../data/buildings';
+import { BUILDINGS, CATEGORIES, categoryItems, type BuildingType, type Category } from '../data/buildings';
 import type { Input } from '../input/input';
 import type { World } from '../sim/world';
 import type { Blueprint } from '../sim/blueprint';
@@ -24,22 +24,20 @@ const BP_KEY = 'k';
 const TAB_ICON: Record<Category, () => string> = {
   logistics: () => buildingIconUrl('belt'),
   production: () => buildingIconUrl('miner'),
-  power: () => buildingIconUrl('generator'),
+  generation: () => buildingIconUrl('wind'),
+  power: () => buildingIconUrl('pole'),
   storage: () => buildingIconUrl('storage'),
   transport: truckIconUrl,
   forest: () => buildingIconUrl('lumberjack'),
   industry: () => buildingIconUrl('large-assembler'),
 };
 
-/** 지역 생산망 확장 세계에서만 보이는 탭 */
-const REGIONAL_TABS: Category[] = ['industry'];
-
 const categoryOf = (type: BuildingType): Category | null =>
   CATEGORIES.find((c) => c.items.includes(type))?.id ?? null;
 
 /**
  * 하단 툴바: 카테고리 탭 + 그 탭의 건물 목록.
- * - Z X C V B 또는 Tab / Shift+Tab 으로 탭을 바꾸고, 숫자 1~9로 그 탭의 N번째 건물을 고른다.
+ * - 탭에 적힌 키 또는 Tab / Shift+Tab 으로 탭을 바꾸고, 숫자 1~9로 그 탭의 N번째 건물을 고른다.
  * - 다른 방법(Q로 집기 등)으로 다른 탭의 건물을 들면 그 탭으로 넘어간다.
  */
 export class Toolbar {
@@ -83,7 +81,7 @@ export class Toolbar {
       thumb.style.width = `${w}px`;
       thumb.style.left = `${(palette.scrollLeft / max) * (bar.clientWidth - w)}px`;
       // 지금 반 이상 보이는 카드 범위 (번호는 원래 목록 순서 그대로)
-      const cards = [...palette.children].filter((c) => !c.classList.contains('pal-group')) as HTMLElement[];
+      const cards = [...palette.children] as HTMLElement[];
       const left = palette.scrollLeft;
       const right = left + palette.clientWidth;
       const seen = cards.map((c, i) => [i, Math.min(right, c.offsetLeft + c.offsetWidth) - Math.max(left, c.offsetLeft) >= c.offsetWidth / 2] as const).filter(([, v]) => v);
@@ -142,7 +140,7 @@ export class Toolbar {
   private syncScrollbar: () => void = () => {};
   /** 잠긴 건물 카드를 눌렀을 때 (ui.ts가 연구 창을 그 연구로 연다) */
   onLockedClick: ((type: BuildingType) => void) | null = null;
-  /** 지금 세계가 regional-v1인지 (산업 탭을 보일지) */
+  /** 지금 세계가 regional-v1인지 (전력·산업 탭과 확장 설비를 보일지) */
   private regional = false;
 
   /** 지금 탭의 i번째(0부터) 건물. 청사진 탭이면 i번째 청사진을 들고 null */
@@ -162,38 +160,37 @@ export class Toolbar {
     if (this.category === 'blueprints') this.renderPalette();
   }
 
-  /** 탭 단축키(z, x, c, v, b, n, k)면 그 탭으로 바꾸고 true */
+  /** 표시 중인 탭의 단축키면 그 탭으로 바꾸고 true */
   selectByKey(key: string): boolean {
     if (key === BP_KEY) {
       this.setCategory('blueprints');
       return true;
     }
     const c = CATEGORIES.find((cat) => cat.key === key);
-    if (!c || (REGIONAL_TABS.includes(c.id) && !this.regional)) return false;
+    if (!c || !categoryItems(c.id, this.regional).length) return false;
     this.setCategory(c.id);
     return true;
   }
 
   /** Tab / Shift+Tab */
   cycle(delta: number): void {
-    const tabs: Tab[] = [...CATEGORIES.map((c) => c.id).filter((id) => !REGIONAL_TABS.includes(id) || this.regional), 'blueprints'];
+    const tabs: Tab[] = [...CATEGORIES.map((c) => c.id).filter((id) => categoryItems(id, this.regional).length), 'blueprints'];
     const i = tabs.indexOf(this.category);
     this.setCategory(tabs[(i + delta + tabs.length) % tabs.length]);
   }
 
   update(w: World): void {
-    // 산업 탭은 지역 생산망 확장 세계에서만
-
-    // 확장 세계면 전력 탭에 발전·전력망·저장이 더 붙는다
+    this.world = w;
+    // 세계를 바꾸면 발전의 연료·지열 등 확장 전용 카드도 다시 걸러 낸다.
     if (this.regional !== w.regional) {
       this.regional = w.regional;
-      if (this.category === 'power') this.renderPalette();
+      this.renderPalette();
     }
-    for (const id of REGIONAL_TABS) {
+    for (const { id } of CATEGORIES) {
       const tab = document.querySelector<HTMLElement>(`#tabs .tab[data-cat="${id}"]`);
-      if (tab) tab.hidden = !w.regional;
+      if (tab) tab.hidden = !categoryItems(id, w.regional).length;
     }
-    if (!w.regional && REGIONAL_TABS.includes(this.category as Category)) this.setCategory('production');
+    if (this.category !== 'blueprints' && !categoryItems(this.category, w.regional).length) this.setCategory('production');
     const tool = this.input.tool;
     // 다른 탭의 건물을 들게 되면 그 탭을 보여 준다
     if (tool !== this.lastTool) {
@@ -202,7 +199,6 @@ export class Toolbar {
       if (cat && cat !== this.category) this.setCategory(cat);
       if (tool) this.reveal(tool);
     }
-    this.world = w;
     this.paintCards(w);
   }
 
@@ -304,13 +300,6 @@ export class Toolbar {
     const items = categoryItems(this.category, this.regional);
     items.forEach((type, i) => {
       const def = BUILDINGS[type];
-      const group = this.category === 'power' && this.regional ? POWER_GROUP[type] : undefined;
-      if (group) {
-        const tag = document.createElement('span');
-        tag.className = 'pal-group';
-        tag.textContent = group;
-        palette.appendChild(tag);
-      }
       const btn = document.createElement('button');
       btn.className = 'pal';
       btn.dataset.codexBuilding = type; // 우클릭: 도감

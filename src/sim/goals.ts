@@ -50,10 +50,13 @@ export const MAIN_GOALS: MainGoal[] = [
   {
     id: 'MG01',
     chapter: '첫 공장',
-    title: '광석을 허브로',
+    title: '첫 생산물을 허브로',
     requires: [],
-    hint: '철광맥에 채굴기를 놓고 벨트로 허브까지 이어요.',
-    checks: (w) => [made(w, 'iron-ore', 10, '철광석'), ['허브에 들어온 철광석', w.stats.hubIn.get('iron-ore') ?? 0, 10]],
+    hint: '철광석을 그대로 보내거나, 제련한 철판을 허브로 보내요.',
+    checks: (w) => [
+      ['철광석 채굴 또는 철판 생산', Math.max(w.stats.made.get('iron-ore') ?? 0, w.stats.made.get('iron-plate') ?? 0), 10, { item: 'iron-ore' }],
+      ['허브에 들어온 철광석·철판', (w.stats.hubIn.get('iron-ore') ?? 0) + (w.stats.hubIn.get('iron-plate') ?? 0), 10],
+    ],
   },
   { id: 'MG02', chapter: '첫 공장', title: '첫 철판 라인', requires: ['MG01'], hint: '제련로를 놓고 철광석을 넣어요. 출구(화살표)가 막히면 멈춰요.', checks: (w) => [made(w, 'iron-plate', 20, '철판')] },
   { id: 'MG03', chapter: '첫 공장', title: '기어 자동화', requires: ['MG02'], hint: '조립 자동화를 연구하고 조립기에서 기어를 골라요.', checks: (w) => [tech(w, 'automation'), made(w, 'gear', 20, '기어')] },
@@ -84,8 +87,8 @@ export const MAIN_GOALS: MainGoal[] = [
     chapter: '첫 지역 조합',
     title: '눈밭에서 온 주석',
     requires: ['MG09'],
-    hint: '주석광석을 캐서 주석판으로. 원광이든 판이든 다른 거점으로 실어 날라요.',
-    checks: (w) => [made(w, 'tin-plate', 20, '주석판'), ['다른 거점으로 배송한 주석', (w.stats.itemDelivered.get('tin-ore') ?? 0) + (w.stats.itemDelivered.get('tin-plate') ?? 0), 20]],
+    hint: '주석판 20개를 생산하고, 주석광석·주석판을 합쳐 20개를 거점 번호가 다른 정류장에 트럭으로 내려요. 거점 번호는 정류장 정보에서 확인해요.',
+    checks: (w) => [made(w, 'tin-plate', 20, '주석판'), ['주석광석·주석판 다른 거점 트럭 배송', (w.stats.itemDelivered.get('tin-ore') ?? 0) + (w.stats.itemDelivered.get('tin-plate') ?? 0), 20]],
   },
   { id: 'MG11', chapter: '첫 지역 조합', title: '청동 구동부', requires: ['MG10'], hint: '구리판과 주석판으로 청동, 청동과 기어로 구동부.', checks: (w) => [made(w, 'bronze-drive', 20, '청동 구동부')] },
   { id: 'MG12', chapter: '첫 지역 조합', title: '산업 전동기 연구', requires: ['MG11', 'MG08'], hint: '산업 전동기(T02)를 연구해 수액 채취기와 화학 반응기를 열어요.', checks: (w) => [tech(w, 'industrial-motor')] },
@@ -336,6 +339,7 @@ export function evaluateGoals(w: World): string[] {
     if (w.goals.has(g.id) || !g.requires.every((r) => w.goals.has(r))) continue;
     if (!goalMet(w, g)) continue;
     w.goals.add(g.id);
+    if (g.id === 'MG36') w.stats.completion = { time: w.time, sites: productionZones(w).length, delivered: w.stats.projectDelivered };
     got.push(g.id);
   }
   // 지역 과제: 지금 지역까지의 과제만 판정한다. 한 지역의 과제를 REGION_NEED개 이루면 다음 땅이 열린다

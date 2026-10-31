@@ -716,6 +716,8 @@ define('refinery', 48, 48, 5, (p, f) => {
     p.rect(x + 1, 31 - h, 2, h - 2, PAL.metal.hi);
     p.rect(x + 6, 31 - h, 1, h - 2, PAL.metal.lo);
     for (let y = 33 - h; y < 28; y += 5) p.rect(x + 1, y, 7, 1, PAL.metal.lo);
+    // 증류관의 작은 유체 눈금. 몸체·접점은 그대로 두고 실제 작업 프레임만 따른다.
+    if (f) p.px(x + 4, 28 - ((f + x) % 4) * 4, '#e8dcb0');
   }
   p.rect(14, 12, 5, 2, PAL.ink);
   p.rect(26, 10, 5, 2, PAL.ink);
@@ -745,6 +747,11 @@ define('large-assembler', 48, 48, 5, (p, f) => {
     p.rect(x, 35, 7, 5, PAL.ink);
     p.rect(x + 1, 36, 5, 3, PAL.wood.hi);
     p.px(x + 3, 37, PAL.brass.lo);
+  }
+  // 여섯 투입부는 고정, 가운데 조립 팔만 움직인다.
+  for (let i = 0; i < 6; i++) {
+    p.rect(5 + i * 7, 30, 4, 2, PAL.ink);
+    p.rect(6 + i * 7, 30, 2, 1, PAL.brass.lo);
   }
 });
 

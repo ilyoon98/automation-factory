@@ -85,8 +85,19 @@ img {
   width: 100vw;
   height: 100vh;
   display: block;
-  cursor: crosshair;
+  cursor: default;
 }
+
+/* 커서 끝이 가리키는 칸과 조작을 구분한다. 실제 판정은 Input.pointerFeedback이 정한다. */
+#game[data-action='build'] { cursor: url('./ui/cursors/build.svg') 1 1, crosshair; }
+#game[data-action='remove'] { cursor: url('./ui/cursors/remove.svg') 1 1, crosshair; }
+#game[data-action='pickup'] { cursor: grab; }
+#game[data-action='select'] { cursor: pointer; }
+#game[data-action='move'] { cursor: default; }
+#game[data-action='pan'] { cursor: grabbing; }
+#game[data-action='blocked'] { cursor: not-allowed; }
+#game[data-action='copy'] { cursor: copy; }
+#game[data-action='multi'], #game[data-action='ping'] { cursor: crosshair; }
 
 /*
  * 스크롤바도 픽셀로: 브라우저 기본 모양(화살표·둥근 막대) 대신 툴바 아래 막대(#palette-bar)와 같은 모양.
@@ -452,6 +463,32 @@ h3 small {
 #notice p {
   margin: 2px 0 0;
 }
+/* 작은 공방의 완료 도장: 갈무리·종이 베벨을 유지하고 금빛은 사건 한 번에만. */
+#notice { max-height: max(96px, calc(100dvh / var(--uiz) - var(--top-h, 84px) - var(--bottom-h, 0px) - 24px)); overflow: auto; }
+#notice header { position: sticky; top: -6px; background: var(--panel); z-index: 1; }
+#notice:not([hidden]) { animation: notice-enter .15s steps(3) both, notice-exit .15s steps(3) calc(var(--notice-life, 4000ms) - 150ms) forwards; }
+@keyframes notice-enter { from { opacity: 0; transform: translate(-50%, -3px); } to { opacity: 1; transform: translate(-50%, 0); } }
+@keyframes notice-exit { from { opacity: 1; } to { opacity: 0; } }
+.reduced-effects #notice:not([hidden]) { animation: none; }
+.notice-title { font: 12px var(--font-s); line-height: 1.8; color: var(--ink); margin: 6px 0; }
+#notice[data-kind="finale"] .notice-title { font-size: 24px; color: #9e7526; }
+.notice-body { line-height: 1.7; }
+.notice-body button { margin: 6px 4px 0 0; }
+.research-emblem { display: inline-flex; position: relative; align-items: center; justify-content: center; margin-right: 8px; isolation: isolate; }
+.research-emblem::before { content: ''; position: absolute; inset: -6px; z-index: -1; background: conic-gradient(from 0deg, transparent, #f6d77e, transparent 45%, #f6d77e, transparent); animation: completion-light 1.5s linear both; }
+@keyframes completion-light { from { transform: rotate(0deg); opacity: .8; } to { transform: rotate(360deg); opacity: 0; } }
+.notice-sparks { position: absolute; top: 38px; left: 50%; pointer-events: none; }
+.notice-sparks i { position: absolute; width: 3px; height: 3px; background: #d7a63d; animation: completion-spark .5s steps(8) var(--delay) both; }
+.notice-sparks i:nth-child(3n) { background: #5fae5a; }
+.notice-sparks i:nth-child(3n + 1) { background: #b35c12; }
+#notice[data-kind="research"] .notice-sparks i { animation-duration: .8s; }
+@keyframes completion-spark { from { transform: translate(0, 0); opacity: 1; } to { transform: translate(var(--dx), var(--dy)); opacity: 0; } }
+.completion-stats { display: flex; flex-wrap: wrap; gap: 12px; margin: 8px 0; border-top: 1px solid #b89a63; padding-top: 8px; }
+.completion-stats div { flex: 1; min-width: 80px; }
+.completion-stats dt { font-size: 12px; color: var(--muted); }
+.completion-stats dd { margin: 3px 0 0; color: var(--ink); }
+.reduced-effects .notice-sparks, .reduced-effects .research-emblem::before { display: none; }
+@media (prefers-reduced-motion: reduce) { html:not(.full-effects) .notice-sparks, html:not(.full-effects) .research-emblem::before { display: none; } }
 /* 접속자 목록 (위쪽 함께 하기 버튼을 누르면). 위치·테두리는 .popover */
 #players {
   min-width: 230px;
@@ -666,6 +703,7 @@ h3 small {
 }
 #tabs {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 4px;
 }
@@ -787,16 +825,6 @@ h3 small {
   text-align: left;
   /* 건물이 적으면 너비를 채우고, 많으면 최소 너비로 두고 스크롤 */
   flex: 1 0 auto;
-}
-/* 전력 탭 안의 묶음 이름 (발전 · 전력망 · 저장) */
-.pal-group {
-  align-self: center;
-  writing-mode: vertical-rl;
-  font: 10px var(--font-s);
-  color: var(--muted);
-  padding: 0 2px;
-  border-left: 1px dashed var(--muted);
-  flex: 0 0 auto;
 }
 .pal img {
   grid-row: span 2;
@@ -1032,6 +1060,9 @@ h3 small {
   font-size: 12px;
 }
 .prod-sub {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
   margin-top: 8px;
   padding-top: 6px;
   border-top: 2px dashed var(--lo);
@@ -1040,17 +1071,29 @@ h3 small {
   color: var(--muted);
 }
 .prod-sub .muted {
-  margin: 0 0 0 4px;
+  margin: 0;
   font: 10px var(--font-s);
+}
+.need-row {
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr) max-content max-content;
+  gap: 4px 6px;
+}
+.need-row > span {
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 .need-row b {
   font-size: 12px;
+  text-align: right;
+  white-space: nowrap;
 }
 .need-row small {
   color: var(--muted);
   min-width: 52px;
   text-align: right;
   font: 10px var(--font-s);
+  white-space: nowrap;
 }
 #info .actions {
   display: flex;
@@ -1120,6 +1163,14 @@ h3 small {
 #info .stop button {
   padding: 0 5px;
 }
+#info .stop .stop-tools {
+  margin-top: 2px;
+}
+#info .stop-tools [data-act='stop-map'] {
+  margin-right: auto;
+  font: 10px var(--font-s);
+  min-height: 22px;
+}
 #info .trucks {
   display: flex;
   flex-direction: column;
@@ -1131,6 +1182,67 @@ h3 small {
 }
 #info .truck-row {
   text-align: left;
+}
+#info .transport-section {
+  margin: 6px 0;
+  border-top: 1px solid var(--lo);
+  padding-top: 5px;
+}
+#info .transport-section > summary {
+  cursor: pointer;
+  color: var(--ink);
+  padding: 3px 0;
+  line-height: 1.6;
+}
+#info .transport-section > summary:focus-visible {
+  outline: 2px solid var(--ink);
+  outline-offset: 2px;
+}
+#info .transport-section[open] > summary {
+  margin-bottom: 4px;
+}
+.target-incoming:not([hidden]) {
+  display: block;
+  margin: -2px 0 5px;
+  text-align: right;
+}
+.road-builder:not([hidden]) {
+  margin: 6px 0 10px;
+  padding: 6px;
+  border: 2px dashed var(--good);
+  background: var(--paper-2);
+}
+.road-builder .route-head { display: flex; align-items: center; justify-content: space-between; }
+.road-builder .recipe { min-width: 0; }
+.road-builder .recipe select { min-width: 0; flex: 1; }
+.road-builder .road-cost b { display: flex; flex-wrap: wrap; gap: 4px 8px; }
+.road-builder .road-cost b > span { white-space: nowrap; }
+#info .transport-section input[type='number'] {
+  min-width: 0;
+}
+#info .transport-section .line {
+  display: flex;
+  gap: 4px;
+  min-width: 0;
+}
+#info .transport-section .line > select,
+#info[data-transport-context] .recipe > select {
+  flex: 1;
+  min-width: 0;
+}
+#info[data-transport-context^='vehicle:'] .actions button {
+  max-width: 100%;
+  min-width: 0;
+  white-space: normal;
+}
+#info .actions .transport-clone {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 3px;
+}
+#info .transport-cost {
+  white-space: nowrap;
 }
 #info .trucks .cost {
   margin-left: 6px;
@@ -1499,6 +1611,44 @@ h3 small {
 .tech p {
   margin: 4px 0;
   color: var(--muted);
+}
+/* 해금되는 설비와 레시피 결과를 실제 게임 아이콘으로. 항목 안의 그림·이름은 함께 넘긴다. */
+.tech-unlocks {
+  margin: 6px 0;
+  font: 10px var(--font-s);
+  color: var(--ink);
+}
+.tech-unlocks .unlock-label {
+  display: block;
+  margin-bottom: 3px;
+  color: var(--muted);
+}
+.tech-unlocks .unlock-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+}
+.tech-unlock,
+.tech-unlock .unlock-icons {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+.tech-unlock {
+  max-width: 100%;
+}
+.tech-unlock > span:last-child {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.tech-unlocks .icon {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  flex-shrink: 0;
+}
+.tech-unlock .unlock-icons {
+  flex-shrink: 0;
 }
 .tech.done {
   opacity: 0.55;

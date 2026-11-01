@@ -3,6 +3,7 @@ import { applyCommand, type Command, type ResultOf } from '../sim/commands';
 import type { Dir } from '../sim/dir';
 import { DT, World, type NetSnapshot } from '../sim/world';
 import { BUILD_ID, VERSION } from '../version';
+import { packReply, unpackReply, type PackedReply } from './replies';
 
 /**
  * 같은 공유기(LAN)에서 같이 하기. 누군가 "방 만들기"를 누르면 방장(호스트), "참가하기"를 누르면 손님이 된다.
@@ -100,9 +101,10 @@ type Msg =
   | { type: 'cmd'; from: number; seq: number; cmd: Command }
   | { type: 'speed'; from: number; speed: number }
   | { type: 'need-sync'; from: number }
+  | { type: 'reply-ack'; from: number; seq: number }
   // 방장 → 손님
   | { type: 'frame'; upTo: number; cmds: Stamped[]; hashes: [number, number][]; speed: number }
-  | { type: 'snapshot'; to?: number; snap: NetSnapshot; speed: number };
+  | { type: 'snapshot'; to?: number; snap: NetSnapshot; speed: number; replies?: [number, [number, PackedReply][]][] };
 
 /** 이 탭에서 방을 만들었는지·참가했는지. 새로고침·잠깐 끊김 뒤에 저절로 다시 열고 다시 들어가려고 (탭을 닫으면 잊는다) */
 const INTENT_KEY = 'automation-game/room-intent';
@@ -236,6 +238,8 @@ export class Session {
   private guests = new Set<number>();
   private outbox: Stamped[] = [];
   private hashes: [number, number][] = [];
+  /** 손님이 결과를 읽었다고 확인하기 전까지. 동기화가 프레임을 대체해도 응답은 남긴다. */
+  private replies = new Map<number, Map<number, PackedReply>>();
 
   // 손님
   private inbox: Stamped[] = [];
@@ -446,6 +450,7 @@ export class Session {
     this.guests.clear();
     this.outbox = [];
     this.hashes = [];
+    this.replies.clear();
     this.inbox = [];
     this.pending.clear();
     this.others.clear();
@@ -605,6 +610,7 @@ export class Session {
       to,
       snap: this.hooks.getWorld().snapshot(),
       speed: this.hooks.getSpeed(),
+      replies: [...this.replies].map(([player, replies]) => [player, [...replies]]),
     });
   }
 
@@ -614,24 +620,30 @@ export class Session {
   private catchUp(): void {
     if (!this.synced) return;
     const w = this.hooks.getWorld();
-    let steps = 0;
-    for (;;) {
-      while (this.inbox.length && this.inbox[0].tick === w.tickCount) {
-        const e = this.inbox.shift()!;
-        const r = applyCommand(w, e.p, e.cmd);
-        if (e.p === this.me && e.seq) {
-          this.pending.get(e.seq)?.(r);
-          this.pending.delete(e.seq);
+    let steps = 0, acknowledged = 0;
+    try {
+      for (;;) {
+        while (this.inbox.length && this.inbox[0].tick === w.tickCount) {
+          const e = this.inbox.shift()!;
+          const r = applyCommand(w, e.p, e.cmd);
+          if (e.p === this.me && e.seq) {
+            const done = this.pending.get(e.seq);
+            this.pending.delete(e.seq);
+            done?.(r);
+            acknowledged = Math.max(acknowledged, e.seq);
+          }
         }
+        if (this.inbox.length && this.inbox[0].tick < w.tickCount) return this.resync();
+        if (w.tickCount >= this.hostTick || steps >= GUEST_MAX_STEPS) return;
+        w.tick();
+        steps++;
+        const want = this.expected.get(w.tickCount);
+        if (want === undefined) continue;
+        this.expected.delete(w.tickCount);
+        if (w.checksum() !== want) return this.resync();
       }
-      if (this.inbox.length && this.inbox[0].tick < w.tickCount) return this.resync();
-      if (w.tickCount >= this.hostTick || steps >= GUEST_MAX_STEPS) return;
-      w.tick();
-      steps++;
-      const want = this.expected.get(w.tickCount);
-      if (want === undefined) continue;
-      this.expected.delete(w.tickCount);
-      if (w.checksum() !== want) return this.resync();
+    } finally {
+      if (acknowledged) this.send({ type: 'reply-ack', seq: acknowledged });
     }
   }
 
@@ -677,6 +689,7 @@ export class Session {
         this.sendSnapshot(m.id);
         return;
       case 'leave':
+        this.replies.delete(m.id);
         this.guests.delete(m.id);
         return;
       case 'presence':
@@ -692,8 +705,18 @@ export class Session {
       case 'cmd': {
         if (this.role !== 'host' || !this.guests.has(m.from)) return;
         const w = this.hooks.getWorld();
-        applyCommand(w, m.from, m.cmd);
+        const result = applyCommand(w, m.from, m.cmd);
+        let replies = this.replies.get(m.from);
+        if (!replies) this.replies.set(m.from, (replies = new Map()));
+        replies.set(m.seq, packReply(m.cmd, result));
         this.outbox.push({ tick: w.tickCount, p: m.from, seq: m.seq, cmd: m.cmd });
+        return;
+      }
+      case 'reply-ack': {
+        if (this.role !== 'host' || !this.guests.has(m.from) || !Number.isSafeInteger(m.seq)) return;
+        const replies = this.replies.get(m.from);
+        if (replies) for (const seq of replies.keys()) if (seq <= m.seq) replies.delete(seq);
+        if (!replies?.size) this.replies.delete(m.from);
         return;
       }
       case 'speed':
@@ -712,6 +735,15 @@ export class Session {
       case 'snapshot': {
         if (this.role !== 'guest') return;
         const first = !this.joined;
+        const replies = m.replies?.find(([player]) => player === this.me)?.[1] ?? [];
+        let acknowledged = 0;
+        for (const [seq, result] of replies) {
+          const done = this.pending.get(seq);
+          this.pending.delete(seq);
+          done?.(unpackReply(result, this.hooks.getWorld()));
+          acknowledged = Math.max(acknowledged, seq);
+        }
+        if (acknowledged) this.send({ type: 'reply-ack', seq: acknowledged });
         const w = World.fromSnapshot(m.snap);
         this.inbox = [];
         this.expected.clear();

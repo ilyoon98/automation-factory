@@ -17,6 +17,7 @@ export function letScrollbarDrag(el: HTMLElement): void {
     const bar = el.offsetWidth - el.clientWidth;
     if (bar <= 0 || el.scrollHeight <= el.clientHeight) return set(false);
     const r = el.getBoundingClientRect();
-    set(e.clientX >= r.right - bar && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom);
+    const screenBar = bar * (r.width / el.offsetWidth);
+    set(e.clientX >= r.right - screenBar && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom);
   });
 }

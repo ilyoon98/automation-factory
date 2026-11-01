@@ -521,6 +521,7 @@ export class Input implements ViewState {
     }
     this.keys.add(k);
     if (/^[1-9]$/.test(e.key)) {
+      if (e.shiftKey || e.ctrlKey || e.metaKey || e.altKey) return;
       const type = this.cb.paletteSlot(Number(e.key) - 1);
       if (type) this.setTool(type);
       return;

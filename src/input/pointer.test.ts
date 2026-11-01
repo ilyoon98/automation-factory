@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ITEM_IDS } from '../data/items';
+import type { BuildingType } from '../data/buildings';
 import { Camera } from '../render/camera';
 import { PILE_MARKER } from '../render/pile-marker';
 import { applyCommand, type Exec } from '../sim/commands';
@@ -51,8 +52,9 @@ function inputFixture() {
   };
   const pickPile = vi.fn((target: number) => applyCommand(w, 0, { t: 'pile-collect', rid: `input-${++rid}`, tile: target }));
   const togglePause = vi.fn();
+  const paletteSlot = vi.fn((_: number): BuildingType | null => null);
   const input = new Input(canvas as unknown as HTMLCanvasElement, cam, {
-    getWorld: () => currentWorld, exec, pickPile, changed: vi.fn(), toast: vi.fn(), togglePause, paletteSlot: () => null, ping: vi.fn(),
+    getWorld: () => currentWorld, exec, pickPile, changed: vi.fn(), toast: vi.fn(), togglePause, paletteSlot, ping: vi.fn(),
   });
   const event = (wx: number, wy: number, values = {}) => {
     const [clientX, clientY] = cam.worldToScreen(wx, wy);
@@ -61,12 +63,19 @@ function inputFixture() {
   const click = (wx: number, wy: number, values = {}) => {
     canvas.fire('pointerdown', event(wx, wy, values)); win.fire('pointerup', event(wx, wy, values));
   };
-  return { w, belt, tile, cam, input, canvas, win, pickPile, togglePause, event, click, setWorld: (next: World) => { currentWorld = next; } };
+  return { w, belt, tile, cam, input, canvas, win, pickPile, togglePause, paletteSlot, event, click, setWorld: (next: World) => { currentWorld = next; } };
 }
 
 afterEach(() => vi.unstubAllGlobals());
 
 describe('창이 열린 동안 입력 보호', () => {
+  it.each(['shiftKey','ctrlKey','metaKey','altKey'])('%s 숫자 조합으로 건설 도구를 바꾸지 않는다', modifier => {
+    const f=inputFixture();f.paletteSlot.mockReturnValue('road');
+    f.win.fire('keydown',{key:'1',[modifier]:true});
+    expect(f.paletteSlot).not.toHaveBeenCalled();expect(f.input.tool).toBeNull();
+    f.win.fire('keydown',{key:'1'});
+    expect(f.paletteSlot).toHaveBeenCalledWith(0);expect(f.input.tool).toBe('road');
+  });
   it('드래그 중 스냅샷을 받으면 그 세계의 편집을 마감하고 다음 설치를 따로 되돌린다', () => {
     const f = inputFixture(); f.input.setTool('road');
     f.canvas.fire('pointerdown', f.event(20.5,20.5));

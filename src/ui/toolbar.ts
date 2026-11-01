@@ -108,7 +108,10 @@ export class Toolbar {
     );
 
     // 막대 끌기
+    let cancelDrag: (() => void) | null = null;
     thumb.addEventListener('pointerdown', (e) => {
+      if (e.button !== 0) return;
+      cancelDrag?.();
       e.preventDefault();
       e.stopPropagation();
       thumb.setPointerCapture(e.pointerId);
@@ -117,18 +120,30 @@ export class Toolbar {
       const startLeft = palette.scrollLeft;
       // 마우스는 화면 픽셀, 스크롤은 UI 픽셀이라 (글자 또렷하게로 UI 배율이 1이 아닐 수 있음) 화면에 보이는 너비로 나눈다
       const ratio = overflow() / Math.max(1, bar.getBoundingClientRect().width - thumb.getBoundingClientRect().width);
-      const move = (ev: PointerEvent) => (palette.scrollLeft = startLeft + (ev.clientX - startX) * ratio);
-      const up = () => {
+      const move = (ev: PointerEvent) => {
+        if (ev.pointerId === e.pointerId) palette.scrollLeft = startLeft + (ev.clientX - startX) * ratio;
+      };
+      const up = (ev?: Event) => {
+        if (ev instanceof PointerEvent && ev.pointerId !== e.pointerId) return;
         thumb.classList.remove('drag');
         thumb.removeEventListener('pointermove', move);
         thumb.removeEventListener('pointerup', up);
+        thumb.removeEventListener('pointercancel', up);
+        thumb.removeEventListener('lostpointercapture', up);
+        window.removeEventListener('blur', up);
+        cancelDrag = null;
       };
+      cancelDrag = up;
       thumb.addEventListener('pointermove', move);
       thumb.addEventListener('pointerup', up);
+      thumb.addEventListener('pointercancel', up);
+      thumb.addEventListener('lostpointercapture', up);
+      window.addEventListener('blur', up);
     });
 
     // 막대 빈 곳을 누르면 그 위치로
     bar.addEventListener('pointerdown', (e) => {
+      if (e.button !== 0) return;
       if (e.target === thumb) return;
       const r = bar.getBoundingClientRect();
       const tw = thumb.getBoundingClientRect().width;
@@ -208,7 +223,8 @@ export class Toolbar {
     const palette = document.getElementById('palette');
     if (!btn || !palette) return;
     const pad = 24; // 가장자리 흐림·넘기기 단추에 가리지 않게
-    const left = btn.getBoundingClientRect().left - palette.getBoundingClientRect().left + palette.scrollLeft;
+    // 카드·스크롤을 같은 UI 논리 좌표로 비교한다 (CSS zoom 배율과 무관).
+    const left = btn.offsetLeft;
     const right = left + btn.offsetWidth;
     let to = palette.scrollLeft;
     if (left - pad < to) to = left - pad;

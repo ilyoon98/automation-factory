@@ -529,6 +529,7 @@ export class UI {
       // Shift + 1~4: 정보 보기 (숫자만 누르면 건물 고르기라 Shift와 함께. 키 배열과 상관없이 e.code로)
       const n = /^Digit([1-4])$/.exec(e.code);
       if (e.shiftKey && n && game.getWorld().regional) {
+        if (e.repeat) return;
         const l = LAYER_KEYS[Number(n[1]) - 1];
         game.input.layer = game.input.layer === l && l !== 'base' ? 'base' : l;
         this.update();

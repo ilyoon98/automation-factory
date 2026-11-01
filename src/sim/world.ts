@@ -3388,7 +3388,12 @@ export class World {
 
   /** 입고 예약을 실제로 실은 화물만큼으로 줄인다 */
   private trimInbound(v: Vehicle): void {
-    for (const r of this.reservations) if (r.v === v.id && r.dir === 'in') r.n = Math.min(r.n, countOf(v.cargo, r.item));
+    const remaining = new Map(v.cargo);
+    for (const r of this.reservations) {
+      if (r.v !== v.id || r.dir !== 'in') continue;
+      r.n = Math.min(r.n, countOf(remaining, r.item));
+      addTo(remaining, r.item, -r.n);
+    }
     this.reservations = this.reservations.filter((r) => r.n > 0);
   }
 
@@ -3496,17 +3501,33 @@ export class World {
       const s = this.buildings.get(storage);
       if (s?.type !== 'storage' || !this.touchingStorageGroups(st).some((g) => g.group.includes(s))) return false;
     }
+    if (st.dock === storage) return true;
     st.dock = storage;
-    for (const v of this.vehicles.values()) if (v.stops.some((s) => s.id === st.id)) this.releaseReservations(v, 'out');
+    for (const v of this.vehicles.values()) if (v.stops.some((s) => s.id === st.id)) this.refreshLoadingReservations(v);
     return true;
   }
 
   /** 목적지 목표 재고 (n = 0이면 지운다) */
   setTarget(st: Building, item: ItemId, n: number): boolean {
-    if (st.type !== 'station' || !Number.isFinite(n) || n < 0) return false;
+    if (st.type !== 'station' || !Number.isSafeInteger(n) || n < 0) return false;
+    const before = st.targets.get(item);
     if (n === 0) st.targets.delete(item);
-    else st.targets.set(item, Math.floor(n));
+    else st.targets.set(item, n);
+    if (before !== st.targets.get(item)) {
+      for (const v of this.vehicles.values()) {
+        if (this.planned(v) && v.stops[1].id === st.id) this.refreshLoadingReservations(v);
+      }
+    }
     return true;
+  }
+
+  /** 이미 실은 화물은 유지하고 미적재 예약만 다음 적재 판정에서 다시 계산한다. */
+  private refreshLoadingReservations(v: Vehicle): void {
+    this.releaseReservations(v, 'out');
+    if (this.planned(v) && v.stop === 0 && v.state === 'loading' && !v.returning) {
+      this.trimInbound(v);
+      v.loadTimer = -1;
+    }
   }
 
   private updatePower(): void {

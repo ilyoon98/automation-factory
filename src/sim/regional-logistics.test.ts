@@ -147,6 +147,22 @@ describe('연결 창고와 계획 적재', () => {
     expect([...v.cargo]).toEqual(cargo);
   });
 
+  it('적재 중 재예약한 뒤 일시정지해도 실제 화물보다 많은 입고 예약을 남기지 않는다', () => {
+    const { w, a, b, v } = yard();
+    a.inBuf.set('motor', 40);
+    w.setTarget(b, 'motor', 40);
+    w.setPlan(v, [{ item: 'motor', cap: 40 }], 0, false);
+    runUntil(w, () => v.load >= 5);
+    w.setPlan(v, [{ item: 'motor', cap: 40 }], 0, false);
+    runUntil(w, () => v.load >= 10);
+    applyCommand(w, 0, { t: 'truck-pause', id: v.id, on: true });
+    w.tick();
+    expect(w.inReserved(b, 'motor')).toBe(v.load);
+    expect(w.requestOf(b, 'motor')).toBe(40 - v.load);
+    runUntil(w, () => v.load === 0 && v.status === 'paused', 40);
+    expect(w.reservations).toEqual([]);
+  });
+
   it('목적지 요청 = 목표 - 실물 - 입고 예정: 목표 40·실물 20이면 20만 싣는다', () => {
     const { w, a, b, sb, v } = yard();
     a.inBuf.set('motor', 50);
@@ -157,6 +173,50 @@ describe('연결 창고와 계획 적재', () => {
     runUntil(w, () => v.stop === 1);
     expect(countOf(v.cargo, 'motor')).toBe(20);
     expect(w.requestOf(b, 'motor')).toBe(0);
+  });
+
+  it('적재 도중 목표를 낮추면 미적재 예약을 다시 계산하고 새 목표까지만 싣는다', () => {
+    const { w, a, b, v } = yard();
+    a.inBuf.set('motor', 40);
+    w.setTarget(b, 'motor', 40);
+    w.setPlan(v, [{ item: 'motor', cap: 40 }], 0, false);
+    runUntil(w, () => v.load >= 5);
+    w.setTarget(b, 'motor', 10);
+    expect(w.inReserved(b, 'motor')).toBe(v.load);
+    runUntil(w, () => v.stop === 1);
+    expect(v.load).toBe(10);
+    expect(w.inReserved(b, 'motor')).toBe(10);
+  });
+
+  it.each([1.5, -1, NaN, Infinity, Number.MAX_SAFE_INTEGER + 1])('잘못된 목표 수량 %s는 기존 재고 목표와 예약을 바꾸지 않는다', n => {
+    const { w, a, b, v } = yard(); a.inBuf.set('motor', 40);
+    w.setTarget(b, 'motor', 40);w.setPlan(v, [{ item:'motor', cap:40 }], 0, false);
+    runUntil(w, () => v.load >= 5);
+    const before=w.serialize(), hash=w.checksum();
+    expect(applyCommand(w,0,{t:'station-target',id:b.id,item:'motor',n})).toBe(false);
+    expect(w.checksum()).toBe(hash);expect(w.serialize()).toEqual(before);
+  });
+
+  it('이미 실은 화물보다 목표가 줄어도 그 화물은 보존하고 더 싣지 않는다', () => {
+    const { w, a, b, v } = yard(); a.inBuf.set('motor', 40);
+    w.setTarget(b,'motor',40);w.setPlan(v,[{item:'motor',cap:40}],0,false);
+    runUntil(w,()=>v.load>=8);const loaded=v.load;
+    w.setTarget(b,'motor',3);runUntil(w,()=>v.stop===1);
+    expect(v.load).toBe(loaded);expect(w.inReserved(b,'motor')).toBe(loaded);
+    runUntil(w,()=>v.load===0);expect(pool(w,b,'motor')).toBe(loaded);
+  });
+
+  it('적재 중 연결 창고를 분리하면 정류장 재고로 남은 적재를 계속한다', () => {
+    const { w, a, sa, b, v } = yard();
+    sa.inBuf.set('motor', 20); a.inBuf.set('motor', 20);
+    w.setPlan(v, [{ item: 'motor', cap: 20 }], 0, false);
+    runUntil(w, () => v.load >= 5);
+    const loaded = v.load;
+    expect(w.setDock(a, 0)).toBe(true);
+    expect(w.inReserved(b, 'motor')).toBe(loaded);
+    runUntil(w, () => v.stop === 1);
+    expect(v.load).toBe(20);
+    expect(countOf(sa.inBuf, 'motor')).toBe(20);
   });
 
   it('목표를 이미 채웠으면 빈 편을 생략하고 출발하지 않는다', () => {

@@ -16,7 +16,10 @@ app.whenReady().then(async () => {
       window.tw=new (await import('/src/sim/world.ts')).World(40,30); tw.createHub(0,0); game.getWorld=()=>tw;game.input.cb.getWorld=()=>tw;
       game.input.tool=null;game.input.paste=null;game.input.mode='none';game.input.keys.clear();game.input.hover={x:10,y:10};game.input.mouse=[10.5,10.5];
       ui.mouse={x:500,y:400};ui.updateTooltip(tw);`);
-    await check('empty ground does not cover the map with movement instructions', `return document.getElementById('tooltip').hidden;`);
+    await check('empty ground does not cover the map with movement instructions', `const t=document.getElementById('tooltip');return t.hidden&&t.getClientRects().length===0;`);
+    await js(`camera.x=10.5;camera.y=10.5;camera.zoom=32;ui.update();renderer.draw(tw,camera,game.input);`);
+    const out=path.resolve('artifacts/transport');fs.mkdirSync(out,{recursive:true});
+    fs.writeFileSync(path.join(out,'tooltip-empty-ground.png'),(await win.webContents.capturePage()).toPNG());
     await js(`game.input.mode='pan';ui.updateTooltip(tw);`);
     await check('panning empty ground stays quiet', `return document.getElementById('tooltip').hidden;`);
     await js(`game.input.mode='none';tw.resItem[tw.idx(10,10)]='iron-ore';tw.resAmount[tw.idx(10,10)]=100;ui.updateTooltip(tw);`);

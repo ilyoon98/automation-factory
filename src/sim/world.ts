@@ -5500,6 +5500,8 @@ export class World {
       nextVehicleId: this.nextVehicleId,
       roadVersion: this.roadVersion,
       power: { ...this.power },
+      // 가동률은 D02 업적 판정에도 쓰이므로 중간 참가 때 초기화하면 해시가 달라진다.
+      buildingStats: [...this.buildings.values()].filter(b => b.stats.age > 0).map(b => [b.id, { ...b.stats }]),
       lastTry,
       vehicles: [...this.vehicles.values()].map((v) => ({
         id: v.id,
@@ -5524,6 +5526,10 @@ export class World {
     w.nextVehicleId = s.nextVehicleId;
     w.roadVersion = s.roadVersion;
     w.power = { ...s.power };
+    for (const [id, stats] of s.buildingStats ?? []) {
+      const b = w.buildings.get(id);
+      if (b) b.stats = { ...stats };
+    }
     for (const [id, t] of s.lastTry) {
       const b = w.buildings.get(id);
       if (b) b.lastTry = [...t];
@@ -5547,7 +5553,7 @@ export class World {
 
   /**
    * 시뮬레이션 상태를 숫자 하나로 (같이 하기에서 호스트와 어긋났는지 확인용).
-   * 화면용 값(가동 기록, 트럭 각도, 이룬 목표)은 넣지 않는다.
+   * 가동률 표본과 트럭 각도는 직접 넣지 않고, 가동률을 사용하는 업적의 판정 결과는 포함한다.
    */
   checksum(): number {
     // 접속 노드는 배치가 바뀐 뒤 처음 물을 때 정해진다: 해시 전에 맞춰 둔다
@@ -5770,6 +5776,7 @@ export interface NetSnapshot {
   nextVehicleId: number;
   roadVersion: number;
   power: PowerState;
+  buildingStats?: [number, Building['stats']][];
   /** [건물 id, 병합기 방향별 마지막 시도 틱] (기본값이 아닌 것만) */
   lastTry: [number, number[]][];
   vehicles: {

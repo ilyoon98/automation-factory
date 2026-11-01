@@ -62,6 +62,19 @@ function busyFactory(): World {
 }
 
 describe('같이 하기: 스냅샷', () => {
+  it('60초 넘게 가동한 기계에 중간 참가해도 가동률 업적의 누적 시간이 같다', () => {
+    const host=makeWorld();
+    const ids=Array.from({length:5},(_,i)=>{
+      const b=host.place('smelter',5+i*3,4,0)!;host.setRecipe(b,'iron-plate');b.inBuf.set('iron-ore',10000);return b.id;
+    });
+    const generator=host.place('generator',22,4,0)!;
+    const advance=(w:World)=>{w.buildings.get(generator.id)!.fuel=5;for(const id of ids)w.buildings.get(id)!.outBuf.clear();w.tick();};
+    for(let i=0;i<70*TICK_RATE;i++)advance(host);
+    expect(host.busyMachines()).toBe(5);
+    const guest=viaNet(host);expect(guest.checksum()).toBe(host.checksum());
+    for(let i=0;i<10*TICK_RATE;i++){advance(host);advance(guest);if(i%TICK_RATE===0)expect(guest.checksum()).toBe(host.checksum());}
+    expect(guest.ach.secs.get('D02:0')).toBe(host.ach.secs.get('D02:0'));
+  });
   it('넘겨받은 월드가 호스트와 매 틱 똑같이 진행된다 (컨베이어·병합기·트럭)', () => {
     const host = busyFactory();
     expect(host.vehicles.size).toBe(2);

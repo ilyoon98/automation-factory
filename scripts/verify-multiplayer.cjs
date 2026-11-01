@@ -84,6 +84,18 @@ app.whenReady().then(async()=>{
     await until(guest,`classReplies.length===2`,'building and vehicle replies');
     await js(guest,`session.catchUp=originalCatchUp;session.advance(0);`);
     await check('resync restores building and vehicle result objects without duplicate commands',guest,`return classReplies.every(Boolean)&&game.getWorld().vehicles.size===2&&session.pending.size===0;`);
+    await js(guest,`game.input.setTool('road');fire('pointerdown',30.5,25.5);`);
+    await until(host,`!!game.getWorld().buildingAt(30,25)`,'unfinished guest stroke');
+    await js(guest,`session.leaveRoom();`);
+    await until(guest,`session.role==='solo'&&!session.borrowed`,'leave during drag');
+    await check('leaving during a drag finalizes that player edit on the host',host,`const ops=game.getWorld().nextEdit(false,${player});return ops?.some(o=>o.kind==='place'&&o.x===30&&o.y===25);`);
+    await js(guest,`session.joinRoom();`);
+    await until(guest,`session.role==='guest'&&session.synced`,'rejoin after interrupted drag');
+    await js(guest,`game.input.setTool('road');fire('pointerdown',32.5,25.5);fire('pointerup',32.5,25.5);`);
+    await until(host,`!!game.getWorld().buildingAt(32,25)`,'new stroke after rejoin');
+    await js(guest,`game.input.undoRedo(false);`);
+    await until(host,`!game.getWorld().buildingAt(32,25)`,'undo after rejoin');
+    await check('rejoining after an interrupted drag keeps new undo steps independent',host,`return !!game.getWorld().buildingAt(30,25)&&game.getWorld().vehicles.size===2;`);
     await js(guest,`game.input.paste={w:1,h:1,entries:[]};game.input.selectedVehicle=1;game.input.multi=[1,2];`);
     await js(host,`game.newGame();`);
     await until(guest,`game.getWorld().width===256&&game.input.paste===null`,'host starts a new world');

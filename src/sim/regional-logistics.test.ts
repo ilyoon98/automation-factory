@@ -361,6 +361,18 @@ describe('연결 창고와 계획 적재', () => {
     expect(guest.checksum()).toBe(w.checksum());
   });
 
+  it('새 끝점 적용을 기다리는 트럭을 추가하면 빈 차량은 다음 노선부터 시작한다', () => {
+    const { w, a, b, v } = yard();
+    for(let x=29;x<=33;x++)w.place('road',x,12,0);
+    const next=w.place('station',31,10,0)!;w.setStationMode(next,'unload');a.inBuf.set('motor',40);
+    w.setPlan(v,[{item:'motor',cap:20}],120,true);runUntil(w,()=>v.stop===1);
+    w.setStops(v,[{id:a.id,act:'load'},{id:next.id,act:'unload'}]);
+    const copy=applyCommand(w,0,{t:'clone-truck',id:v.id})!;
+    expect(copy.stops[1].id).toBe(next.id);expect(copy.pendingStops).toBeNull();
+    expect(copy.load).toBe(0);expect(copy.plan).toEqual(v.plan);expect(copy.period).toBe(120);
+    expect(v.stops[1].id).toBe(b.id);expect(v.pendingStops![1].id).toBe(next.id);expect(v.load).toBe(20);
+  });
+
   it('적재 중 끝점을 바꾸면 이미 실은 양만 배송하고 새 노선을 되돌리면 기존 노선을 계속한다', () => {
     const { w, a, b, v } = yard();
     for(let x=29;x<=33;x++)w.place('road',x,12,0);

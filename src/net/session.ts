@@ -689,6 +689,12 @@ export class Session {
         this.sendSnapshot(m.id);
         return;
       case 'leave':
+        if (this.role === 'host' && this.guests.has(m.id)) {
+          // 드래그의 end를 보내기 전에 나가도 같은 접속 번호로 재입장한 편집과 섞이지 않게 한다.
+          const w = this.hooks.getWorld(), cmd = { t: 'end' } as const;
+          applyCommand(w, m.id, cmd);
+          this.outbox.push({ tick: w.tickCount, p: m.id, cmd });
+        }
         this.replies.delete(m.id);
         this.guests.delete(m.id);
         return;

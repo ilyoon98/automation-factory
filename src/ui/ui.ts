@@ -19,7 +19,7 @@ import {
 } from '../data/buildings';
 import { ITEMS, ITEM_IDS, type ItemId, type ItemStack } from '../data/items';
 import { RECIPES, recipesFor, type MachineKind, type Recipe } from '../data/recipes';
-import { ENDLESS_BY_ID, ENDLESS_REQUIRES, ENDLESS_TECHS, TECH_CATEGORIES, endlessCost, type RuleProfile, type TechCategory } from '../data/tech';
+import { ENDLESS_BY_ID, ENDLESS_REQUIRES, ENDLESS_TECHS, TECH_CATEGORIES, endlessCost, type TechCategory } from '../data/tech';
 import type { Input } from '../input/input';
 import { DAY_SEC, ambientEnabled, dayLabel, dayPhase, setAmbientEnabled, skyLabel } from '../render/ambient';
 import { darkness } from '../sim/sky';
@@ -29,9 +29,11 @@ import { LOCAL_WEATHER_ICON, LOCAL_WEATHER_LABEL } from '../sim/weather-v1';
 import { lanRoomCheck, type Session } from '../net/session';
 import { VERSION } from '../version';
 import { STATUS_LABEL, countOf, type Building, type StationMode, type Status } from '../sim/building';
+import { isJunction, junctionPorts } from '../sim/junction';
+import { materialReadiness } from './materials';
 import type { Blueprint } from '../sim/blueprint';
 import type { Exec } from '../sim/commands';
-import { DX, DY } from '../sim/dir';
+import { DX, DY, type Dir } from '../sim/dir';
 import { ROUTE_MAX, ROUTE_MIN, TRUCK_KIND_LABEL, VEHICLE_STATUS_LABEL, type RouteStop, type Vehicle, type VehicleStatus } from '../sim/vehicle';
 import {
   PATCH_LOW_MIN,
@@ -84,7 +86,7 @@ export interface GameApi {
   save(): boolean;
   /** 마지막 저장이 됐는지(ok), 그 뒤로 내가 공장을 바꿨는지(dirty) */
   readonly saveState: { ok: boolean; dirty: boolean };
-  newGame(rules?: RuleProfile): void;
+  newGame(): void;
   /** 지금 공장을 파일로 내려받는다 (다른 PC로 옮기거나 백업) */
   exportSave(): void;
   /** 파일 내용으로 공장을 바꾼다. 안 되면 이유, 되면 null */
@@ -458,7 +460,7 @@ export class UI {
       const rules = (e.target as HTMLElement).closest<HTMLElement>('[data-rules]')?.dataset.rules;
       if (!rules || !confirm('지금 공장을 버리고 새 게임을 시작할까요?')) return;
       $('newgame').hidden = true;
-      game.newGame(rules as RuleProfile);
+      game.newGame();
     });
 
     // Esc는 위에 떠 있는 것부터 하나씩: 알림 카드 → 팝오버 → 창 → (input.ts) 선택·건설 도구.
@@ -687,6 +689,22 @@ export class UI {
       }
       if (sel.dataset.act === 'kit-src') {
         this.kitSrc.set(b.id, sel.value);
+        this.update();
+        return;
+      }
+      if (sel.dataset.act === 'junction-front') {
+        game.exec({ t: 'rotate', id: b.id, dir: Number(sel.value) as Dir });
+        this.update();
+        return;
+      }
+      if (sel.dataset.act === 'junction-input' || sel.dataset.act === 'junction-outputs' || sel.dataset.act === 'junction-inputs') {
+        const ports = { ...junctionPorts(b) };
+        if (sel.dataset.act === 'junction-input') {
+          ports.inputs = Number(sel.value);
+          ports.outputs = 15 ^ ports.inputs;
+        } else if (sel.dataset.act === 'junction-outputs') ports.outputs = Number(sel.value);
+        else ports.inputs = Number(sel.value);
+        game.exec({ t: 'junction', id: b.id, ports });
         this.update();
         return;
       }
@@ -1848,7 +1866,7 @@ export class UI {
         .map((t) => `${t.id}${t.stops.map((st) => st.id + st.act).join('-')}`)
         .join(',')}:${w.canBuildTruck(b).reason ?? ''}`;
     }
-    const key = `${b.id}|${b.recipe}|${b.filter}|${w.unlockedRecipes.size}|${srcKey}|${this.useSig(w, b)}|${b.type === 'hub' ? `${w.stats.projectOn}${w.stats.projectDelivered}${w.researched.size}` : ''}`;
+    const key = `${b.id}|${b.recipe}|${b.filter}|${b.dir}|${JSON.stringify(b.junction)}|${w.unlockedRecipes.size}|${srcKey}|${this.useSig(w, b)}|${b.type === 'hub' ? `${w.stats.projectOn}${w.stats.projectDelivered}${w.researched.size}` : ''}`;
     if (key !== this.infoKey) {
       this.infoKey = key;
       replaceTransportInfo(el, this.infoStatic(w, b), `building:${b.id}`);
@@ -2017,6 +2035,22 @@ export class UI {
         </div>`;
       }
       if (w.regional && (w.researched.has('integrated-automation') || b.module)) html += this.moduleBlock(w, b);
+    }
+    if (isJunction(b.type)) {
+      const p = junctionPorts(b);
+      const names = ['위 ↑', '오른쪽 →', '아래 ↓', '왼쪽 ←'];
+      const label = (mask: number) => [0, 1, 2, 3].filter(k => mask & (1 << k)).map(k => names[(k + b.dir) % 4]).join(' · ');
+      const options = (masks: number[], selected: number) => masks.map(m => `<option value="${m}" ${m === selected ? 'selected' : ''}>${label(m)}</option>`).join('');
+      html += `<label class="recipe">${b.type === 'sorter' ? '선택 자원 출구' : b.type === 'overflow' ? '우선 출구' : '기준 출구'} <select data-act="junction-front">${names.map((name, d) => `<option value="${d}" ${d === b.dir ? 'selected' : ''}>${name}</option>`).join('')}</select></label>`;
+      if (b.type === 'merger') {
+        html += `<label class="recipe">입구 <select data-act="junction-inputs">${options([2, 4, 6, 8, 10, 12, 14], p.inputs)}</select></label>`;
+      } else {
+        html += `<label class="recipe">입구 <select data-act="junction-input">${options([2, 4, 8], p.inputs)}</select></label>`;
+        const masks = Array.from({ length: 15 }, (_, i) => i + 1).filter(m => (m & 1) && !(m & p.inputs) && (b.type !== 'sorter' || m !== 1));
+        html += `<label class="recipe">${b.type === 'sorter' ? '나머지 출구' : '출구'} <select data-act="junction-outputs">${masks.map(m => `<option value="${m}" ${m === p.outputs ? 'selected' : ''}>${label(b.type === 'sorter' ? m & ~1 : m)}</option>`).join('')}</select></label>`;
+      }
+      html += `<p class="muted">출구 방향을 바꾸거나 R로 회전하면 입구도 함께 돌아가요. 입구를 바꾸면 나머지 면이 출구로 열려요.</p>`;
+      if (b.type === 'sorter') html += `<p class="muted">선택 자원은 지정 출구로만, 나머지는 다른 출구로 보내요. 보낼 곳이 막히면 전체 줄이 기다려요.</p>`;
     }
     if (b.type === 'sorter') {
       // 이 줄로 들어올 수 있는 아이템만. 줄 끝에서 기계를 못 찾으면 전체 목록
@@ -2323,6 +2357,14 @@ export class UI {
     if (w.regional && b.type !== 'station') lines.push(...this.gridLines(w, b));
     const st = w.machineStats(b);
     if (st) lines.push(productionBlock(st));
+    const recipe = isRecipeMachine(b.type) ? w.recipeOf(b) : null;
+    if (recipe?.inputs.length) {
+      const ready = materialReadiness(b, recipe.inputs);
+      const missing = ready.filter(i => i.missing > 0);
+      lines.push(`<div class="prod-sub">다음 제작 준비 <span class="muted">입력 재고 / 1회 필요</span></div>`);
+      for (const i of ready) lines.push(`<div class="row"><span>${itemIcon(i.item)} ${ITEMS[i.item].name}</span><b class="${i.missing ? 'bad' : ''}">${i.stored} / ${i.count} · ${i.missing ? `${i.missing}개 부족` : '준비됨'}</b></div>`);
+      lines.push(`<p class="muted">${missing.length ? `${missing.map(i => ITEMS[i.item].name).join(' · ')} 대기${b.crafting ? ' (현재 제작 완료 후)' : ''}` : '다음 제작 재료 준비됨'} · 제작을 시작할 때 재료를 사용해요.</p>`);
+    }
     if (isGeneratorType(b.type)) {
       const rated = b.type === 'generator' ? GENERATOR_POWER : b.type === 'hydro' ? HYDRO_POWER : b.type === 'fuel-generator' ? GRID.fuel.power : b.type === 'geothermal' ? GRID.geothermal : null;
       lines.push(`<div class="row"><span>발전 출력</span><b>${Math.round(b.load)}${rated === null ? '' : ` <small class="muted">/ 최대 ${rated}</small>`} kW</b></div>`);
@@ -3381,7 +3423,7 @@ function needBlock(st: MachineStats, u: number | null): string {
         `<div class="row need-row">${itemIcon(i.item)}<span>${ITEMS[i.item].name}</span><b>지금 ${u === null ? '—' : fmtNum(i.count * u)}</b><small>최대 ${fmtNum(i.count)}</small></div>`,
     )
     .join('');
-  return `<div class="prod-sub">재료 사용 <span class="muted">/분</span></div>${rows}`;
+  return `<div class="prod-sub">소비 속도 <span class="muted">/분 · 가동률 기준</span></div>${rows}<p class="muted">현재 가동률로 계산한 소비량이에요. 낮은 수치가 해당 재료의 부족을 뜻하지는 않아요.</p>`;
 }
 
 /** 정보창 맨 위 생산 현황: 실제 분당 생산(크게)·최대·가동률·멈춘 이유·재료 */

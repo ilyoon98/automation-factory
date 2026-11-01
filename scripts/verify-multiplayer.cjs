@@ -17,7 +17,7 @@ app.whenReady().then(async()=>{
     await host.loadURL(url);await guest.loadURL(url);
     for(const win of [host,guest])await js(win,`window.requestAnimationFrame=()=>0;game.setSpeed(0);document.querySelectorAll('.modal').forEach(e=>e.hidden=true);`);
     await until(host,'session.connected','host connection');await until(guest,'session.connected','guest connection');
-    await js(guest,`game.save();window.ownSeed=game.getWorld().seed;window.ownSave=localStorage.getItem('automation-game/save-v1');`);
+    await js(guest,`game.save();window.ownSeed=game.getWorld().seed;window.ownSave=localStorage.getItem('automation-game/save-regional-v1');`);
     await js(host,`const {World}=await import('/src/sim/world.ts');const w=new World(40,30);w.rules='regional-v1';w.seed=987654;w.forestsLoaded=true;w.createHub(0,0);w.setResource(39,29,'water',Infinity);
       for(const t of w.techs)w.applyTech(t.id);for(const item of (await import('/src/data/items.ts')).ITEM_IDS)w.stock.set(item,10000);
       const error=game.importSave(JSON.stringify(w.serialize()));if(error)throw Error(error);session.createRoom();`);
@@ -26,7 +26,7 @@ app.whenReady().then(async()=>{
     await until(guest,`session.role==='guest'&&session.synced&&game.getWorld().seed===987654`,'join snapshot');
     const hash=await js(host,'return game.getWorld().checksum();');
     await check('real host and guest start from the same snapshot',guest,`return game.getWorld().checksum()===${hash};`);
-    await check('guest cannot overwrite the personal save',guest,`return game.save()===false&&localStorage.getItem('automation-game/save-v1')===ownSave;`);
+    await check('guest cannot overwrite the personal save',guest,`return game.save()===false&&localStorage.getItem('automation-game/save-regional-v1')===ownSave;`);
     const player=await js(guest,'return session.me;');
     await js(guest,`camera.x=20.5;camera.y=20.5;camera.zoom=24;const c=document.getElementById('game');c.setPointerCapture=()=>{};
       window.fire=(type,x,y)=>{const [clientX,clientY]=camera.worldToScreen(x,y);const e=new PointerEvent(type,{pointerId:1,button:0,buttons:1,clientX,clientY,bubbles:true});(type==='pointerup'?window:c).dispatchEvent(e);};
@@ -99,7 +99,7 @@ app.whenReady().then(async()=>{
     await js(guest,`game.input.paste={w:1,h:1,entries:[]};game.input.selectedVehicle=1;game.input.multi=[1,2];`);
     await js(host,`game.newGame();`);
     await until(guest,`game.getWorld().width===256&&game.input.paste===null`,'host starts a new world');
-    await check('host new game clears stale selections and blueprint on the guest',guest,`return game.input.selectedVehicle===null&&!game.input.multi.length&&localStorage.getItem('automation-game/save-v1')===ownSave;`);
+    await check('host new game clears stale selections and blueprint on the guest',guest,`return game.input.selectedVehicle===null&&!game.input.multi.length&&localStorage.getItem('automation-game/save-regional-v1')===ownSave;`);
     await js(guest,'session.leaveRoom();');
     await until(guest,`session.role==='solo'&&!session.borrowed`,'leave room');
     await check('leaving the room restores the personal factory',guest,`return game.getWorld().seed===ownSeed&&game.input.paste===null;`);

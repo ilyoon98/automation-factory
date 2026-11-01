@@ -20,6 +20,7 @@ import type { Blueprint } from '../sim/blueprint';
 import type { Building, StationMode, Status } from '../sim/building';
 import type { Vehicle } from '../sim/vehicle';
 import { DX, DY, type Dir } from '../sim/dir';
+import { isJunction, junctionPorts, type JunctionPorts } from '../sim/junction';
 import { BELT_SPEED, World, isLineType, patchAlert, portTiles, storageBounds } from '../sim/world';
 import { ambientEnabled, darkness, sunset, weatherAt } from './ambient';
 import type { Camera } from './camera';
@@ -573,7 +574,7 @@ export class Renderer {
         }
       } else if (view.paste) {
         for (const e of view.paste.entries) {
-          this.drawGhost(world, e.type, e.dir, view.hover.x + e.dx, view.hover.y + e.dy, false);
+          this.drawGhost(world, e.type, e.dir, view.hover.x + e.dx, view.hover.y + e.dy, false, e.filter ?? e.recipe, undefined, e.junction);
         }
       } else if (view.tool) {
         // 도구를 든 채 건물 위에 있으면 클릭 = 설정 열기, R = 그 건물 회전이라 미리보기 대신 건물을 강조한다
@@ -1298,7 +1299,7 @@ export class Renderer {
     }
 
     if (b.def.ports) this.drawPortTiles(b, sx, sy);
-    else if (HAS_PORTS.includes(b.type)) this.drawPorts(b.type, b.dir, sx, sy, b.stationMode);
+    else if (HAS_PORTS.includes(b.type)) this.drawPorts(b.type, b.dir, sx, sy, b.stationMode, b.junction);
     // 자동화 설비 모듈: 윗면 오른쪽 위에 보라 표식 (분리 예약이면 깜빡)
     if (b.module) {
       const mx = b.size * TILE - 7;
@@ -1651,7 +1652,7 @@ export class Renderer {
    * 분배기는 뒤에 입구(안쪽 화살표)와 앞·양옆에 출구(바깥 화살표).
    * 몸체 그림은 돌리지 않으니 방향은 이 화살표로만 보인다.
    */
-  private drawPorts(type: BuildingType, dir: Dir, sx: number, sy: number, mode: StationMode = 'load'): void {
+  private drawPorts(type: BuildingType, dir: Dir, sx: number, sy: number, mode: StationMode = 'load', junction: JunctionPorts | null = null): void {
     const ctx = this.ctx;
     const u = this.u;
     const S = BUILDINGS[type].size * TILE;
@@ -1670,21 +1671,15 @@ export class Renderer {
       ctx.drawImage(s.img, 0, 0, s.w, s.h, (-s.w / 2) * u, -2 * u, s.w * u, s.h * u);
       ctx.restore();
     };
-    if (type === 'splitter' || type === 'overflow' || type === 'sorter') {
-      const side = type === 'overflow' ? 'arrow-out-dim' : 'arrow-out';
-      arrow(Math.PI, 'arrow-in', true);
-      arrow(0, 'arrow-out');
-      arrow(Math.PI / 2, side);
-      arrow(-Math.PI / 2, side);
+    if (isJunction(type)) {
+      const ports = junctionPorts({ type, junction });
+      for (let k = 0; k < 4; k++) {
+        if (ports.inputs & (1 << k)) arrow(k * Math.PI / 2, 'arrow-in', true);
+        if (ports.outputs & (1 << k)) arrow(k * Math.PI / 2, type === 'overflow' && k !== 0 ? 'arrow-out-dim' : 'arrow-out');
+      }
     } else if (type === 'unloader') {
       // 뒤에 붙은 허브·창고에서 꺼내 앞으로
       arrow(Math.PI, 'arrow-in', true);
-      arrow(0, 'arrow-out');
-    } else if (type === 'merger') {
-      // 뒤·양옆 세 곳이 입구, 앞 하나가 출구 (분배기의 반대)
-      arrow(Math.PI, 'arrow-in', true);
-      arrow(Math.PI / 2, 'arrow-in', true);
-      arrow(-Math.PI / 2, 'arrow-in', true);
       arrow(0, 'arrow-out');
     } else if (type === 'station') {
       // 싣기: 아무 면으로나 받는다, 내리기: 앞으로 내보낸다
@@ -1852,6 +1847,7 @@ export class Renderer {
     centered = true,
     setting: string | null = null,
     allowed?: boolean,
+    junction: JunctionPorts | null = null,
   ): void {
     const ctx = this.ctx;
     const cam = this.cam;
@@ -1926,7 +1922,7 @@ export class Renderer {
       }
     }
     if (HAS_PORTS.includes(tool)) {
-      this.drawPorts(tool, dir, sx, sy, tool === 'station' && setting === 'unload' ? 'unload' : 'load');
+      this.drawPorts(tool, dir, sx, sy, tool === 'station' && setting === 'unload' ? 'unload' : 'load', junction);
     } else if (isBeltType(tool) || tool === 'underground') {
       this.drawDirArrow(sx + w / 2, sy + w / 2, dir, z, '#fbf3df');
     }

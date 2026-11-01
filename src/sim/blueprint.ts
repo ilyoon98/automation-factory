@@ -2,6 +2,7 @@ import type { BuildingType } from '../data/buildings';
 import type { ItemId } from '../data/items';
 import type { StationMode } from './building';
 import type { Dir } from './dir';
+import type { JunctionPorts } from './junction';
 import type { World } from './world';
 
 export interface BlueprintEntry {
@@ -12,6 +13,7 @@ export interface BlueprintEntry {
   dir: Dir;
   recipe: string | null;
   filter: ItemId | null;
+  junction?: JunctionPorts;
   /** 정류장만 */
   mode?: StationMode;
 }
@@ -42,6 +44,7 @@ export function copyArea(world: World, x0: number, y0: number, x1: number, y1: n
       dir: b.dir,
       recipe: b.recipe,
       filter: b.filter,
+      ...(b.junction ? { junction: { ...b.junction } } : {}),
       ...(b.type === 'station' ? { mode: b.stationMode } : {}),
     })),
     w: maxX - minX,
@@ -64,6 +67,7 @@ export function pasteBlueprint(world: World, bp: Blueprint, x: number, y: number
     }
     if (e.recipe && world.unlockedRecipes.has(e.recipe)) world.setRecipe(b, e.recipe);
     if (e.filter) world.setFilter(b, e.filter);
+    if (e.junction) world.setJunction(b, e.junction);
     if (e.mode) world.setStationMode(b, e.mode);
     placed++;
   }

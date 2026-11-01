@@ -2,6 +2,7 @@ import { BUILDINGS, isBeltType, type BuildingType } from '../data/buildings';
 import { ITEMS, type ItemId } from '../data/items';
 import type { Blueprint, BlueprintEntry } from '../sim/blueprint';
 import type { Dir } from '../sim/dir';
+import { validJunctionPorts, type JunctionPorts } from '../sim/junction';
 
 /**
  * 청사진 저장함: Ctrl + 드래그로 복사한 공장 묶음에 이름을 붙여 이 PC(브라우저·exe)에 남겨 둔다.
@@ -32,6 +33,7 @@ function readBlueprint(raw: unknown): Blueprint | null {
       recipe:typeof e.recipe === 'string' ? e.recipe : null,
       filter:typeof e.filter === 'string' && Object.hasOwn(ITEMS,e.filter) ? e.filter : null,
       ...(e.mode === 'load' || e.mode === 'unload' ? {mode:e.mode} : {}),
+      ...(validJunctionPorts(e.type, e.junction) ? { junction: { ...e.junction } } : {}),
     });
   }
   return entries.length ? {w:bp.w!,h:bp.h!,entries} : null;
@@ -97,7 +99,7 @@ const previews = new WeakMap<Blueprint, string>();
 
 const CODE_PREFIX = 'AF1.';
 
-type CodeEntry = [string, number, number, number, (string | 0)?, (string | 0)?, (string | 0)?];
+type CodeEntry = [string, number, number, number, (string | 0)?, (string | 0)?, (string | 0)?, (JunctionPorts | 0)?];
 
 async function pipe(bytes: Uint8Array<ArrayBuffer>, stream: CompressionStream | DecompressionStream): Promise<Uint8Array<ArrayBuffer>> {
   const out = new Response(new Blob([bytes]).stream().pipeThrough(stream));
@@ -120,7 +122,7 @@ function fromBase64Url(text: string): Uint8Array<ArrayBuffer> {
 /** 공유 코드 만들기 */
 export async function blueprintCode(name: string, bp: Blueprint): Promise<string> {
   const e: CodeEntry[] = bp.entries.map((x) => {
-    const row: CodeEntry = [x.type, x.dx, x.dy, x.dir, x.recipe ?? 0, x.filter ?? 0, x.mode ?? 0];
+    const row: CodeEntry = [x.type, x.dx, x.dy, x.dir, x.recipe ?? 0, x.filter ?? 0, x.mode ?? 0, x.junction ?? 0];
     while (row.length > 4 && row[row.length - 1] === 0) row.pop();
     return row;
   });
@@ -138,7 +140,7 @@ export async function parseBlueprintCode(code: string): Promise<{ name: string; 
     if (!Array.isArray(d?.e)) return null;
     const entries = d.e
       .filter((r) => Array.isArray(r) && typeof r[0] === 'string' && Object.hasOwn(BUILDINGS,r[0]))
-      .map(([type, dx, dy, dir, recipe, filter, mode]) => ({
+      .map(([type, dx, dy, dir, recipe, filter, mode, junction]) => ({
         type: type as BuildingType,
         dx,
         dy,
@@ -146,6 +148,7 @@ export async function parseBlueprintCode(code: string): Promise<{ name: string; 
         recipe: recipe || null,
         filter: (filter || null) as ItemId | null,
         ...(mode === 'load' || mode === 'unload' ? { mode } : {}),
+        ...(junction ? { junction } : {}),
       }));
     const bp = readBlueprint({entries,w:d.w,h:d.h});
     return bp ? { name: String(d.n || '받은 청사진').slice(0, 24), bp } : null;

@@ -50,6 +50,7 @@ import {
 } from '../data/tech';
 import { Building, addTo, countOf, type BeltItem, type StationMode } from './building';
 import { DX, DY, opposite, rotateCW, type Dir } from './dir';
+import { isJunction, junctionSide, validJunctionPorts, type JunctionPorts } from './junction';
 import { DAY_SEC, darkness, dayPhase, weatherAt, weatherMix } from './sky';
 import { ROUTE_MIN, Vehicle, type RouteStop, type VehicleState } from './vehicle';
 import { TERRAIN, TERRAIN_IDS, type TerrainKind } from '../data/terrain';
@@ -124,6 +125,7 @@ export type EditOp =
       dir: Dir;
       recipe: string | null;
       filter: ItemId | null;
+      junction?: JunctionPorts;
       mode: StationMode;
       no: number;
       ug: 'in' | 'out' | null;
@@ -135,6 +137,7 @@ export type EditOp =
   | { kind: 'rotate'; x: number; y: number; from: Dir; to: Dir }
   | { kind: 'recipe'; x: number; y: number; from: string | null; to: string | null }
   | { kind: 'filter'; x: number; y: number; from: ItemId | null; to: ItemId | null }
+  | { kind: 'junction'; x: number; y: number; from: JunctionPorts | null; to: JunctionPorts | null }
   | { kind: 'mode'; x: number; y: number; from: StationMode; to: StationMode }
   | ({ kind: 'truck-add' } & TruckEdit)
   | ({ kind: 'truck-remove' } & TruckEdit)
@@ -1331,6 +1334,7 @@ export class World {
       dir: b.dir,
       recipe: b.recipe,
       filter: b.filter,
+      ...(b.junction ? { junction: { ...b.junction } } : {}),
       mode: b.stationMode,
       no: b.stationNo,
       ug: b.ugMode,
@@ -1528,6 +1532,16 @@ export class World {
     if (this.reservations.length) this.reservations = this.reservations.filter((r) => r.holder !== b.id);
     this.refundContents(b, 'mode');
     b.stationMode = mode;
+    this.layoutDirty = true;
+    return true;
+  }
+
+  setJunction(b: Building, value: JunctionPorts | null): boolean {
+    if (!isJunction(b.type) || (value !== null && !validJunctionPorts(b.type, value))) return false;
+    const next = value ? { inputs: value.inputs, outputs: value.outputs } : null;
+    if (JSON.stringify(b.junction) === JSON.stringify(next)) return true;
+    this.record({ kind: 'junction', x: b.x, y: b.y, from: b.junction ? { ...b.junction } : null, to: next });
+    b.junction = next;
     this.layoutDirty = true;
     return true;
   }
@@ -2163,6 +2177,8 @@ export class World {
         return !!here && this.setRecipe(here, back ? op.from : op.to);
       case 'filter':
         return !!here && this.setFilter(here, back ? op.from : op.to);
+      case 'junction':
+        return !!here && this.setJunction(here, back ? op.from : op.to);
       case 'mode':
         return !!here && this.setStationMode(here, back ? op.from : op.to);
     }
@@ -2202,6 +2218,7 @@ export class World {
     if (!b) return false;
     if (op.recipe && this.unlockedRecipes.has(op.recipe)) this.setRecipe(b, op.recipe);
     if (op.filter) this.setFilter(b, op.filter);
+    if (op.junction) this.setJunction(b, op.junction);
     if (b.type === 'station') this.setStationMode(b, op.mode);
     this.revive(b, op.id, op.no);
     op.id = b.id;
@@ -5140,11 +5157,10 @@ export class World {
   private computeTargets(b: Building): OutTarget[] {
     const res: OutTarget[] = [];
     const seen = new Set<number>();
-    const isSplitter = isSplitterType(b.type);
     const outs = b.def.ports ? portTiles(b, 'out') : null;
     for (const [nx, ny, out] of edgeNeighbors(b)) {
       // 기계는 앞면(화살표)으로만, 분배기는 입구(뒤)를 뺀 세 면으로, 새 설비는 지정 출구 칸으로만 내보낸다.
-      if (outs ? !outs.some(([px, py]) => px === nx && py === ny) : isSplitter ? out === opposite(b.dir) : out !== b.dir) continue;
+      if (outs ? !outs.some(([px, py]) => px === nx && py === ny) : isJunction(b.type) ? !junctionSide(b, out, 'outputs') : out !== b.dir) continue;
       const n = this.buildingAt(nx, ny);
       if (!n || n === b) continue;
       const fromSide = opposite(out);
@@ -5262,6 +5278,7 @@ export class World {
         ...(b.mineDirt ? { mineDirt: true } : {}),
         ...(b.cycle ? { cycle: b.cycle } : {}),
         ...(b.filter ? { filter: b.filter } : {}),
+        ...(b.junction ? { junction: { ...b.junction } } : {}),
         ...(b.ugMode ? { ug: b.ugMode, partner: b.partner } : {}),
         ...(b.zone ? { zone: b.zone } : {}),
         ...(b.dock ? { dock: b.dock } : {}),
@@ -5389,6 +5406,7 @@ export class World {
       b.mineDirt = s.mineDirt ?? false;
       b.cycle = s.cycle ?? 0;
       b.filter = s.filter ?? null;
+      b.junction = validJunctionPorts(b.type, s.junction) ? { ...s.junction } : null;
       b.ugMode = s.ug ?? null;
       b.partner = s.partner ?? 0;
       b.zone = s.zone ?? 0;
@@ -5578,6 +5596,7 @@ export class World {
     for (let i = 0; i < this.tree.length; i++) if (this.tree[i] > 0) h.num(i).num(this.tree[i]);
     for (const b of this.buildings.values()) {
       h.num(b.id).str(b.type).num(b.x).num(b.y).num(b.dir).str(b.recipe ?? '').str(b.filter ?? '');
+      if (b.junction) h.str('junction').num(b.junction.inputs).num(b.junction.outputs);
       h.num(b.progress).num(b.crafting ? 1 : 0).num(b.outRR).num(b.mineIdx).num(b.fuel).num(b.energy);
       h.num(b.cycle).num(b.partner).num(b.heldFrom).str(b.held ?? '').num(b.heldN).str(b.stationMode);
       h.num(b.module ? b.module.from + 1 : 0).num(b.modBatch ? 1 : 0).num(b.detach ? 1 : 0).num(b.zone).num(b.node).num(b.dock);
@@ -5651,6 +5670,7 @@ export interface SavedBuilding {
   cycle?: number;
   /** 스마트 분류기만 */
   filter?: ItemId;
+  junction?: JunctionPorts;
   /** 지하 컨베이어만 */
   ug?: 'in' | 'out';
   partner?: number;
@@ -5834,6 +5854,7 @@ export function entryPos(belt: Building, fromSide: Dir): number {
  * - 허브, 발전기: 모든 면
  */
 export function acceptsFrom(n: Building, fromSide: Dir): boolean {
+  if (isJunction(n.type)) return junctionSide(n, fromSide, 'inputs');
   switch (n.type) {
     case 'hub':
     case 'generator':
@@ -5869,6 +5890,7 @@ export function acceptsFrom(n: Building, fromSide: Dir): boolean {
 
 /** 컨베이어가 아닌 건물이 d 방향(건물에서 이웃 쪽)으로 아이템을 내보내는지 */
 function outputsToward(n: Building, d: Dir): boolean {
+  if (isJunction(n.type)) return junctionSide(n, d, 'outputs');
   if (isSplitterType(n.type)) return d !== opposite(n.dir);
   if (n.type === 'station') return n.stationMode === 'unload' && d === n.dir;
   // 식목기는 받기만 한다

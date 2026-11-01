@@ -3,6 +3,7 @@ import { ITEMS, type ItemId } from '../data/items';
 import { pasteBlueprint, type Blueprint } from './blueprint';
 import type { Building, StationMode } from './building';
 import type { Dir } from './dir';
+import type { JunctionPorts } from './junction';
 import { ROUTE_MAX, ROUTE_MIN, type RouteStop, type Vehicle } from './vehicle';
 import { World, applyOnce, type EditOp, type UseResult } from './world';
 import { buildRoad, type RoadBuildResult } from './road-plan';
@@ -27,6 +28,7 @@ export type Command =
   | { t: 'rotate'; id: number; dir: Dir }
   | { t: 'paste'; bp: Blueprint; x: number; y: number }
   | { t: 'config'; id: number; key: 'recipe' | 'filter' | 'mode'; value: string | null }
+  | { t: 'junction'; id: number; ports: JunctionPorts | null }
   | { t: 'research'; id: string }
   | { t: 'build-truck'; station: number }
   | { t: 'clone-truck'; id: number }
@@ -93,6 +95,7 @@ export interface CommandResults {
   rotate: void;
   paste: { placed: number; skipped: number };
   config: boolean;
+  junction: boolean;
   research: boolean;
   'build-truck': Vehicle | null;
   'clone-truck': Vehicle | null;
@@ -184,6 +187,10 @@ function run(w: World, c: Command): CommandResults[Command['t']] {
             ? w.setStationMode(b, c.value as StationMode)
             : w.setFilter(b, c.value as ItemId | null),
       );
+    }
+    case 'junction': {
+      const b = w.buildings.get(c.id);
+      return !!b && w.edit(() => w.setJunction(b, c.ports));
     }
     case 'research':
       return w.research(c.id);

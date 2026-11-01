@@ -3,7 +3,7 @@ import { ITEM_IDS, type ItemId } from '../data/items';
 import type { World } from '../sim/world';
 
 /** 맵에서 가리킬 곳의 종류 */
-export type GuideTarget = 'iron-ore' | 'copper-ore' | 'coal' | 'water' | 'hub' | 'tree' | 'spent';
+export type GuideTarget = 'iron-ore' | 'copper-ore' | 'coal' | 'stone' | 'tin-ore' | 'bauxite' | 'sulfur' | 'crude-oil' | 'brine' | 'sap' | 'water' | 'hub' | 'tree' | 'spent';
 
 /** 목표가 지금 가리키는 것: 들어야 할 건물(툴바), 연구(연구 창), 놓을 곳(맵) */
 export interface GuideFocus {
@@ -51,6 +51,13 @@ const TARGET_NAME: Record<GuideTarget, string> = {
   hub: '허브',
   tree: '다 자란 나무',
   spent: '다 캔 광맥 땅',
+  stone: '돌 자원지',
+  'tin-ore': '주석 광맥',
+  bauxite: '보크사이트 자원지',
+  sulfur: '황 자원지',
+  'crude-oil': '원유 자원지',
+  brine: '염수 자원지',
+  sap: '고무나무',
 };
 
 /** 허브에서 가장 가까운 그 종류의 빈 칸 (가운데 좌표와 이름). 없으면 null */
@@ -62,9 +69,9 @@ export function findTarget(w: World, kind: GuideTarget): { x: number; y: number;
   let best = -1;
   let bd = Infinity;
   for (let i = 0; i < w.tree.length; i++) {
-    if (w.occ[i]) continue;
+    if (w.occ[i] || !w.isRevealed(i)) continue;
     const ok =
-      kind === 'tree' ? w.tree[i] >= 1 : kind === 'spent' ? w.isSpentOre(i) && w.canPlant(i) : w.resItem[i] === kind;
+      kind === 'tree' ? w.tree[i] >= 1 : kind === 'spent' ? w.isSpentOre(i) && w.canPlant(i) : w.resItem[i] === kind && w.resAmount[i] > 0;
     if (!ok) continue;
     const d = ((i % w.width) + 0.5 - cx) ** 2 + (Math.floor(i / w.width) + 0.5 - cy) ** 2;
     if (d < bd) {

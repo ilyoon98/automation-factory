@@ -4,6 +4,11 @@ import { blueprintCode, parseBlueprintCode } from './blueprints';
 
 afterEach(()=>vi.unstubAllGlobals());
 
+it('입출력 방향 설정이 공유 코드에도 유지된다', async () => {
+  const bp: Blueprint = { w: 1, h: 1, entries: [{ type: 'sorter', dx: 0, dy: 0, dir: 0, recipe: null, filter: 'coal', junction: { inputs: 8, outputs: 3 } }] };
+  expect((await parseBlueprintCode(await blueprintCode('연속 분류', bp)))?.bp).toEqual(bp);
+});
+
 async function rawCode(value:unknown):Promise<string>{
   const stream=new Blob([JSON.stringify(value)]).stream().pipeThrough(new CompressionStream('deflate-raw'));
   const bytes=new Uint8Array(await new Response(stream).arrayBuffer());

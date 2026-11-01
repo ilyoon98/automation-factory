@@ -3,11 +3,10 @@ import { Input } from './input/input';
 import { PING_SEC, Session } from './net/session';
 import { Camera } from './render/camera';
 import { Renderer, type OtherPlayer, type PingMark } from './render/renderer';
-import { addForests, addLakes, generateWorld } from './sim/mapgen';
 import type { Command, PlaceResult, ResultOf } from './sim/commands';
 import { DT, World } from './sim/world';
 import { ITEM_IDS } from './data/items';
-import type { RuleProfile } from './data/tech';
+import { CURRENT_SAVE_KEY, loadCurrentSave } from './sim/current-save';
 import { generateRegionalWorld } from './sim/regional-map';
 import { Chat } from './ui/chat';
 import { uiZoom } from './ui/crisp';
@@ -17,19 +16,19 @@ import { UI, type GameApi } from './ui/ui';
 import { setupUpdateBanner } from './ui/update';
 
 /**
- * 개발용 지역 생산망 확장 세계 (주소 끝에 ?regional-dev). 확장 지도·지역 전력이 아직 없어 기존 지도에 regional-v1 규칙만 얹는다.
+ * 개발용 지역 생산망 확장 세계 (주소 끝에 ?regional-dev).
  * 모든 연구를 마치고 허브 재고를 채운 시험용 세계라 평소 저장과 섞이지 않게 따로 저장한다
  */
 const REGIONAL_DEV = new URLSearchParams(location.search).has('regional-dev');
-const SAVE_KEY = REGIONAL_DEV ? 'automation-game/save-regional-dev' : 'automation-game/save-v1';
+const SAVE_KEY = REGIONAL_DEV ? 'automation-game/save-regional-dev' : CURRENT_SAVE_KEY;
 
 /**
- * 새 세계: 새 게임은 지역 생산망 확장 지도만 (기본 지도 저장은 그대로 열고 이어서 할 수 있다).
+ * 새 세계와 자동 이어하기는 지역 생산망 확장 지도만 사용한다.
  * 개발용 regional-dev면 연구 완료·재고
  */
-function newWorld(rules: RuleProfile = 'regional-v1'): World {
+function newWorld(): World {
   const seed = (Math.random() * 2 ** 31) | 0;
-  const w = rules === 'regional-v1' ? generateRegionalWorld(seed) : generateWorld(seed);
+  const w = generateRegionalWorld(seed);
   if (REGIONAL_DEV) {
     for (const t of w.techs) w.applyTech(t.id);
     for (const item of ITEM_IDS) w.stock.set(item, 500);
@@ -39,20 +38,7 @@ function newWorld(rules: RuleProfile = 'regional-v1'): World {
 const AUTOSAVE_SEC = 30;
 
 function loadWorld(): World | null {
-  try {
-    const raw = localStorage.getItem(SAVE_KEY);
-    if (!raw) return null;
-    const w = World.deserialize(JSON.parse(raw));
-    // 호수가 생기기 전에 만든 맵이면 빈 땅에 호수를 더한다.
-    // 저장 버전만 보면, 코드가 바뀌는 도중에 저장된 맵(버전은 새것, 호수는 없음)을 놓친다.
-    if (!w.resItem.includes('water')) addLakes(w, w.seed);
-    // 숲이 생기기 전 저장이면 자연 숲을 더한다
-    if (!w.forestsLoaded) addForests(w, w.seed);
-    return w;
-  } catch (err) {
-    console.warn('저장 파일을 불러오지 못했어요', err);
-    return null;
-  }
+  return REGIONAL_DEV ? loadCurrentSave(localStorage, [SAVE_KEY]) : loadCurrentSave(localStorage);
 }
 
 const canvas = document.getElementById('game') as HTMLCanvasElement;
@@ -214,14 +200,14 @@ const game: GameApi = {
     camera.y = y;
     camera.zoom = Math.max(camera.zoom, 28);
   },
-  newGame(rules?: RuleProfile) {
+  newGame() {
     if (session.role === 'guest') {
       ui.toast('새 게임은 호스트만 시작할 수 있어요');
       return;
     }
     backupWorld();
     game.input.resetWorld();
-    world = newWorld(rules);
+    world = newWorld();
     centerOnHub();
     game.save();
     session.worldReplaced();
@@ -246,6 +232,7 @@ const game: GameApi = {
     } catch {
       return '공장 파일이 아니에요';
     }
+    if (!w.regional) return '구맵 저장은 지원하지 않아요. 지역 생산망 확장 지도 공장 파일을 선택해 주세요.';
     backupWorld();
     replaceWorld(w);
     return null;
@@ -260,6 +247,7 @@ const game: GameApi = {
     } catch {
       return '보관한 공장을 읽지 못했어요';
     }
+    if (!w.regional) return '구맵 백업은 지원하지 않아요. 새 공장은 지역 생산망 확장 지도를 사용해요.';
     // 지금 공장과 맞바꿔 둔다 (한 번 더 누르면 다시 돌아오게)
     backupWorld();
     replaceWorld(w);
@@ -271,7 +259,7 @@ const game: GameApi = {
 };
 
 /** 새 게임·파일 불러오기·되돌리기로 공장이 통째로 바뀌기 바로 전의 공장 (한 칸만) */
-const BACKUP_KEY = REGIONAL_DEV ? 'automation-game/save-regional-dev-backup' : 'automation-game/save-backup';
+const BACKUP_KEY = REGIONAL_DEV ? 'automation-game/save-regional-dev-backup' : 'automation-game/save-regional-v1-backup';
 let hasBackup = (() => {
   try {
     return localStorage.getItem(BACKUP_KEY) !== null;
@@ -292,8 +280,6 @@ function backupWorld(): void {
 
 /** 다른 공장으로 바꾼다 (불러오기·되돌리기). 저장하고, 방장이면 손님들에게도 보낸다 */
 function replaceWorld(w: World): void {
-  if (!w.resItem.includes('water')) addLakes(w, w.seed);
-  if (!w.forestsLoaded) addForests(w, w.seed);
   game.input.resetWorld();
   world = w;
   centerOnHub();

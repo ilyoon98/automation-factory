@@ -1,6 +1,7 @@
 import { BUILDINGS, type BuildingType } from '../data/buildings';
 import type { ItemId } from '../data/items';
 import type { Dir } from './dir';
+import type { JunctionPorts } from './junction';
 
 export type Status =
   | 'idle'
@@ -120,6 +121,7 @@ export class Building {
   lastTry = [-9, -9, -9, -9];
   /** 스마트 분류기: 앞으로 보낼 아이템, 하역기: 꺼낼 아이템 */
   filter: ItemId | null = null;
+  junction: JunctionPorts | null = null;
 
   // 지하 컨베이어. 입구가 아이템을 들고 출구 앞까지 한 줄로 옮긴다.
   ugMode: 'in' | 'out' | null = null;

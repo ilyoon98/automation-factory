@@ -179,7 +179,7 @@ const MODULE_STATE_LABEL = { none: '미설치', installed: '설치됨', next: '�
 
 /** 트럭이 이 정류장에서 하는 일 (정류장 정보창 트럭 목록) */
 function stationRole(v: Vehicle, stationId: number): string {
-  const acts = new Set(v.stops.filter((s) => s.id === stationId).map((s) => s.act));
+  const acts = new Set([...v.stops, ...(v.pendingStops ?? [])].filter((s) => s.id === stationId).map((s) => s.act));
   if (acts.size === 2) return '여기서 싣고 내리기';
   return acts.has('load') ? '여기서 싣기' : '여기에 내리기';
 }
@@ -631,7 +631,7 @@ export class UI {
         const i = Number(sel.dataset.i);
         const act = sel.dataset.act ?? '';
         if (act === 'stop-station' || act === 'stop-act' || act === 'stop-item') {
-          const stops = v.stops.map((st) => ({ ...st }));
+          const stops = v.route.map((st) => ({ ...st }));
           const cur = stops[i];
           let next: RouteStop = { ...cur };
           if (act === 'stop-station') {
@@ -2099,11 +2099,11 @@ export class UI {
    * 고친 뒤 "계획 적용"을 눌러야 명령이 간다 (합계가 적재량을 넘으면 알린다)
    */
   private planBlock(w: World, v: Vehicle): string {
-    if (!(v.stops.length === 2 && v.stops[0].act === 'load' && v.stops[1].act === 'unload')) {
+    if (!(v.route.length === 2 && v.route[0].act === 'load' && v.route[1].act === 'unload')) {
       return '';
     }
     const rows = this.planRows.get(v.id) ?? Math.max(1, v.plan.length);
-    const opts = (sel: ItemId | '') => transportItemOptions(w, v.stops[0].id, sel, true, '품목 고르기');
+    const opts = (sel: ItemId | '') => transportItemOptions(w, v.route[0].id, sel, true, '품목 고르기');
     let html = `<div class="route plan"><div class="route-head"><span>품목별 적재 상한</span><span class="muted">합계 ${w.truckCapacity(v)}개 이하</span></div>`;
     for (let i = 0; i < rows; i++) {
       const p = v.plan[i];
@@ -2539,21 +2539,22 @@ export class UI {
 
   private updateVehicleInfo(w: World, v: Vehicle): void {
     const el = $('info');
+    const stops = v.route;
     el.hidden = false;
     const stations = reachableStations(w, v.tile);
     const reachable = new Set(stations.map((s) => s.id));
     // 같은 노선으로 한 대 더: 노선에서 처음 들르는 정류장 옆에 만든다 (world.cloneTruck과 같은 순서)
-    const homes = v.stops.map((st) => w.buildings.get(st.id)).filter((st): st is Building => st?.type === 'station');
+    const homes = stops.map((st) => w.buildings.get(st.id)).filter((st): st is Building => st?.type === 'station');
     const clone = homes.find((st) => w.canBuildTruck(st).ok)
       ? { ok: true as const, reason: undefined }
       : homes.length
         ? w.canBuildTruck(homes[0])
         : { ok: false, reason: '정류장을 먼저 골라 주세요' };
-    const roadState = v.stops.map((stop) => {
+    const roadState = stops.map((stop) => {
       const station = w.buildings.get(stop.id);
       return station?.type === 'station' ? `${stop.id}:${reachable.has(stop.id) ? 1 : 0}` : `${stop.id}:deleted`;
     }).join(',');
-    const key = `v${v.id}|${v.stops.map((st) => `${st.id}${st.act}${st.item ?? ''}`).join(',')}|${w.endlessLevel('endless-truck')}|${stations.map((s) => `${s.id}${s.stationMode}`).join(',')}|${roadState}|${clone.reason ?? ''}|${JSON.stringify(v.plan)}${v.period}${v.early}${v.paused}|${this.planRows.get(v.id) ?? ''}`;
+    const key = `v${v.id}|${stops.map((st) => `${st.id}${st.act}${st.item ?? ''}`).join(',')}|${!!v.pendingStops}|${w.endlessLevel('endless-truck')}|${stations.map((s) => `${s.id}${s.stationMode}`).join(',')}|${roadState}|${clone.reason ?? ''}|${JSON.stringify(v.plan)}${v.period}${v.early}${v.paused}|${this.planRows.get(v.id) ?? ''}`;
     if (key !== this.infoKey) {
       this.infoKey = key;
       const opt = (sel: number) =>
@@ -2570,7 +2571,7 @@ export class UI {
         <div class="route">
           <div class="route-head"><b>노선 ↻</b><span class="muted">도로 연결 ${stations.length}곳</span></div>
           ${stations.length ? '' : '<p class="bad">연결된 정류장이 없어요. 도로를 이어 주세요.</p>'}
-          ${v.stops
+          ${stops
             .map(
               (st, i) => `<div class="stop" data-stop="${i}">
               <div class="line"><span class="no">${i + 1}</span>
@@ -2589,11 +2590,11 @@ export class UI {
               <div class="line sub stop-tools">
                 ${stationMapButton(w, st.id, i)}
                 <button data-act="stop-up" data-i="${i}" title="한 칸 앞으로" ${i === 0 ? 'disabled' : ''}>▲</button>
-                <button data-act="stop-remove" data-i="${i}" title="노선에서 빼기" ${v.stops.length <= ROUTE_MIN ? 'disabled' : ''}>×</button>
+                <button data-act="stop-remove" data-i="${i}" title="노선에서 빼기" ${stops.length <= ROUTE_MIN ? 'disabled' : ''}>×</button>
               </div></div>`,
             )
             .join('')}
-          <button data-act="stop-add" ${v.stops.length >= ROUTE_MAX ? 'disabled' : ''}>+ 정류장 더하기 <span class="muted">(최대 ${ROUTE_MAX}곳)</span></button>
+          <button data-act="stop-add" ${stops.length >= ROUTE_MAX ? 'disabled' : ''}>+ 정류장 더하기 <span class="muted">(최대 ${ROUTE_MAX}곳)</span></button>
         </div>
         ${w.regional ? this.planBlock(w, v) : ''}
         ${w.regional && v.plan.length ? `<div class="actions"><button data-act="plan-pause">${v.paused ? '▶ 노선 다시 운행' : '⏸ 노선 일시정지'}</button></div>` : ''}
@@ -2624,8 +2625,9 @@ export class UI {
     if (v.status === 'charging' && v.receivedCharge <= 0) state = '충전 대기 (받은 전력 없음)';
     if (v.status === 'moving' && st) state += ` → 정류장 ${st.stationNo} (${v.stops[v.stop].act === 'load' ? '실으러' : '내리러'})`;
     // 노선에서 지금 가거나 서 있는 정류장 표시
-    el.querySelectorAll<HTMLElement>('.route [data-stop]').forEach((row) => row.classList.toggle('now', Number(row.dataset.stop) === v.stop));
+    el.querySelectorAll<HTMLElement>('.route [data-stop]').forEach((row) => row.classList.toggle('now', !v.pendingStops && Number(row.dataset.stop) === v.stop));
     lines.push(`<div class="row"><span>상태</span><b style="color:${VEHICLE_STATUS_COLOR[v.status]}">${state}</b></div>`);
+    if (v.pendingStops) lines.push('<p class="muted">새 노선은 현재 화물의 배송·반송을 마친 뒤 적용해요.</p>');
     const cargo = [...v.cargo].filter(([, n]) => n > 0).map(([i, n]) => `${itemIcon(i)}${n}`).join(' ');
     lines.push(`<div class="row"><span>짐</span><b>${cargo || '<span class="muted">없음</span>'} <span class="muted">${v.load} / ${w.truckCapacity(v)}</span></b></div>`);
     lines.push(`<div class="bar"><div style="width:${(v.load / w.truckCapacity(v)) * 100}%;background:#c9b27a"></div></div>`);
@@ -2637,9 +2639,9 @@ export class UI {
     const batColor = charge > 0.5 ? '#3f8a3a' : charge > 0.2 ? '#b7791f' : '#c0392b';
     lines.push(`<div class="row"><span>배터리</span><b>${Math.round(charge * 100)}% <span class="muted">${range}칸${rate}</span></b></div>`);
     lines.push(`<div class="bar"><div style="width:${charge * 100}%;background:${batColor}"></div></div>`);
-    const disconnected = v.stops.filter((s) => s.id && !reachable.has(s.id));
+    const disconnected = stops.filter((s) => s.id && !reachable.has(s.id));
     if (disconnected.length) lines.push('<p class="bad">노선의 도로가 끊겼어요. 정류장 연결을 확인하세요.</p>');
-    const legs = w.routeLegs(v.stops);
+    const legs = w.routeLegs(stops);
     const fullRange = Math.floor(w.truckBattery(v) / w.truckPerTile(v));
     if (legs && Math.max(...legs) > fullRange) lines.push('<p class="bad">정류장 사이 거리가 완충 주행거리보다 길어요. 중간 충전기를 확인하세요.</p>');
     el.querySelector('.dyn')!.innerHTML = lines.join('');
@@ -2809,7 +2811,7 @@ export class UI {
       if (act === 'adv-clone') {
         // 조립한 정류장(없으면 노선의 첫 정류장)의 현지 조립품 1개로 한 대 더. 노선(설정)만 베낀다
         const w = this.game.getWorld();
-        const home = [v.home, ...v.stops.map((s) => s.id)].map((id) => w.buildings.get(id)).find((s) => s?.type === 'station');
+        const home = [v.home, ...v.route.map((s) => s.id)].map((id) => w.buildings.get(id)).find((s) => s?.type === 'station');
         if (!home) this.toast('조립할 정류장이 없어요. 노선에 정류장을 넣어 주세요');
         else {
           const g = w.touchingStorageGroups(home)[0];
@@ -2826,7 +2828,7 @@ export class UI {
       }
       // 노선 편집: 정류장 더하기·빼기·한 칸 앞으로
       const i = Number((e.target as HTMLElement).closest<HTMLElement>('[data-i]')?.dataset.i);
-      const stops = v.stops.map((st) => ({ ...st }));
+      const stops = v.route.map((st) => ({ ...st }));
       if (act === 'stop-map') {
         if (!focusRouteStation(this.game.getWorld(), stops, i, (x, y) => this.game.focus(x, y))) this.toast('정류장을 먼저 골라 주세요');
       }

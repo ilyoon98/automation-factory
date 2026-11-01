@@ -298,6 +298,15 @@ describe('연결 창고와 계획 적재', () => {
     expect(w.reservations).toEqual([]);
   });
 
+  it('반송 도중 계획을 꺼도 기존 화물은 출발지까지 실제로 돌려준다', () => {
+    const { w, a, b, sb, v } = yard();a.inBuf.set('motor',20);
+    w.setPlan(v,[{item:'motor',cap:20}],0,false);runUntil(w,()=>v.stop===1);
+    b.outBuf.set('stone',200);sb.inBuf.set('stone',200);runUntil(w,()=>v.returning,30);
+    w.setPlan(v,[],0,false);runUntil(w,()=>!v.returning&&v.load===0,40);
+    expect(pool(w,a,'motor')).toBe(20);expect(pool(w,b,'motor')).toBe(0);
+    expect(w.reservations).toEqual([]);expect(w.stats.delivered).toBe(0);
+  });
+
   it('가는 도중 목적지 정류장을 철거하면 실은 화물을 출발지로 반송한다 (배송 실적 없음)', () => {
     const { w, a, b, v } = yard();
     a.inBuf.set('motor', 20);
@@ -310,6 +319,78 @@ describe('연결 창고와 계획 적재', () => {
     expect(pool(w, a, 'motor')).toBe(20);
     expect(w.stats.delivered).toBe(0);
     expect(v.returning).toBe(false);
+  });
+
+  it('출발 정류장을 철거해도 이미 출발한 트럭은 유효한 목적지에 화물을 내린다', () => {
+    const { w, a, b, v } = yard();a.inBuf.set('motor',20);
+    w.setPlan(v,[{item:'motor',cap:20}],0,false);
+    runUntil(w,()=>v.stop===1);run(w,.5);w.remove(a);
+    const guest=World.fromSnapshot(JSON.parse(JSON.stringify(w.snapshot())));
+    expect(guest.checksum()).toBe(w.checksum());
+    runUntil(w,()=>v.load===0,30);
+    runUntil(guest,()=>guest.vehicles.get(v.id)!.load===0,30);
+    expect(guest.checksum()).toBe(w.checksum());
+    expect(pool(w,b,'motor')).toBe(20);expect(w.inReserved(b,'motor')).toBe(0);
+    expect(v.status).not.toBe('no-route');
+  });
+
+  it('배송 중 노선 끝점을 바꾸면 기존 목적지에 한 번 내린 뒤 새 노선을 적용한다', () => {
+    const { w, a, b, v } = yard();
+    for(let x=29;x<=33;x++)w.place('road',x,12,0);
+    const next=w.place('station',31,10,0)!;w.setStationMode(next,'unload');a.inBuf.set('motor',40);
+    w.setPlan(v,[{item:'motor',cap:20}],0,false);runUntil(w,()=>v.stop===1);
+    applyCommand(w,0,{t:'route',id:v.id,stops:[{id:a.id,act:'load'},{id:next.id,act:'unload'}]});
+    expect(v.stops[1].id).toBe(b.id);
+    expect(w.inReserved(b,'motor')).toBe(20);expect(w.inReserved(next,'motor')).toBe(0);
+    runUntil(w,()=>pool(w,b,'motor')===20,40);
+    runUntil(w,()=>pool(w,next,'motor')===20,60);
+    expect(v.stops[1].id).toBe(next.id);expect(pool(w,b,'motor')).toBe(20);
+  });
+
+  it('새 노선 적용 대기는 저장·중간 참가 뒤에도 유지되고 두 세계가 같은 시점에 전환한다', () => {
+    const { w, a, b, v } = yard();
+    for(let x=29;x<=33;x++)w.place('road',x,12,0);
+    const next=w.place('station',31,10,0)!;w.setStationMode(next,'unload');a.inBuf.set('motor',40);
+    w.setPlan(v,[{item:'motor',cap:20}],0,false);runUntil(w,()=>v.stop===1);
+    w.setStops(v,[{id:a.id,act:'load'},{id:next.id,act:'unload'}]);
+    const saved=World.deserialize(JSON.parse(JSON.stringify(w.serialize()))).vehicles.get(v.id)!;
+    expect(saved.pendingStops).toEqual(v.pendingStops);expect(saved.stops[1].id).toBe(b.id);
+    const guest=World.fromSnapshot(JSON.parse(JSON.stringify(w.snapshot())));
+    for(let i=0;i<40*TICK_RATE;i++){w.tick();guest.tick();if(i%60===0)expect(guest.checksum()).toBe(w.checksum());}
+    expect(pool(w,b,'motor')).toBe(20);expect(pool(w,next,'motor')).toBe(20);expect(v.pendingStops).toBeNull();
+    expect(guest.checksum()).toBe(w.checksum());
+  });
+
+  it('적재 중 끝점을 바꾸면 이미 실은 양만 배송하고 새 노선을 되돌리면 기존 노선을 계속한다', () => {
+    const { w, a, b, v } = yard();
+    for(let x=29;x<=33;x++)w.place('road',x,12,0);
+    const next=w.place('station',31,10,0)!;w.setStationMode(next,'unload');a.inBuf.set('motor',40);
+    w.setPlan(v,[{item:'motor',cap:20}],0,false);runUntil(w,()=>v.load>=5);
+    applyCommand(w,0,{t:'route',id:v.id,stops:[{id:a.id,act:'load'},{id:next.id,act:'unload'}]});
+    expect(v.route[1].id).toBe(next.id);expect(v.stops[1].id).toBe(b.id);
+    applyCommand(w,0,{t:'undo'});expect(v.pendingStops).toBeNull();expect(v.route[1].id).toBe(b.id);
+    runUntil(w,()=>v.stop===1);expect(v.load).toBe(20);
+    expect(pool(w,next,'motor')).toBe(0);
+  });
+
+  it('적재 중 끝점 변경 후 계획을 꺼도 기존 화물에 새 짐을 더 싣지 않는다', () => {
+    const { w, a, b, v } = yard();
+    for(let x=29;x<=33;x++)w.place('road',x,12,0);
+    const next=w.place('station',31,10,0)!;w.setStationMode(next,'unload');a.inBuf.set('motor',100);
+    w.setPlan(v,[{item:'motor',cap:20}],0,false);runUntil(w,()=>v.load>=5);const loaded=v.load;
+    w.setStops(v,[{id:a.id,act:'load'},{id:next.id,act:'unload'}]);w.setPlan(v,[],0,false);
+    runUntil(w,()=>v.stop===1);expect(v.load).toBe(loaded);
+    runUntil(w,()=>pool(w,b,'motor')===loaded,40);
+  });
+
+  it('새 노선을 기다리는 중 기존 목적지가 철거되면 먼저 반송한 뒤 새 노선으로 배송한다', () => {
+    const { w, a, b, v } = yard();
+    for(let x=29;x<=33;x++)w.place('road',x,12,0);
+    const next=w.place('station',31,10,0)!;w.setStationMode(next,'unload');a.inBuf.set('motor',40);
+    w.setPlan(v,[{item:'motor',cap:20}],0,false);runUntil(w,()=>v.stop===1);
+    w.setStops(v,[{id:a.id,act:'load'},{id:next.id,act:'unload'}]);w.remove(b);
+    runUntil(w,()=>pool(w,next,'motor')>=20,60);
+    expect(v.pendingStops).toBeNull();expect(v.returning).toBe(false);
   });
 
   it('목적지를 싣기 정류장으로 바꾸면 계약이 끝나고 반송한다', () => {

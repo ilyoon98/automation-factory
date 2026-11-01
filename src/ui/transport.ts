@@ -75,7 +75,7 @@ export function transportItemOptions(w: World, stationId: number, selected: Item
 export function refreshTransportItemSelect(w: World, v: Vehicle, select: HTMLSelectElement): void {
   const planned = select.dataset.planItem !== undefined;
   if (!planned && select.dataset.act !== 'stop-item') return;
-  const source = planned ? v.stops[0]?.id : v.stops[Number(select.dataset.i)]?.id;
+  const source = planned ? v.route[0]?.id : v.route[Number(select.dataset.i)]?.id;
   const selected = select.value as ItemId | '';
   const html = transportItemOptions(w, source ?? 0, selected, planned, planned ? '품목 고르기' : '아무거나');
   if (itemOptions.get(select) !== html) {

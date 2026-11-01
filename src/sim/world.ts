@@ -2174,7 +2174,7 @@ export class World {
     // 방금 새로 뗀 번호는 돌려놓는다
     if (b.stationNo === this.nextStationNo - 1) this.nextStationNo--;
     if (no) b.stationNo = no;
-    for (const v of this.vehicles.values()) for (const s of v.stops) if (s.id === oldId) s.id = b.id;
+    for (const v of this.vehicles.values()) for (const s of [...v.stops, ...(v.pendingStops ?? [])]) if (s.id === oldId) s.id = b.id;
     // 되돌리기 기록 속 노선도 (트럭 만들기·철거, 노선 바꾸기). 안 그러면 다시 하기로 되살린 노선이 없는 정류장을 가리킨다
     for (const h of this.histories.values()) {
       for (const batch of [...h.undo, ...h.redo, ...(h.batch ? [h.batch] : [])]) {
@@ -3105,7 +3105,7 @@ export class World {
       }
       return null;
     }
-    if (!this.routeOk(v)) return v.home ? (this.buildings.get(v.home) ?? null) : null;
+    if (!this.routeOk(v) && !this.finishingDelivery(v)) return v.home ? (this.buildings.get(v.home) ?? null) : null;
     return this.buildings.get(v.stopId) ?? null;
   }
 
@@ -3185,9 +3185,9 @@ export class World {
     return Math.max(0, target - this.poolCount(st, item) - this.inReserved(st, item));
   }
 
-  /** 계획 운송 노선인지: 확장 세계, 계획이 있고, 싣기 → 내리기 두 정류장 */
+  /** 계획 운송 또는 아직 끝나지 않은 반송: 확장 세계의 싣기 → 내리기 두 정류장 */
   planned(v: Vehicle): boolean {
-    return this.regional && v.plan.length > 0 && v.stops.length === 2 && v.stops[0].act === 'load' && v.stops[1].act === 'unload';
+    return this.regional && (v.plan.length > 0 || v.returning) && v.stops.length === 2 && v.stops[0].act === 'load' && v.stops[1].act === 'unload';
   }
 
   /** 트럭의 예약을 푼다 (dir을 주면 그쪽만) */
@@ -3259,7 +3259,7 @@ export class World {
     const dst = this.buildings.get(v.stops[1].id)!;
     if (v.returning) this.returnCargo(v, st);
     // 일시정지: 새 편을 싣지 않는다 (실은 화물은 한 번 배송한 뒤 빈 차로 대기)
-    if (v.paused) {
+    if (v.paused || v.pendingStops) {
       this.releaseReservations(v, 'out');
       if (v.load > 0) {
         this.trimInbound(v);
@@ -4536,14 +4536,15 @@ export class World {
   cloneTruck(v: Vehicle): Vehicle | null {
     // 고급 트럭은 조립품 1개씩 따로 조립한다 (buildAdvancedTruck의 copy)
     if (v.kind !== 'basic') return null;
-    const i = v.stops.findIndex((s) => {
+    const stops = v.route;
+    const i = stops.findIndex((s) => {
       const st = this.buildings.get(s.id);
       return st?.type === 'station' && this.canBuildTruck(st).ok;
     });
     if (i < 0) return null;
-    const st = this.buildings.get(v.stops[i].id)!;
+    const st = this.buildings.get(stops[i].id)!;
     // 노선을 베끼면 싣는 곳마다 고른 짐도 같다
-    return this.spawnTruck(this.stationStops(st)[0], v.stops, i, this.truckSettings(v));
+    return this.spawnTruck(this.stationStops(st)[0], stops, i, this.truckSettings(v));
   }
 
   private truckSettings(v: Vehicle): TruckSettings {
@@ -4573,7 +4574,7 @@ export class World {
    * 실은 짐은 예전 세계면 허브로, regional-v1이면 지금 칸의 회수 더미로. 고급 트럭 철거는 되돌리기 기록에 넣지 않는다
    */
   removeVehicle(v: Vehicle): void {
-    if (v.kind === 'basic') this.record({ kind: 'truck-remove', id: v.id, tile: v.tile, stops: v.stops.map((s) => ({ ...s })), settings: this.truckSettings(v) });
+    if (v.kind === 'basic') this.record({ kind: 'truck-remove', id: v.id, tile: v.tile, stops: v.route.map((s) => ({ ...s })), settings: this.truckSettings(v) });
     const ev = this.regional ? this.nextPileEv++ : 0;
     if (v.kit) this.addPile(v.tile, v.kit.item, 1, ev, 'truck');
     else for (const c of TRUCK.cost) addTo(this.stock, c.item, c.count);
@@ -4626,7 +4627,7 @@ export class World {
     v.home = station.id;
     v.battery = 0;
     if (copy) {
-      v.stops = copy.stops.map((s) => ({ ...s }));
+      v.stops = copy.route.map((s) => ({ ...s }));
       v.stop = 0;
     }
     this.vehicles.set(v.id, v);
@@ -4671,17 +4672,30 @@ export class World {
 
   /**
    * 노선 바꾸기. 지금 가거나 서 있는 정류장(같은 일)이 새 노선에도 있으면 하던 일을 계속하고,
-   * 없으면 짐이 있을 때는 첫 내리는 곳, 없을 때는 첫 싣는 곳으로 간다
+   * 없으면 첫 내리는 곳/싣는 곳으로 간다. 계획 운송의 기존 화물이 있으면 배송·반송 후 새 끝점을 적용한다.
    */
   setStops(v: Vehicle, stops: RouteStop[]): void {
-    // 노선이 바뀌면 아직 싣지 않은 예약은 푼다 (실은 화물의 입고 예약은 그대로)
-    this.releaseReservations(v, 'out');
-    const cur = v.stops[v.stop];
-    const from = v.stops.map((s) => ({ ...s }));
-    v.stops = stops.map((s) => ({ ...s }));
-    if (JSON.stringify(from) !== JSON.stringify(v.stops)) {
-      this.record({ kind: 'route', id: v.id, from, to: v.stops.map((s) => ({ ...s })) });
+    const from = v.route.map(s => ({ ...s })), to = stops.map(s => ({ ...s }));
+    if (JSON.stringify(from) === JSON.stringify(to)) return;
+    this.record({ kind: 'route', id: v.id, from, to });
+    const sameEnds = v.stops.length === to.length && v.stops.every((s, i) => s.id === to[i].id && s.act === to[i].act);
+    if (this.planned(v) && v.load > 0 && !sameEnds) {
+      v.pendingStops = to.map(s => ({ ...s }));
+      this.releaseReservations(v, 'out');
+      this.trimInbound(v);
+      return;
     }
+    v.pendingStops = null;
+    this.applyStops(v, to);
+  }
+
+  private applyStops(v: Vehicle, stops: RouteStop[]): void {
+    this.refreshLoadingReservations(v);
+    const cur = v.stops[v.stop];
+    v.stops = stops.map(s => ({ ...s }));
+    v.loadTimer = -1;
+    v.stuck = 0;
+    if (!this.planned(v)) this.releaseReservations(v);
     const keep = cur ? v.stops.findIndex((s) => s.id === cur.id && s.act === cur.act) : -1;
     if (keep >= 0) {
       v.stop = keep;
@@ -4721,7 +4735,7 @@ export class World {
 
   /** 이 정류장을 노선에 넣은 트럭들 */
   trucksOf(st: Building): Vehicle[] {
-    return [...this.vehicles.values()].filter((v) => v.stops.some((s) => s.id === st.id));
+    return [...this.vehicles.values()].filter((v) => v.stops.some((s) => s.id === st.id) || v.pendingStops?.some(s => s.id === st.id));
   }
 
   /** (x, y) 칸 좌표에서 가장 가까운 트럭 (반 칸 안, 화면에 보이는 자리 기준). 없으면 null */
@@ -4832,6 +4846,13 @@ export class World {
     return v.stops.every((s, i) => this.buildings.get(s.id)?.type === 'station' && s.id !== v.stops[(i + 1) % n].id);
   }
 
+  /** 출발 후 출발지만 사라져도 이미 실은 화물은 남아 있는 목적지까지 배송한다. */
+  private finishingDelivery(v: Vehicle): boolean {
+    if (!this.planned(v) || v.returning || v.load <= 0 || v.stop !== 1) return false;
+    const src = this.buildings.get(v.stops[0].id), dst = this.buildings.get(v.stops[1].id);
+    return src?.type !== 'station' && dst?.type === 'station' && dst.stationMode === 'unload';
+  }
+
   /**
    * 이번 틱에 충전하고 싶은 전력 (kW). 정류장에 서 있고(싣는 중·내리는 중) 배터리가 덜 찼을 때만.
    * updatePower(수요 계산)와 updateVehicle(실제 충전)이 같은 값을 쓰도록 한곳에서 정한다.
@@ -4839,7 +4860,7 @@ export class World {
   private chargeWant(v: Vehicle): number {
     if (this.batteryFull(v)) return 0;
     const need = (this.truckBattery(v) - v.battery) / DT;
-    if (!this.routeOk(v)) return this.parkedAtHome(v) ? Math.min(this.stationCharge(v), need) : 0;
+    if (!this.routeOk(v) && !this.finishingDelivery(v)) return this.parkedAtHome(v) ? Math.min(this.stationCharge(v), need) : 0;
     // 길 중간 충전기 앞에 선 트럭은 더 빨리
     if (v.charger) return Math.min(TRUCK.fastCharge, need);
     if (v.state !== 'loading' && v.state !== 'unloading') return 0;
@@ -4894,6 +4915,11 @@ export class World {
   }
 
   private updateVehicle(v: Vehicle): void {
+    if (v.pendingStops && v.load === 0) {
+      const next = v.pendingStops;
+      v.pendingStops = null;
+      this.applyStops(v, next);
+    }
     v.receivedCharge = 0;
     // 정류장에 서 있으면 충전 (전력이 모자라면 그 비율만큼만). 노선 없는 고급 트럭도 조립한 정류장 옆이면
     const want = this.chargeWant(v);
@@ -4907,7 +4933,7 @@ export class World {
       if (this.batteryFull(v)) v.battery = this.truckBattery(v);
     }
     if (this.planExceptions(v)) return;
-    if (!this.routeOk(v)) {
+    if (!this.routeOk(v) && !this.finishingDelivery(v)) {
       v.status = want > 0 ? 'charging' : 'no-station';
       return;
     }
@@ -4918,6 +4944,14 @@ export class World {
       v.timer = 0;
       v.idle = 0;
       v.arrivedAt = this.time;
+    }
+    // 새 노선은 지금 실은 화물만 정리한 뒤 적용한다. 계획을 껐어도 더 싣지 않는다.
+    if (v.pendingStops && !v.returning && v.load > 0 && v.state === 'loading') {
+      this.releaseReservations(v, 'out');
+      this.trimInbound(v);
+      if (this.batteryFull(v)) this.goTo(v, Math.max(0, v.stops.findIndex(s => s.act === 'unload')));
+      else v.status = 'charging';
+      return;
     }
     if (this.planned(v)) {
       if (v.state === 'loading') this.loadPlanned(v, st);
@@ -5250,6 +5284,7 @@ export class World {
         load: v.loadId,
         unload: v.unloadId,
         stops: v.stops.map((st) => ({ ...st })),
+        ...(v.pendingStops ? { pendingStops: v.pendingStops.map(s => ({ ...s })) } : {}),
         stop: v.stop,
         cargo: [...v.cargo],
         state: v.state,
@@ -5392,6 +5427,7 @@ export class World {
         v.filter = s.filter ?? null;
       }
       v.cargo = new Map(s.cargo);
+      v.pendingStops = s.pendingStops?.map(st => ({ ...st })) ?? null;
       v.state = s.state;
       v.timer = s.timer;
       v.idle = s.idle;
@@ -5551,6 +5587,8 @@ export class World {
       h.num(v.period).num(v.nextDue).num(v.loadTimer).num(v.stuck).num(v.returning ? 1 : 0).num(v.planTurn).num(v.early ? 1 : 0);
       for (const p of v.plan) h.str(p.item).num(p.cap);
       for (const s of v.stops) h.num(s.id).str(s.act).str(s.item ?? '');
+      h.num(v.pendingStops ? 1 : 0);
+      for (const s of v.pendingStops ?? []) h.num(s.id).str(s.act).str(s.item ?? '');
       for (const [item, n] of v.cargo) h.str(item).num(n);
     }
     return h.value;
@@ -5639,6 +5677,7 @@ export interface SavedVehicle {
   unload: number;
   /** 노선과 지금 정류장 번호 */
   stops?: RouteStop[];
+  pendingStops?: RouteStop[];
   stop?: number;
   cargo: [ItemId, number][];
   state: VehicleState;

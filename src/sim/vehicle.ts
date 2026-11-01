@@ -76,6 +76,13 @@ export class Vehicle {
   ];
   /** 지금 가거나 서 있는 정류장 (stops 번호) */
   stop = 0;
+  /** 실은 화물의 배송·반송이 끝나면 적용할 새 노선. */
+  pendingStops: RouteStop[] | null = null;
+
+  /** 사용자가 편집 중인 확정 노선. 현재 운행 계약은 stops에 유지한다. */
+  get route(): RouteStop[] {
+    return this.pendingStops ?? this.stops;
+  }
   cargo = new Map<ItemId, number>();
   state: VehicleState = 'to-load';
   status: VehicleStatus = 'waiting';

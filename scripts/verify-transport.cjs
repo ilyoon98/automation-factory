@@ -108,6 +108,16 @@ app.whenReady().then(async () => {
     await check('loading a different world never copies a draft to a reused truck id', `return document.querySelector('[data-plan-cap="0"]').value===String(tv.plan[0].cap);`);
     await js(`document.querySelector('[data-act="clone-truck"]').click();`);
     await check('same route button creates a truck with the displayed transport plan', `const copy=tw.vehicles.get(game.input.selectedVehicle);return copy&&copy.id!==tv.id&&JSON.stringify(copy.plan)===JSON.stringify(tv.plan)&&copy.period===tv.period&&copy.early===tv.early&&copy.load===0&&document.querySelector('[data-plan-cap="0"]').value===String(tv.plan[0].cap);`);
+    await js(`tw=new (await import('/src/sim/world.ts')).World(40,30);tw.rules='regional-v1';tw.createHub(0,0);
+      for(const t of tw.techs)tw.applyTech(t.id);for(const item of (await import('/src/data/items.ts')).ITEM_IDS)tw.stock.set(item,10000);
+      for(let x=3;x<=29;x++)tw.place('road',x,6,0);
+      ta=tw.place('station',3,4,0);tb=tw.place('station',15,4,0);tc=tw.place('station',26,4,0);tw.setStationMode(tb,'unload');tw.setStationMode(tc,'unload');
+      tv=tw.buildTruck(ta);tw.setStops(tv,[{id:ta.id,act:'load'},{id:tb.id,act:'unload'}]);tw.setPlan(tv,[{item:'motor',cap:20}],0,false);
+      tv.cargo.set('motor',10);tv.stop=1;tv.state='to-unload';game.input.selectedVehicle=tv.id;game.input.selectedId=null;ui.update();
+      const select=document.querySelector('[data-act="stop-station"][data-i="1"]');select.value=String(tc.id);select.dispatchEvent(new Event('change',{bubbles:true}));`);
+    await check('editing a loaded route displays the next destination and explains deferred application',`return tv.stops[1].id===tb.id&&tv.route[1].id===tc.id&&Number(document.querySelector('[data-act="stop-station"][data-i="1"]').value)===tc.id&&document.querySelector('#info .dyn').textContent.includes('배송·반송을 마친 뒤')&&!document.querySelector('.route .stop.now');`);
+    await js(`const select=document.querySelector('[data-act="stop-station"][data-i="1"]');select.value=String(tb.id);select.dispatchEvent(new Event('change',{bubbles:true}));`);
+    await check('choosing the current destination cancels a pending route in the UI',`return tv.pendingStops===null&&tv.stops[1].id===tb.id&&!document.querySelector('#info .dyn').textContent.includes('배송·반송을 마친 뒤');`);
     if (errors.length) throw Error(errors.join('\n'));
     fs.writeFileSync(path.join(out,'results.json'),JSON.stringify({passed:true,results,errors},null,2));
     console.log(JSON.stringify({passed:true,checks:results.length,out}));

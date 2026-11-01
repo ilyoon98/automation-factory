@@ -92,7 +92,7 @@ app.whenReady().then(async () => {
     await check('an empty target amount never deletes an existing target', `return ta.targets.get('motor')===50&&sentCommands.length===targetCommandCount&&document.getElementById('toast').textContent.includes('정수');`);
     await check('zero negative fractional and unsafe target amounts leave the old target intact', `for(const value of ['0','-2','1.5','1e20']){document.querySelector('[data-target-n]').value=value;document.querySelector('[data-act="target-add"]').click();if(ta.targets.get('motor')!==50||sentCommands.length!==targetCommandCount)return false;}return true;`);
     await js(`document.querySelector('[data-target-n]').value='137';document.querySelector('[data-act="target-add"]').click();`);
-    await check('a valid target is applied and explicit delete still removes it', `if(ta.targets.get('motor')!==137)return false;document.querySelector('[data-act="target-del"][data-item="motor"]').click();return !ta.targets.has('motor');`);
+    await check('a valid target is applied and explicit delete never opens the item encyclopedia', `if(ta.targets.get('motor')!==137)return false;document.querySelector('[data-act="target-del"][data-target-remove="motor"]').click();return !ta.targets.has('motor')&&!ui.codex.isOpen;`);
     await js(`window.td=tw.place('station',26,4,0);game.input.selectedId=td.id;ui.update();`);
     await check('another station never inherits the previous target draft', `return document.querySelector('[data-target-item]').value===''&&document.querySelector('[data-target-n]').value==='40';`);
     await js(`game.input.selectedId=ta.id;ui.update();`);
@@ -116,6 +116,10 @@ app.whenReady().then(async () => {
       tv.cargo.set('motor',10);tv.stop=1;tv.state='to-unload';game.input.selectedVehicle=tv.id;game.input.selectedId=null;ui.update();
       const select=document.querySelector('[data-act="stop-station"][data-i="1"]');select.value=String(tc.id);select.dispatchEvent(new Event('change',{bubbles:true}));`);
     await check('editing a loaded route displays the next destination and explains deferred application',`return tv.stops[1].id===tb.id&&tv.route[1].id===tc.id&&Number(document.querySelector('[data-act="stop-station"][data-i="1"]').value)===tc.id&&document.querySelector('#info .dyn').textContent.includes('배송·반송을 마친 뒤')&&!document.querySelector('.route .stop.now');`);
+    await js(`game.input.cb.getWorld=()=>tw;renderer.resize(camera);renderer.draw(tw,camera,game.input);`);
+    await shot('vehicle-pending-narrow');
+    win.setSize(1280,800);await delay(100);await js(`ui.update();renderer.resize(camera);renderer.draw(tw,camera,game.input);`);
+    await shot('vehicle-pending-wide');
     await js(`const select=document.querySelector('[data-act="stop-station"][data-i="1"]');select.value=String(tb.id);select.dispatchEvent(new Event('change',{bubbles:true}));`);
     await check('choosing the current destination cancels a pending route in the UI',`return tv.pendingStops===null&&tv.stops[1].id===tb.id&&!document.querySelector('#info .dyn').textContent.includes('배송·반송을 마친 뒤');`);
     if (errors.length) throw Error(errors.join('\n'));

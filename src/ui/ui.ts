@@ -2135,7 +2135,7 @@ export class UI {
     let targets = '<div class="route-head"><span>현재 / 목표</span></div>';
     for (const [item, n] of b.targets) {
       targets += `<div class="row"><span>${itemIcon(item)}${ITEMS[item].name}</span><b><span data-target-row="${item}"></span> / ${n}
-        <button data-act="target-del" data-item="${item}" title="목표 지우기">×</button></b></div>
+        <button data-act="target-del" data-target-remove="${item}" title="목표 지우기">×</button></b></div>
         <small class="muted target-incoming" data-target-incoming="${item}" hidden></small>`;
     }
     targets += `<div class="line"><select data-target-item><option value="">품목</option>${ITEM_IDS.map((i) => `<option value="${i}">${ITEMS[i].name}</option>`).join('')}</select>
@@ -2879,7 +2879,7 @@ export class UI {
       const el = $('info');
       const item = (act === 'target-add'
         ? el.querySelector<HTMLSelectElement>('select[data-target-item]')?.value
-        : (e.target as HTMLElement).closest<HTMLElement>('[data-item]')?.dataset.item) as ItemId | undefined;
+        : (e.target as HTMLElement).closest<HTMLElement>('[data-target-remove]')?.dataset.targetRemove) as ItemId | undefined;
       const n = act === 'target-add' ? Number(el.querySelector<HTMLInputElement>('input[data-target-n]')?.value) : 0;
       if (!item) {
         this.toast('목표로 정할 품목을 먼저 골라 주세요', 2500);

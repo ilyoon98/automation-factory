@@ -1336,16 +1336,16 @@ export class UI {
 
   /** 회수 더미를 바로 줍는다 (가까운 창고·정류장, 없으면 허브). 주운 자리에 "+아이콘 개수"가 떠오른다 */
   pickPile(tile: number, sx: number, sy: number): void {
-    const items = [...this.game.getWorld().pileAt(tile)];
-    this.sendUse(`pile:${tile}`, { t: 'pile-collect', rid: newRid(), tile }, () => this.floatGain(sx, sy, items));
+    this.sendUse(`pile:${tile}`, { t: 'pile-collect', rid: newRid(), tile }, (r) => this.floatGain(sx, sy, r.items ?? []));
   }
 
   /** 얻은 것을 그 자리에서 위로 떠오르며 사라지게 (화면 좌표) */
   private floatGain(sx: number, sy: number, items: [ItemId, number][]): void {
+    if (!items.length) return;
     const el = document.createElement('div');
     el.className = 'gain-float';
-    el.style.left = `${sx}px`;
-    el.style.top = `${sy}px`;
+    el.style.left = `${sx / uiZoom()}px`;
+    el.style.top = `${sy / uiZoom()}px`;
     el.innerHTML = items
       .slice(0, 4)
       .map(([i, n]) => `<div>+${itemIcon(i)}${n}</div>`)

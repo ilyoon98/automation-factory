@@ -319,6 +319,8 @@ export interface UseResult {
   from?: number;
   /** 회수 더미에서 옮긴 개수 */
   moved?: number;
+  /** 회수 명령이 실제로 옮긴 품목별 수량 (응답을 기다리는 사이 더미가 달라질 수 있다) */
+  items?: [ItemId, number][];
 }
 
 /** 회수 더미를 손으로 옮길 수 있는 거리: 창고·정류장 몸체까지 체비쇼프 칸 */
@@ -1686,9 +1688,11 @@ export class World {
     const list = this.piles.filter((p) => p.tile === tile).sort((a, c) => a.ev - c.ev || ITEM_IDS.indexOf(a.item) - ITEM_IDS.indexOf(c.item));
     if (!list.length) return { ok: false, reason: '회수 더미가 없어요' };
     const moved = list.reduce((a, p) => a + p.n, 0);
+    const items = new Map<ItemId, number>();
+    for (const p of list) addTo(items, p.item, p.n);
     const from = this.stashNear(tile, list.map((p): [ItemId, number] => [p.item, p.n]));
     this.piles = this.piles.filter((p) => p.tile !== tile);
-    return { ok: true, moved, from };
+    return { ok: true, moved, from, items: [...items] };
   }
 
   /** 회수 더미를 버린다 (쓸모없는 것). 없어진 개수 */

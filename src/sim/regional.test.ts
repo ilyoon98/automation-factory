@@ -770,7 +770,11 @@ describe('회수 더미 옮기기', () => {
     expect(w.pileTarget(tile)?.b).toBe(near);
     const r = applyCommand(w, 0, { t: 'pile-collect', rid: 'p1', tile });
     expect(r).toMatchObject({ ok: true, moved: 30, from: near.id });
+    expect(r.items).toEqual([['iron-plate',30]]);
     expect(countOf(near.inBuf, 'iron-plate')).toBe(30);
+    const loaded=World.deserialize(JSON.parse(JSON.stringify(w.serialize())));
+    expect(applyCommand(loaded,0,{t:'pile-collect',rid:'p1',tile}).items).toEqual([['iron-plate',30]]);
+    expect(total(loaded,'iron-plate')).toBe(before);
     expect(countOf(far.inBuf, 'iron-plate')).toBe(0);
     expect(w.pileAt(tile).size).toBe(0);
     expect(total(w, 'iron-plate')).toBe(before);

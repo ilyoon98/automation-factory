@@ -632,9 +632,12 @@ describe('고급 트럭 (V01~V08)', () => {
     const v = w.vehicles.get(build(w, st).vehicle!)!;
     applyCommand(w, 0, { t: 'route', id: v.id, stops: [{ id: st.id, act: 'load' }, { id: unload.id, act: 'unload' }] });
     expect(applyCommand(w, 0, { t: 'clone-truck', id: v.id })).toBeNull(); // 고급은 기본 복제로 늘지 않는다
+    w.setPlan(v,[{item:'coal',cap:12}],120,true);v.paused=true;
     const r = build(w, st, '', v.id);
     const v2 = w.vehicles.get(r.vehicle!)!;
     expect(v2.stops).toEqual(v.stops);
+    expect(v2.plan).toEqual(v.plan);expect(v2.period).toBe(120);expect(v2.early).toBe(true);expect(v2.paused).toBe(true);
+    expect(v2.load).toBe(0);expect(v2.battery).toBe(0);
     expect(countOf(st.inBuf, 'truck-kit')).toBe(0);
     expect(build(w, st, '', v.id).ok).toBe(false); // 조립품이 없으면 추가도 없다
     v2.cargo.set('coal', 4);

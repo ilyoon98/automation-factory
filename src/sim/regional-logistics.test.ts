@@ -43,6 +43,25 @@ function runUntil(w: World, cond: () => boolean, seconds = 60) {
 const pool = (w: World, st: Building, item: ItemId) => w.poolCount(st, item);
 
 describe('연결 창고와 계획 적재', () => {
+  it('같은 노선 추가는 운송 계획 설정을 복사하고 화물·배터리·출발 시각은 복제하지 않는다', () => {
+    const { w, a, v } = yard();a.inBuf.set('motor',40);
+    w.setPlan(v,[{item:'motor',cap:20}],120,true);
+    runUntil(w,()=>v.load>=5);v.paused=true;v.battery=123;v.nextDue=777;
+    const copy=applyCommand(w,0,{t:'clone-truck',id:v.id})!;
+    expect(copy.plan).toEqual(v.plan);expect(copy.plan).not.toBe(v.plan);
+    expect(copy.period).toBe(120);expect(copy.early).toBe(true);expect(copy.paused).toBe(true);
+    expect(copy.load).toBe(0);expect(copy.battery).toBe(w.truckBattery());expect(copy.nextDue).not.toBe(777);
+    applyCommand(w,0,{t:'undo'});applyCommand(w,0,{t:'redo'});
+    const restored=[...w.vehicles.values()].find(t=>t.id!==v.id)!;
+    expect(restored.plan).toEqual(v.plan);expect(restored.period).toBe(120);expect(restored.early).toBe(true);expect(restored.paused).toBe(true);
+  });
+
+  it('트럭 철거를 되돌려도 계획·주기·조기 출발·일시정지 설정이 남는다', () => {
+    const { w, v } = yard();w.setPlan(v,[{item:'motor',cap:20}],180,true);v.paused=true;
+    applyCommand(w,0,{t:'remove-truck',id:v.id});applyCommand(w,0,{t:'undo'});
+    const restored=[...w.vehicles.values()][0];
+    expect(restored.plan).toEqual(v.plan);expect(restored.period).toBe(180);expect(restored.early).toBe(true);expect(restored.paused).toBe(true);
+  });
   it('한 품목이 모자라도 나머지는 상한대로: 모터 6 + 케이블 20 + 배터리 10 = 36개를 싣고 떠난다', () => {
     const { w, a, sa, b, v } = yard();
     sa.inBuf.set('motor', 6);
@@ -377,5 +396,17 @@ describe('연결 창고와 계획 적재', () => {
     expect(loaded.reservations).toEqual(w.reservations);
     expect(loaded.vehicles.get(v.id)!.plan).toEqual(v.plan);
     expect(loaded.buildings.get(a.id)!.dock).toBe(sa.id);
+  });
+
+  it('계획을 끈 뒤 저장·중간 참가해도 차량 내부 상태와 해시가 같다', () => {
+    const { w, a, v } = yard();a.inBuf.set('motor',40);
+    w.setPlan(v,[{item:'motor',cap:10},{item:'tire',cap:10}],60,false);
+    runUntil(w,()=>v.load>=5);
+    w.setPlan(v,[],0,false);
+    const guest=World.fromSnapshot(JSON.parse(JSON.stringify(w.snapshot())));
+    expect(guest.checksum()).toBe(w.checksum());
+    const loaded=World.deserialize(JSON.parse(JSON.stringify(w.serialize()))).vehicles.get(v.id)!;
+    expect(loaded.nextDue).toBe(v.nextDue);expect(loaded.planTurn).toBe(v.planTurn);
+    for(let i=0;i<120;i++){w.tick();guest.tick();expect(guest.checksum()).toBe(w.checksum());}
   });
 });

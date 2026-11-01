@@ -106,6 +106,8 @@ app.whenReady().then(async () => {
     await check('expanded transport settings also fit 320px', `const p=document.getElementById('info');return p.scrollWidth<=p.clientWidth+1;`);
     await js(`document.querySelector('[data-plan-cap="0"]').value='29'; tw = (await import('/src/sim/world.ts')).World.deserialize(tw.serialize()); tv = tw.vehicles.get(tv.id); ui.update();`);
     await check('loading a different world never copies a draft to a reused truck id', `return document.querySelector('[data-plan-cap="0"]').value===String(tv.plan[0].cap);`);
+    await js(`document.querySelector('[data-act="clone-truck"]').click();`);
+    await check('same route button creates a truck with the displayed transport plan', `const copy=tw.vehicles.get(game.input.selectedVehicle);return copy&&copy.id!==tv.id&&JSON.stringify(copy.plan)===JSON.stringify(tv.plan)&&copy.period===tv.period&&copy.early===tv.early&&copy.load===0&&document.querySelector('[data-plan-cap="0"]').value===String(tv.plan[0].cap);`);
     if (errors.length) throw Error(errors.join('\n'));
     fs.writeFileSync(path.join(out,'results.json'),JSON.stringify({passed:true,results,errors},null,2));
     console.log(JSON.stringify({passed:true,checks:results.length,out}));

@@ -146,7 +146,10 @@ interface TruckEdit {
   id: number;
   tile: number;
   stops: RouteStop[];
+  settings?: TruckSettings;
 }
+
+type TruckSettings = Pick<Vehicle, 'plan' | 'period' | 'early' | 'paused'>;
 
 /**
  * 현지 회수 더미의 한 덩어리 (regional-v1). 철거·레시피 변경·모듈 분리 등으로 실제 물건이 있던 칸에 남는다.
@@ -2124,7 +2127,7 @@ export class World {
         return true;
       }
       if (!this.canAfford(TRUCK.cost)) return false;
-      const v = this.spawnTruck(op.tile, op.stops);
+      const v = this.spawnTruck(op.tile, op.stops, 0, op.settings);
       // 다른 단계가 이 트럭의 마지막 id로 찾아도 새 트럭에 닿게
       this.truckAlias.set(last, v.id);
       op.id = v.id;
@@ -4536,18 +4539,28 @@ export class World {
     if (i < 0) return null;
     const st = this.buildings.get(v.stops[i].id)!;
     // 노선을 베끼면 싣는 곳마다 고른 짐도 같다
-    return this.spawnTruck(this.stationStops(st)[0], v.stops, i);
+    return this.spawnTruck(this.stationStops(st)[0], v.stops, i, this.truckSettings(v));
+  }
+
+  private truckSettings(v: Vehicle): TruckSettings {
+    return { plan: v.plan.map(p => ({ ...p })), period: v.period, early: v.early, paused: v.paused };
+  }
+
+  private applyTruckSettings(v: Vehicle, settings: TruckSettings): void {
+    this.setPlan(v, settings.plan, settings.period, settings.early);
+    v.paused = settings.paused;
   }
 
   /** 재료를 내고 tile 칸에 트럭을 놓는다 (확인은 부르는 쪽에서). 노선의 stop번째 정류장부터 */
-  private spawnTruck(tile: number, stops: RouteStop[], stop = 0): Vehicle {
+  private spawnTruck(tile: number, stops: RouteStop[], stop = 0, settings?: TruckSettings): Vehicle {
     for (const c of TRUCK.cost) addTo(this.stock, c.item, -c.count);
     const v = new Vehicle(this.nextVehicleId++, tile, this.width);
     v.battery = this.truckBattery();
     v.stops = stops.map((s) => ({ ...s }));
     this.goTo(v, stop);
     this.vehicles.set(v.id, v);
-    this.record({ kind: 'truck-add', id: v.id, tile, stops: v.stops.map((s) => ({ ...s })) });
+    if (settings) this.applyTruckSettings(v, settings);
+    this.record({ kind: 'truck-add', id: v.id, tile, stops: v.stops.map((s) => ({ ...s })), settings: this.truckSettings(v) });
     return v;
   }
 
@@ -4556,7 +4569,7 @@ export class World {
    * 실은 짐은 예전 세계면 허브로, regional-v1이면 지금 칸의 회수 더미로. 고급 트럭 철거는 되돌리기 기록에 넣지 않는다
    */
   removeVehicle(v: Vehicle): void {
-    if (v.kind === 'basic') this.record({ kind: 'truck-remove', id: v.id, tile: v.tile, stops: v.stops.map((s) => ({ ...s })) });
+    if (v.kind === 'basic') this.record({ kind: 'truck-remove', id: v.id, tile: v.tile, stops: v.stops.map((s) => ({ ...s })), settings: this.truckSettings(v) });
     const ev = this.regional ? this.nextPileEv++ : 0;
     if (v.kit) this.addPile(v.tile, v.kit.item, 1, ev, 'truck');
     else for (const c of TRUCK.cost) addTo(this.stock, c.item, c.count);
@@ -4613,6 +4626,7 @@ export class World {
       v.stop = 0;
     }
     this.vehicles.set(v.id, v);
+    if (copy) this.applyTruckSettings(v, this.truckSettings(copy));
     return { ok: true, vehicle: v.id, from: holder.id };
   }
 
@@ -5242,9 +5256,9 @@ export class World {
         ...(v.filter ? { filter: v.filter } : {}),
         ...(v.kind !== 'basic' ? { kind: v.kind, kit: v.kit ?? undefined, home: v.home } : {}),
         ...(v.fromStation ? { from: [v.fromStation, v.fromZone] as [number, number] } : {}),
-        ...(v.plan.length || v.returning
-          ? { plan: v.plan.map((p) => ({ ...p })), period: v.period, nextDue: v.nextDue, early: v.early, loadTimer: v.loadTimer, stuck: v.stuck, returning: v.returning, planTurn: v.planTurn, paused: v.paused }
-          : {}),
+        // 계획을 꺼도 다음 출발 시각·품목 차례는 남는다. 중간 참가의 해시와 맞게 함께 저장한다.
+        plan: v.plan.map((p) => ({ ...p })), period: v.period, nextDue: v.nextDue, early: v.early,
+        loadTimer: v.loadTimer, stuck: v.stuck, returning: v.returning, planTurn: v.planTurn, paused: v.paused,
       })),
       // 예전 세계는 모양을 그대로 (없으면 legacy-v042로 읽는다)
       ...(this.rules !== 'legacy-v042' ? { rules: this.rules } : {}),

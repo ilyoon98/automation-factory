@@ -36,6 +36,8 @@ export type Command =
   /** 트럭 노선 (정류장 ROUTE_MIN ~ ROUTE_MAX곳, 차례대로) */
   | { t: 'route'; id: number; stops: RouteStop[] }
   | { t: 'truck-filter'; id: number; item: ItemId | null }
+  | { t: 'truck-name'; id: number; name: string }
+  | { t: 'station-name'; id: number; name: string }
   /**
    * 현지 실물을 쓰는 명령 (regional-v1). rid = 명령마다 새로 붙이는 고유 번호: 같은 rid는 한 번만 적용한다.
    * 되돌리기(Ctrl+Z) 대상이 아니다. 설치의 반대는 분리, 고급 트럭 조립의 반대는 철거
@@ -102,6 +104,8 @@ export interface CommandResults {
   'remove-truck': boolean;
   route: void;
   'truck-filter': void;
+  'truck-name': boolean;
+  'station-name': boolean;
   'module-install': UseResult;
   'module-detach': UseResult;
   'pile-collect': UseResult;
@@ -213,6 +217,14 @@ function run(w: World, c: Command): CommandResults[Command['t']] {
       // 노선 바꾸기 한 번이 되돌리기 한 단계
       if (v && stops) w.edit(() => w.setStops(v, stops));
       return;
+    }
+    case 'station-name': {
+      const b = w.buildings.get(c.id);
+      return !!b && w.edit(() => w.renameStation(b, c.name));
+    }
+    case 'truck-name': {
+      const v = w.vehicles.get(c.id);
+      return !!v && w.edit(() => w.renameTruck(v, c.name));
     }
     case 'truck-filter': {
       const v = w.vehicles.get(c.id);

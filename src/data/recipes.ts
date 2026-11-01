@@ -75,7 +75,7 @@ export const RECIPES: Record<string, Recipe> = {
     id: 'circuit',
     name: '회로',
     machine: 'assembler',
-    time: 4,
+    time: 5,
     inputs: [
       { item: 'iron-plate', count: 1 },
       { item: 'copper-wire', count: 3 },

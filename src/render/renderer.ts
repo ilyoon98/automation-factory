@@ -1387,7 +1387,7 @@ export class Renderer {
       for (const st of world.stations()) {
         const [sx, sy] = cam.worldToScreen(st.x + 1, st.y - 0.2);
         const n = world.trucksOf(st).length;
-        if (n) this.text(`정류장 ${st.stationNo} · 트럭 ${n}`, sx, sy, '#3b2716', 11);
+        if (n || st.stationName) this.text(`${st.stationLabel}${n ? ` · 트럭 ${n}` : ''}`, sx, sy, '#3b2716', 11);
       }
       return;
     }

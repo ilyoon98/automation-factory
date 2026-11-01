@@ -25,7 +25,7 @@ export function roadPlanKey(w: World): string {
 
 export function roadBuilderHtml(w: World, from: number, to: number, plan: RoadPlanResult | null, busy: boolean): string {
   const stations = roadStations(w), source = stations.find((b) => b.id === from);
-  const name = (b: Building) => `정류장 ${b.stationNo}${w.regional ? b.zone ? ` · 거점 ${b.zone}` : ' · 거점 미배정' : ''}`;
+  const name = (b: Building) => `${b.stationLabel.replace(/[&<>"']/g, c => `&#${c.charCodeAt(0)};`)}${w.regional ? b.zone ? ` · 거점 ${b.zone}` : ' · 거점 미배정' : ''}`;
   const options = stations.filter((b) => b.id !== from).map((b) => `<option value="${b.id}" ${b.id === to ? 'selected' : ''}>${name(b)}</option>`).join('');
   const missing = to && !stations.some((b) => b.id === to) ? `<option value="${to}" selected disabled>삭제되었거나 미공개인 정류장</option>` : '';
   let body = `<p class="muted">${options ? 'B정류장을 고르면 경로와 비용을 미리 보여줘요.' : '연결할 다른 정류장이 없어요.'}</p>`;

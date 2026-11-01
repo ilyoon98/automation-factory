@@ -7,6 +7,18 @@ import type { RouteStop, Vehicle } from '../sim/vehicle';
 const networks = new WeakMap<World, { revision: number; components: Uint32Array }>();
 const itemOptions = new WeakMap<HTMLSelectElement, string>();
 
+/** 실제 운송 방식의 공급 재고. 계획 운송은 다른 차량에 예약된 몫과 본인 몫을 구분한다. */
+export function sourceStock(w: World, stationId: number, planned = false, vehicleId = 0) {
+  const station = w.buildings.get(stationId);
+  if (station?.type !== 'station') return [];
+  return ITEM_IDS.map(item => {
+    const count = planned ? w.poolCount(station, item) : station.inBuf.get(item) ?? 0;
+    const holders = planned ? new Set(w.poolOf(station).map(h => h.id)) : new Set<number>();
+    const reserved = planned ? w.reservations.filter(r => r.dir === 'out' && r.item === item && holders.has(r.holder) && r.v !== vehicleId).reduce((n, r) => n + r.n, 0) : 0;
+    return { item, count, available: Math.max(0, count - reserved) };
+  }).filter(i => i.count > 0);
+}
+
 /** 정류장의 서로 떨어진 접도 칸을 통해 도로망이 합쳐지지 않게 도로 칸만 묶는다. */
 function roadComponents(w: World): Uint32Array {
   const cached = networks.get(w);
@@ -65,7 +77,8 @@ export function sourceItemGroups(w: World, stationId: number, planned = false): 
 
 export function transportItemOptions(w: World, stationId: number, selected: ItemId | '' | null | undefined, planned = false, placeholder = '아무거나'): string {
   const { stocked, other } = sourceItemGroups(w, stationId, planned);
-  const options = (ids: ItemId[]) => ids.map((item) => `<option value="${item}" ${selected === item ? 'selected' : ''}>${ITEMS[item].name}</option>`).join('');
+  const amounts = new Map(sourceStock(w, stationId, planned).map(i => [i.item, i.count]));
+  const options = (ids: ItemId[]) => ids.map((item) => `<option value="${item}" ${selected === item ? 'selected' : ''}>${ITEMS[item].name}${amounts.has(item) ? ` · 재고 ${amounts.get(item)}개` : ''}</option>`).join('');
   return `<option value="" ${selected ? '' : 'selected'}>${placeholder}</option>` +
     (stocked.length ? `<optgroup label="출발지에 있음">${options(stocked)}</optgroup>` : '') +
     `<optgroup label="${stocked.length ? '다른 품목' : '전체 품목'}">${options(other)}</optgroup>`;
@@ -77,7 +90,8 @@ export function refreshTransportItemSelect(w: World, v: Vehicle, select: HTMLSel
   if (!planned && select.dataset.act !== 'stop-item') return;
   const source = planned ? v.route[0]?.id : v.route[Number(select.dataset.i)]?.id;
   const selected = select.value as ItemId | '';
-  const html = transportItemOptions(w, source ?? 0, selected, planned, planned ? '품목 고르기' : '아무거나');
+  const pooled = planned || w.regional && v.plan.length > 0 && v.route.length === 2 && v.route[0].act === 'load' && v.route[1].act === 'unload';
+  const html = transportItemOptions(w, source ?? 0, selected, pooled, planned ? '품목 고르기' : '아무거나');
   if (itemOptions.get(select) !== html) {
     select.innerHTML = html;
     select.value = selected;
@@ -119,6 +133,8 @@ export function replaceTransportInfo(el: HTMLElement, html: string, context: str
   // 확정된 계획이 그대로면 목록/도로 상태를 다시 그려도 작성 중인 값은 보존한다.
   // 다른 차량 또는 실제 계획 변경(명령 적용·멀티플레이 갱신)은 새 확정값을 보여 준다.
   const draft: { selector: string; value: string; checked: boolean; focused: boolean }[] = [];
+  const name = same ? el.querySelector<HTMLInputElement>('[data-name-input]') : null;
+  const nameDraft = name ? { value: name.value, initial: name.defaultValue, focused: name === document.activeElement, start: name.selectionStart, end: name.selectionEnd } : null;
   if (same) {
     const attrs = ['data-target-item', 'data-target-n'];
     if (planVersion !== undefined && el.dataset.transportPlanVersion === planVersion) {
@@ -133,6 +149,14 @@ export function replaceTransportInfo(el: HTMLElement, html: string, context: str
   }
   const scroll = same ? el.scrollTop : 0;
   el.innerHTML = html;
+  const nextName = el.querySelector<HTMLInputElement>('[data-name-input]');
+  if (nameDraft && nextName && nextName.defaultValue === nameDraft.initial) {
+    nextName.value = nameDraft.value;
+    if (nameDraft.focused) {
+      nextName.focus({ preventScroll: true });
+      nextName.setSelectionRange(nameDraft.start, nameDraft.end);
+    }
+  }
   el.dataset.transportContext = context;
   el.dataset.transportPlanVersion = planVersion ?? '';
   for (const d of el.querySelectorAll<HTMLDetailsElement>('details[data-transport-section]')) {

@@ -2158,3 +2158,9 @@ body.one-panel #left {
 #goals h3 {
   column-span: all;
 }
+
+#info [data-name-input] { min-width: 0; width: 100%; }
+#info .recipe:has([data-name-input]) { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 8px; align-items: center; }
+#info header h3 { min-width: 0; overflow-wrap: anywhere; }
+#info .load-stock { margin: 6px 0; padding: 6px; border: 1px solid #c9b27a; }
+#info .load-stock .row { flex-wrap: wrap; gap: 4px; }

@@ -309,6 +309,23 @@ describe('제련로', () => {
 });
 
 describe('기계별 생산 현황', () => {
+  it('회로는 기본 5초에 1개: 강철 2대와 합쳐 철판 분당 60개를 쓴다', () => {
+    const w = makeWorld();
+    const a = w.place('assembler', 6, 10, 3)!;
+    w.setRecipe(a, 'circuit');
+    beltRow(w, 5, 3, 10, 3);
+    a.inBuf.set('iron-plate', 100);
+    a.inBuf.set('copper-wire', 300);
+    const s = w.place('smelter', 10, 10, 0)!;
+    w.setRecipe(s, 'steel');
+    const st = w.machineStats(a)!;
+    expect(st.maxIn).toEqual([{ item: 'iron-plate', count: 12 }, { item: 'copper-wire', count: 36 }]);
+    expect(st.maxOut).toEqual([{ item: 'circuit', count: 12 }]);
+    expect(2 * w.machineStats(s)!.maxIn.find(i => i.item === 'iron-plate')!.count + st.maxIn[0].count).toBe(60);
+    run(w, 61);
+    expect(w.stats.made.get('circuit')).toBe(12);
+  });
+
   it('채굴기 1대(분당 60) → 제련로 1대(분당 30): 제련로는 꽉 차게, 채굴기는 절반은 막혀서 논다', () => {
     const w = makeWorld();
     ore(w, 10, 10);

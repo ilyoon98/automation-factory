@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { World } from '../sim/world';
 import { ITEM_IDS } from '../data/items';
 import { Vehicle } from '../sim/vehicle';
-import { focusRouteStation, reachableStations, refreshTransportItemSelect, sourceItemGroups, stationMapButton, transportItemOptions } from './transport';
+import { focusRouteStation, reachableStations, refreshTransportItemSelect, sourceItemGroups, sourceStock, stationMapButton, transportItemOptions } from './transport';
 
 function setup() {
   const w = new World(40, 30);
@@ -57,6 +57,17 @@ describe('운송 정류장 목록의 도로 연결', () => {
 });
 
 describe('운송 출발지 품목과 지도 이동', () => {
+  it('담을 재고는 운송 방식과 다른 트럭의 예약을 반영한다', () => {
+    const { w, a } = setup(); w.rules = 'regional-v1';
+    const store = w.place('storage', 1, 4, 0)!; w.setDock(a, store.id);
+    a.inBuf.set('coal', 3); store.inBuf.set('tin-ore', 5);
+    w.reservations.push({ v: 9, holder: store.id, item: 'tin-ore', n: 2, dir: 'out' });
+    expect(sourceStock(w, a.id)).toEqual([{ item: 'coal', count: 3, available: 3 }]);
+    expect(sourceStock(w, a.id, true, 1)).toContainEqual({ item: 'tin-ore', count: 5, available: 3 });
+    expect(sourceStock(w, a.id, true, 9)).toContainEqual({ item: 'tin-ore', count: 5, available: 5 });
+    expect(transportItemOptions(w, a.id, 'coal')).toContain('석탄 · 재고 3개');
+    expect(sourceStock(w, 999)).toEqual([]);
+  });
   it('일반 노선은 정류장 적재함, 계획 운송은 연결 창고까지 있는 품목을 우선하고 전체 품목을 보존한다', () => {
     const { w, a } = setup(); w.rules = 'regional-v1';
     const store = w.place('storage', 1, 4, 0)!;

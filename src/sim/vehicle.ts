@@ -62,6 +62,13 @@ export const TRUCK_KIND_LABEL: Record<TruckKind, string> = { basic: '트럭', ad
  * 전기 트럭: 달리면 배터리가 줄고, 정류장에 서 있는 동안 공장 전력으로 충전한다.
  */
 export class Vehicle {
+  name = '';
+
+  get label(): string {
+    const base = `${TRUCK_KIND_LABEL[this.kind]} ${this.id}`;
+    return this.name ? `${this.name} · ${base}` : base;
+  }
+
   /** 칸 좌표. 칸 가운데는 (tx + 0.5, ty + 0.5) */
   x: number;
   y: number;

@@ -126,6 +126,7 @@ export type EditOp =
       recipe: string | null;
       filter: ItemId | null;
       junction?: JunctionPorts;
+      stationName?: string;
       mode: StationMode;
       no: number;
       ug: 'in' | 'out' | null;
@@ -138,9 +139,11 @@ export type EditOp =
   | { kind: 'recipe'; x: number; y: number; from: string | null; to: string | null }
   | { kind: 'filter'; x: number; y: number; from: ItemId | null; to: ItemId | null }
   | { kind: 'junction'; x: number; y: number; from: JunctionPorts | null; to: JunctionPorts | null }
+  | { kind: 'station-name'; x: number; y: number; from: string; to: string }
   | { kind: 'mode'; x: number; y: number; from: StationMode; to: StationMode }
   | ({ kind: 'truck-add' } & TruckEdit)
   | ({ kind: 'truck-remove' } & TruckEdit)
+  | { kind: 'truck-name'; id: number; from: string; to: string }
   /** 트럭 노선 바꾸기 (정류장 더하기·빼기·순서·싣기/내리기·실을 짐) */
   | { kind: 'route'; id: number; from: RouteStop[]; to: RouteStop[] };
 
@@ -152,7 +155,7 @@ interface TruckEdit {
   settings?: TruckSettings;
 }
 
-type TruckSettings = Pick<Vehicle, 'plan' | 'period' | 'early' | 'paused'>;
+type TruckSettings = Pick<Vehicle, 'plan' | 'period' | 'early' | 'paused'> & { name?: string };
 
 /**
  * 현지 회수 더미의 한 덩어리 (regional-v1). 철거·레시피 변경·모듈 분리 등으로 실제 물건이 있던 칸에 남는다.
@@ -1335,6 +1338,7 @@ export class World {
       recipe: b.recipe,
       filter: b.filter,
       ...(b.junction ? { junction: { ...b.junction } } : {}),
+      ...(b.stationName ? { stationName: b.stationName } : {}),
       mode: b.stationMode,
       no: b.stationNo,
       ug: b.ugMode,
@@ -1533,6 +1537,14 @@ export class World {
     this.refundContents(b, 'mode');
     b.stationMode = mode;
     this.layoutDirty = true;
+    return true;
+  }
+
+  renameStation(b: Building, name: string): boolean {
+    if (b.type !== 'station' || typeof name !== 'string') return false;
+    const next = [...name.replace(/[\u0000-\u001f\u007f]/g, '').trim()].slice(0, 32).join('');
+    if (next !== b.stationName) this.record({ kind: 'station-name', x: b.x, y: b.y, from: b.stationName, to: next });
+    b.stationName = next;
     return true;
   }
 
@@ -2128,6 +2140,10 @@ export class World {
 
   /** back = true면 되돌리기(반대로), false면 다시 하기 */
   private applyOp(op: EditOp, back: boolean): boolean {
+    if (op.kind === 'truck-name') {
+      const v = this.vehicles.get(this.truckId(op.id));
+      return !!v && this.renameTruck(v, back ? op.from : op.to);
+    }
     if (op.kind === 'route') {
       // 트럭이 되돌리기로 다시 만들어졌으면 지금 id로 찾는다
       const v = this.vehicles.get(this.truckId(op.id));
@@ -2179,6 +2195,8 @@ export class World {
         return !!here && this.setFilter(here, back ? op.from : op.to);
       case 'junction':
         return !!here && this.setJunction(here, back ? op.from : op.to);
+      case 'station-name':
+        return !!here && this.renameStation(here, back ? op.from : op.to);
       case 'mode':
         return !!here && this.setStationMode(here, back ? op.from : op.to);
     }
@@ -2219,6 +2237,7 @@ export class World {
     if (op.recipe && this.unlockedRecipes.has(op.recipe)) this.setRecipe(b, op.recipe);
     if (op.filter) this.setFilter(b, op.filter);
     if (op.junction) this.setJunction(b, op.junction);
+    if (op.stationName) this.renameStation(b, op.stationName);
     if (b.type === 'station') this.setStationMode(b, op.mode);
     this.revive(b, op.id, op.no);
     op.id = b.id;
@@ -4561,16 +4580,25 @@ export class World {
     if (i < 0) return null;
     const st = this.buildings.get(stops[i].id)!;
     // 노선을 베끼면 싣는 곳마다 고른 짐도 같다
-    return this.spawnTruck(this.stationStops(st)[0], stops, i, this.truckSettings(v));
+    return this.spawnTruck(this.stationStops(st)[0], stops, i, { ...this.truckSettings(v), name: '' });
+  }
+
+  renameTruck(v: Vehicle, name: string): boolean {
+    if (typeof name !== 'string') return false;
+    const next = [...name.replace(/[\u0000-\u001f\u007f]/g, '').trim()].slice(0, 32).join('');
+    if (next !== v.name) this.record({ kind: 'truck-name', id: v.id, from: v.name, to: next });
+    v.name = next;
+    return true;
   }
 
   private truckSettings(v: Vehicle): TruckSettings {
-    return { plan: v.plan.map(p => ({ ...p })), period: v.period, early: v.early, paused: v.paused };
+    return { plan: v.plan.map(p => ({ ...p })), period: v.period, early: v.early, paused: v.paused, name: v.name };
   }
 
   private applyTruckSettings(v: Vehicle, settings: TruckSettings): void {
     this.setPlan(v, settings.plan, settings.period, settings.early);
     v.paused = settings.paused;
+    v.name = settings.name ?? '';
   }
 
   /** 재료를 내고 tile 칸에 트럭을 놓는다 (확인은 부르는 쪽에서). 노선의 stop번째 정류장부터 */
@@ -4648,7 +4676,7 @@ export class World {
       v.stop = 0;
     }
     this.vehicles.set(v.id, v);
-    if (copy) this.applyTruckSettings(v, this.truckSettings(copy));
+    if (copy) this.applyTruckSettings(v, { ...this.truckSettings(copy), name: '' });
     return { ok: true, vehicle: v.id, from: holder.id };
   }
 
@@ -5279,6 +5307,7 @@ export class World {
         ...(b.cycle ? { cycle: b.cycle } : {}),
         ...(b.filter ? { filter: b.filter } : {}),
         ...(b.junction ? { junction: { ...b.junction } } : {}),
+        ...(b.stationName ? { stationName: b.stationName } : {}),
         ...(b.ugMode ? { ug: b.ugMode, partner: b.partner } : {}),
         ...(b.zone ? { zone: b.zone } : {}),
         ...(b.dock ? { dock: b.dock } : {}),
@@ -5293,6 +5322,7 @@ export class World {
       nextStationNo: this.nextStationNo,
       vehicles: [...this.vehicles.values()].map((v) => ({
         id: v.id,
+        ...(v.name ? { name: v.name } : {}),
         x: v.x,
         y: v.y,
         tile: v.tile,
@@ -5407,6 +5437,7 @@ export class World {
       b.cycle = s.cycle ?? 0;
       b.filter = s.filter ?? null;
       b.junction = validJunctionPorts(b.type, s.junction) ? { ...s.junction } : null;
+      if (typeof s.stationName === 'string') w.renameStation(b, s.stationName);
       b.ugMode = s.ug ?? null;
       b.partner = s.partner ?? 0;
       b.zone = s.zone ?? 0;
@@ -5424,6 +5455,7 @@ export class World {
     w.nextStationNo = data.nextStationNo ?? Math.max(0, ...w.stations().map((s) => s.stationNo)) + 1;
     for (const s of data.vehicles ?? []) {
       const v = new Vehicle(s.id, s.tile, w.width);
+      if (typeof s.name === 'string') w.renameTruck(v, s.name);
       v.x = s.x;
       v.y = s.y;
       v.angle = s.angle;
@@ -5596,6 +5628,7 @@ export class World {
     for (let i = 0; i < this.tree.length; i++) if (this.tree[i] > 0) h.num(i).num(this.tree[i]);
     for (const b of this.buildings.values()) {
       h.num(b.id).str(b.type).num(b.x).num(b.y).num(b.dir).str(b.recipe ?? '').str(b.filter ?? '');
+      if (b.stationName) h.str('station-name').str(b.stationName);
       if (b.junction) h.str('junction').num(b.junction.inputs).num(b.junction.outputs);
       h.num(b.progress).num(b.crafting ? 1 : 0).num(b.outRR).num(b.mineIdx).num(b.fuel).num(b.energy);
       h.num(b.cycle).num(b.partner).num(b.heldFrom).str(b.held ?? '').num(b.heldN).str(b.stationMode);
@@ -5607,6 +5640,7 @@ export class World {
     }
     for (const v of this.vehicles.values()) {
       h.num(v.id).num(v.x).num(v.y).num(v.tile).str(v.state).num(v.timer).num(v.idle).num(v.battery).num(v.charger ? 1 : 0);
+      if (v.name) h.str('truck-name').str(v.name);
       h.num(v.stop).str(v.kind).num(v.home).str(v.kit?.item ?? '').num(v.kit?.from ?? 0);
       h.num(v.fromStation).num(v.fromZone).num(v.paused ? 1 : 0);
       h.num(v.period).num(v.nextDue).num(v.loadTimer).num(v.stuck).num(v.returning ? 1 : 0).num(v.planTurn).num(v.early ? 1 : 0);
@@ -5671,6 +5705,7 @@ export interface SavedBuilding {
   /** 스마트 분류기만 */
   filter?: ItemId;
   junction?: JunctionPorts;
+  stationName?: string;
   /** 지하 컨베이어만 */
   ug?: 'in' | 'out';
   partner?: number;
@@ -5694,6 +5729,7 @@ export interface SavedBuilding {
 
 export interface SavedVehicle {
   id: number;
+  name?: string;
   x: number;
   y: number;
   tile: number;

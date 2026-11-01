@@ -132,6 +132,12 @@ export class Building {
   stationMode: StationMode = 'load';
   /** 화면에 보이는 번호 (정류장 1, 2, …) */
   stationNo = 0;
+  stationName = '';
+
+  get stationLabel(): string {
+    const base = `정류장 ${this.stationNo}`;
+    return this.stationName ? `${this.stationName} · ${base}` : base;
+  }
 
   constructor(
     readonly id: number,

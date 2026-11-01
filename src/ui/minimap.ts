@@ -51,19 +51,28 @@ export class Minimap {
     } catch {
       canvas.hidden = true;
     }
+    let dragging: number | null = null;
     const jump = (e: PointerEvent) => {
       const w = this.getWorld();
       const r = canvas.getBoundingClientRect();
-      this.cam.x = ((e.clientX - r.left) / r.width) * w.width;
-      this.cam.y = ((e.clientY - r.top) / r.height) * w.height;
+      if (!r.width || !r.height) return;
+      this.cam.x = Math.max(0, Math.min(1, (e.clientX - r.left) / r.width)) * w.width;
+      this.cam.y = Math.max(0, Math.min(1, (e.clientY - r.top) / r.height)) * w.height;
     };
     canvas.addEventListener('pointerdown', (e) => {
+      if (e.button !== 0) return;
+      dragging = e.pointerId;
       canvas.setPointerCapture(e.pointerId);
       jump(e);
     });
     canvas.addEventListener('pointermove', (e) => {
-      if (e.buttons & 1) jump(e);
+      if (dragging === e.pointerId && e.buttons & 1) jump(e);
     });
+    const stop = () => { dragging = null; };
+    canvas.addEventListener('pointerup', stop);
+    canvas.addEventListener('pointercancel', stop);
+    canvas.addEventListener('lostpointercapture', stop);
+    window.addEventListener('blur', stop);
     canvas.addEventListener('contextmenu', (e) => e.preventDefault());
   }
 

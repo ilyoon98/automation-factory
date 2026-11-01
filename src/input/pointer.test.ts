@@ -66,6 +66,51 @@ function inputFixture() {
 afterEach(() => vi.unstubAllGlobals());
 
 describe('창이 열린 동안 입력 보호', () => {
+  it('드래그 설치 중 되돌리기를 누르면 현재 구간을 되돌리고 이어서 설치하지 않는다', () => {
+    const f = inputFixture(); f.input.setTool('road');
+    f.canvas.fire('pointerdown', f.event(20.5, 20.5));
+    f.canvas.fire('pointermove', f.event(22.5, 20.5));
+    f.input.undoRedo(false);
+    for (let x = 20; x <= 22; x++) expect(f.w.buildingAt(x, 20)).toBeNull();
+    f.canvas.fire('pointermove', f.event(25.5, 20.5));
+    f.win.fire('pointerup', f.event(25.5, 20.5));
+    for (let x = 20; x <= 25; x++) expect(f.w.buildingAt(x, 20)).toBeNull();
+    f.input.undoRedo(true);
+    for (let x = 20; x <= 22; x++) expect(f.w.buildingAt(x, 20)?.type).toBe('road');
+  });
+  it('공장을 교체하기 전에 청사진·선택·이동 키·영역 철거를 모두 지운다', () => {
+    const f = inputFixture();
+    const road = f.w.place('road', 16, 14, 0)!;
+    f.input.selectedVehicle = 1; f.input.selectedId = road.id; f.input.multi = [road.id];
+    f.input.blocked = { type: 'belt', why: 'poor' };
+    f.win.fire('keydown', { key: 'd' });
+    f.canvas.fire('pointerdown', f.event(14.5, 14.5, { button: 2, ctrlKey: true }));
+    f.canvas.fire('pointermove', f.event(16.5, 14.5, { button: 2, ctrlKey: true }));
+    f.input.resetWorld();
+    const x = f.cam.x;
+    f.input.update(1); f.win.fire('pointerup', f.event(16.5, 14.5));
+    expect(f.cam.x).toBe(x);
+    expect(f.w.buildings.get(road.id)).toBe(road);
+    expect(f.input.multi).toEqual([]);
+    expect(f.input.selectedVehicle).toBeNull(); expect(f.input.selectedId).toBeNull();
+    expect(f.input.hover).toBeNull(); expect(f.input.mouse).toBeNull();
+    expect(f.input.blocked).toBeNull(); expect(f.input.removeArea).toBeNull();
+  });
+  it.each(['remove', 'area', 'copy'])('%s 도중 저장 청사진을 꺼내면 이전 드래그를 끝내지 않는다', (mode) => {
+    const f = inputFixture();
+    const a = f.w.place('road', 14, 14, 0)!;
+    const b = f.w.place('road', 16, 14, 0)!;
+    const modifiers = mode === 'remove' ? { button: 2 } : mode === 'area' ? { button: 2, ctrlKey: true } : { ctrlKey: true };
+    f.canvas.fire('pointerdown', f.event(14.5, 14.5, modifiers));
+    const bp = { w: 1, h: 1, entries: [{ type: 'belt' as const, dx: 0, dy: 0, dir: 1 as const, recipe: null, filter: null }] };
+    f.input.startPaste(bp, '저장한 벨트');
+    f.canvas.fire('pointermove', f.event(16.5, 14.5));
+    f.win.fire('pointerup', f.event(16.5, 14.5));
+    expect(f.w.buildings.get(b.id)).toBe(b);
+    if (mode !== 'remove') expect(f.w.buildings.get(a.id)).toBe(a);
+    expect(f.input.paste).toBe(bp);
+    expect(f.input.removeArea).toBeNull();
+  });
   it.each(['remove', 'area', 'copy'])('%s 드래그 도중 건설 도구로 바꾸면 이전 드래그가 실행되지 않는다', (mode) => {
     const f = inputFixture();
     const a = f.w.place('road', 14, 14, 0)!;

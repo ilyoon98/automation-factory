@@ -157,6 +157,26 @@ export class Input implements ViewState {
     this.finishEdit();
   }
 
+  /** 다른 공장에 이전 선택·미확정 조작을 넘기지 않는다. 세계를 교체하기 전에 호출한다. */
+  resetWorld(finishEdit = true): void {
+    // 서버 스냅샷은 이미 확정된 편집 상태를 포함한다. 옛 세계의 end 명령을 보내지 않는다.
+    if (!finishEdit) this.editing = false;
+    this.cancelGesture();
+    this.keys.clear();
+    this.hover = null;
+    this.mouse = null;
+    this.pointerClient = null;
+    this.tool = null;
+    this.blocked = null;
+    this.selectedId = null;
+    this.selectedVehicle = null;
+    this.multi = [];
+    this.paste = null;
+    this.pasteName = null;
+    this.roadPreview = null;
+    this.toolSettings.clear();
+  }
+
   setTool(t: BuildingType | null): void {
     this.roadPreview = null;
     this.cancelGesture();
@@ -563,12 +583,7 @@ export class Input implements ViewState {
   /** 청사진을 들고 붙여넣기 대기 (name = 저장함에서 꺼낸 이름) */
   startPaste(bp: Blueprint, name: string | null): void {
     this.roadPreview = null;
-    if (this.mode === 'place') {
-      this.finishEdit();
-      this.mode = 'none';
-      this.last = null;
-    }
-    this.straight = null;
+    this.cancelGesture();
     this.paste = bp;
     this.pasteName = name;
     this.tool = null;
@@ -696,6 +711,7 @@ export class Input implements ViewState {
 
   /** Ctrl+Z / Ctrl+Y (위쪽 ↶ ↷ 버튼도) */
   undoRedo(redo: boolean): void {
+    this.cancelGesture();
     this.cb.exec({ t: redo ? 'redo' : 'undo' }, (r) => {
       if (!r) {
         this.cb.toast(redo ? '다시 할 게 없어요' : '되돌릴 게 없어요');

@@ -1270,7 +1270,9 @@ body[data-top='narrow'] #tabs {
   box-shadow: 3px 3px 0 rgba(59, 39, 22, 0.35);
   padding: 5px 8px;
   line-height: 1.6;
-  max-width: 280px;
+  width: max-content;
+  max-inline-size: min(280px, calc(100vw / var(--uiz, 1) - 16px));
+  overflow-wrap: anywhere;
 }
 #tooltip .bad {
   color: var(--bad);

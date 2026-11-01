@@ -82,19 +82,15 @@ function applySpeed(s: number): void {
 const session = new Session({
   getWorld: () => world,
   setWorld(w, first) {
+    game.input.resetWorld(false);
     world = w;
-    game.input.selectedId = null;
-    game.input.selectedVehicle = null;
     if (first) centerOnHub();
     ui.update();
   },
   restoreOwnWorld() {
     // 손님으로 있는 동안 내 저장은 건드리지 않았으므로 그대로 불러오면 된다
+    game.input.resetWorld();
     world = loadWorld() ?? newWorld();
-    game.input.selectedId = null;
-    game.input.selectedVehicle = null;
-    game.input.tool = null;
-    game.input.paste = null;
     applySpeed(lastSpeed);
     centerOnHub();
   },
@@ -223,9 +219,8 @@ const game: GameApi = {
       return;
     }
     backupWorld();
+    game.input.resetWorld();
     world = newWorld(rules);
-    game.input.selectedId = null;
-    game.input.tool = null;
     centerOnHub();
     game.save();
     session.worldReplaced();
@@ -298,11 +293,8 @@ function backupWorld(): void {
 function replaceWorld(w: World): void {
   if (!w.resItem.includes('water')) addLakes(w, w.seed);
   if (!w.forestsLoaded) addForests(w, w.seed);
+  game.input.resetWorld();
   world = w;
-  game.input.selectedId = null;
-  game.input.selectedVehicle = null;
-  game.input.tool = null;
-  game.input.paste = null;
   centerOnHub();
   game.save();
   session.worldReplaced();

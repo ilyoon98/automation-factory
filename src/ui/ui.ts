@@ -3206,13 +3206,14 @@ export class UI {
   private updateTooltip(w: World): void {
     const tip = $('tooltip');
     const h = this.game.input.hover;
-    if (!h || !w.inBounds(h.x, h.y)) {
+    if (!h || !w.inBounds(h.x, h.y) || document.querySelector('.modal:not([hidden])')) {
       tip.hidden = true;
       return;
     }
     const lines: string[] = [];
     const action = this.game.input.pointerFeedback;
-    if (action) lines.push(`<b style="color:${action.color}">${action.label}</b>`);
+    // 빈손 이동은 기본 조작이다. 지도 위에 계속 안내를 띄우지 않는다.
+    if (action && action.kind !== 'move' && action.kind !== 'pan') lines.push(`<b style="color:${action.color}">${action.label}</b>`);
     if (action?.pileTile !== undefined) {
       const items = [...w.pileAt(action.pileTile)];
       lines.push(items.slice(0, 4).map(([item, n]) => `${itemIcon(item)}${ITEMS[item].name} ${n}개`).join(' · ') + (items.length > 4 ? ` · 외 ${items.length - 4}종` : ''));
@@ -3221,8 +3222,7 @@ export class UI {
     if (!w.isRevealed(w.idx(h.x, h.y))) {
       tip.hidden = false;
       tip.textContent = action?.label ?? '아직 공개되지 않은 지역';
-      tip.style.left = `${this.mouse.x / uiZoom() + 16}px`;
-      tip.style.top = `${this.mouse.y / uiZoom() + 16}px`;
+      this.positionTooltip(tip);
       return;
     }
     const tool = this.game.input.tool;
@@ -3300,8 +3300,19 @@ export class UI {
     tip.hidden = false;
     tip.innerHTML = lines.join('<br>');
     // 마우스 좌표는 화면 픽셀이고 툴팁은 UI 배율(글자 또렷하게)을 받으므로 나눠서 놓는다
-    tip.style.left = `${this.mouse.x / uiZoom() + 16}px`;
-    tip.style.top = `${this.mouse.y / uiZoom() + 16}px`;
+    this.positionTooltip(tip);
+  }
+
+  private positionTooltip(tip: HTMLElement): void {
+    const zoom = uiZoom(), gap = 16, margin = 8;
+    const width = window.innerWidth / zoom, height = window.innerHeight / zoom;
+    const x = this.mouse.x / zoom, y = this.mouse.y / zoom;
+    const rect = tip.getBoundingClientRect();
+    const tw = rect.width / zoom, th = rect.height / zoom;
+    const left = x + gap + tw <= width - margin ? x + gap : x - gap - tw;
+    const top = y + gap + th <= height - margin ? y + gap : y - gap - th;
+    tip.style.left = `${Math.max(margin, Math.min(left, width - tw - margin))}px`;
+    tip.style.top = `${Math.max(margin, Math.min(top, height - th - margin))}px`;
   }
 }
 

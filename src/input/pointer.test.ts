@@ -36,6 +36,7 @@ function surface() {
 
 function inputFixture() {
   const { w, belt, tile } = factory();
+  let currentWorld = w;
   const win = surface(), canvasEvents = surface();
   vi.stubGlobal('window', { ...win, devicePixelRatio: 1 });
   vi.stubGlobal('document', { querySelector: () => null });
@@ -45,13 +46,13 @@ function inputFixture() {
   const cam = new Camera(); cam.x = cam.y = 10.5;
   let rid = 0;
   const exec: Exec = (c, done) => {
-    const result = applyCommand(w, 0, c);
+    const result = applyCommand(currentWorld, 0, c);
     done?.(result);
   };
   const pickPile = vi.fn((target: number) => applyCommand(w, 0, { t: 'pile-collect', rid: `input-${++rid}`, tile: target }));
   const togglePause = vi.fn();
   const input = new Input(canvas as unknown as HTMLCanvasElement, cam, {
-    getWorld: () => w, exec, pickPile, changed: vi.fn(), toast: vi.fn(), togglePause, paletteSlot: () => null, ping: vi.fn(),
+    getWorld: () => currentWorld, exec, pickPile, changed: vi.fn(), toast: vi.fn(), togglePause, paletteSlot: () => null, ping: vi.fn(),
   });
   const event = (wx: number, wy: number, values = {}) => {
     const [clientX, clientY] = cam.worldToScreen(wx, wy);
@@ -60,12 +61,26 @@ function inputFixture() {
   const click = (wx: number, wy: number, values = {}) => {
     canvas.fire('pointerdown', event(wx, wy, values)); win.fire('pointerup', event(wx, wy, values));
   };
-  return { w, belt, tile, cam, input, canvas, win, pickPile, togglePause, event, click };
+  return { w, belt, tile, cam, input, canvas, win, pickPile, togglePause, event, click, setWorld: (next: World) => { currentWorld = next; } };
 }
 
 afterEach(() => vi.unstubAllGlobals());
 
 describe('창이 열린 동안 입력 보호', () => {
+  it('드래그 중 스냅샷을 받으면 그 세계의 편집을 마감하고 다음 설치를 따로 되돌린다', () => {
+    const f = inputFixture(); f.input.setTool('road');
+    f.canvas.fire('pointerdown', f.event(20.5,20.5));
+    f.canvas.fire('pointermove', f.event(22.5,20.5));
+    const snapshot = World.fromSnapshot(JSON.parse(JSON.stringify(f.w.snapshot())));
+    f.setWorld(snapshot); f.input.resetWorld();
+    expect(snapshot.nextEdit(false)).toHaveLength(3);
+    f.input.setTool('road'); f.click(25.5,20.5);
+    f.input.undoRedo(false);
+    expect(snapshot.buildingAt(25,20)).toBeNull();
+    expect(snapshot.buildingAt(20,20)?.type).toBe('road');
+    f.input.undoRedo(false);
+    expect(snapshot.buildingAt(20,20)).toBeNull();
+  });
   it('드래그 설치 중 되돌리기를 누르면 현재 구간을 되돌리고 이어서 설치하지 않는다', () => {
     const f = inputFixture(); f.input.setTool('road');
     f.canvas.fire('pointerdown', f.event(20.5, 20.5));

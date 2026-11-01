@@ -403,7 +403,7 @@ export class Toolbar {
     const go = () => void this.importCode(field.value);
     box.querySelector('button')!.addEventListener('click', go);
     field.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter') go();
+      if (e.key === 'Enter' && !e.isComposing && e.keyCode !== 229) go();
     });
     palette.appendChild(box);
     palette.scrollLeft = 0;

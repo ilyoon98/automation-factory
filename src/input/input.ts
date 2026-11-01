@@ -157,9 +157,9 @@ export class Input implements ViewState {
     this.finishEdit();
   }
 
-  /** 다른 공장에 이전 선택·미확정 조작을 넘기지 않는다. 세계를 교체하기 전에 호출한다. */
+  /** 세계 교체 때 이전 선택·미확정 조작을 정리한다. 진행 중 편집이 속한 세계에서 호출한다. */
   resetWorld(finishEdit = true): void {
-    // 서버 스냅샷은 이미 확정된 편집 상태를 포함한다. 옛 세계의 end 명령을 보내지 않는다.
+    // 방에서 나올 때는 다른 사람의 공장에 남은 편집 명령을 내 공장에 보내지 않는다.
     if (!finishEdit) this.editing = false;
     this.cancelGesture();
     this.keys.clear();

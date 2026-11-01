@@ -610,7 +610,7 @@ export class UI {
     $('info').addEventListener('pointerdown', refreshCargoChoices);
     // 청사진 이름 칸에서 Enter = 저장
     $('info').addEventListener('keydown', (e) => {
-      if (e.key !== 'Enter' || (e.target as HTMLElement).dataset.act !== 'bp-name') return;
+      if (e.key !== 'Enter' || e.isComposing || e.keyCode === 229 || (e.target as HTMLElement).dataset.act !== 'bp-name') return;
       e.preventDefault();
       this.saveCopied();
       this.update();
@@ -2878,7 +2878,18 @@ export class UI {
         ? el.querySelector<HTMLSelectElement>('select[data-target-item]')?.value
         : (e.target as HTMLElement).closest<HTMLElement>('[data-item]')?.dataset.item) as ItemId | undefined;
       const n = act === 'target-add' ? Number(el.querySelector<HTMLInputElement>('input[data-target-n]')?.value) : 0;
-      if (item) this.game.exec({ t: 'station-target', id: b.id, item, n });
+      if (!item) {
+        this.toast('목표로 정할 품목을 먼저 골라 주세요', 2500);
+        return;
+      }
+      if (act === 'target-add' && (!Number.isSafeInteger(n) || n < 1)) {
+        this.toast('목표 재고는 1 이상의 정수로 입력해 주세요. 기존 목표는 바꾸지 않았어요', 3500);
+        return;
+      }
+      this.game.exec({ t: 'station-target', id: b.id, item, n }, (ok) => {
+        if (!ok) this.toast('목표 재고를 바꾸지 못했어요', 2500);
+        this.update();
+      });
     }
     if (act === 'project') {
       const on = !this.game.getWorld().stats.projectOn;

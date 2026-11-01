@@ -119,8 +119,12 @@ export function replaceTransportInfo(el: HTMLElement, html: string, context: str
   // 확정된 계획이 그대로면 목록/도로 상태를 다시 그려도 작성 중인 값은 보존한다.
   // 다른 차량 또는 실제 계획 변경(명령 적용·멀티플레이 갱신)은 새 확정값을 보여 준다.
   const draft: { selector: string; value: string; checked: boolean; focused: boolean }[] = [];
-  if (same && planVersion !== undefined && el.dataset.transportPlanVersion === planVersion) {
-    for (const attr of ['data-plan-item', 'data-plan-cap', 'data-plan-period', 'data-plan-early']) {
+  if (same) {
+    const attrs = ['data-target-item', 'data-target-n'];
+    if (planVersion !== undefined && el.dataset.transportPlanVersion === planVersion) {
+      attrs.push('data-plan-item', 'data-plan-cap', 'data-plan-period', 'data-plan-early');
+    }
+    for (const attr of attrs) {
       for (const field of el.querySelectorAll<HTMLInputElement | HTMLSelectElement>(`[${attr}]`)) {
         draft.push({ selector: `[${attr}="${field.getAttribute(attr)}"]`, value: field.value,
           checked: field instanceof HTMLInputElement && field.checked, focused: field === document.activeElement });

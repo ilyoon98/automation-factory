@@ -82,14 +82,15 @@ function applySpeed(s: number): void {
 const session = new Session({
   getWorld: () => world,
   setWorld(w, first) {
-    game.input.resetWorld(false);
     world = w;
+    // 스냅샷에 포함된 진행 중 편집도 새 세계에서 end로 마감해야 다음 드래그가 독립된다.
+    game.input.resetWorld();
     if (first) centerOnHub();
     ui.update();
   },
   restoreOwnWorld() {
     // 손님으로 있는 동안 내 저장은 건드리지 않았으므로 그대로 불러오면 된다
-    game.input.resetWorld();
+    game.input.resetWorld(false);
     world = loadWorld() ?? newWorld();
     applySpeed(lastSpeed);
     centerOnHub();

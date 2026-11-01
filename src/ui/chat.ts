@@ -34,9 +34,10 @@ export class Chat {
     this.box.append(this.log);
 
     window.addEventListener('keydown', (e) => {
-      if (e.key !== 'Enter' || e.isComposing) return;
+      if (e.key !== 'Enter' || e.isComposing || e.keyCode === 229 || e.defaultPrevented || e.repeat || e.ctrlKey || e.metaKey || e.altKey) return;
+      if (document.querySelector('.modal:not([hidden])')) return;
       const t = e.target;
-      if (t instanceof HTMLInputElement || t instanceof HTMLSelectElement || t instanceof HTMLTextAreaElement) return;
+      if (t instanceof HTMLElement && t.closest('input, select, textarea, button, a[href], summary, [role="button"], [contenteditable="true"]')) return;
       e.preventDefault();
       this.open();
     });

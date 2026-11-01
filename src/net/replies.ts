@@ -25,10 +25,10 @@ export function unpackReply(reply: PackedReply, w: World): unknown {
   if (reply.kind === 'value') return reply.value;
   if (reply.kind === 'vehicle') {
     const d = reply.data;
-    return w.vehicles.get(d.id) ?? Object.assign(new Vehicle(d.id, d.tile, w.width), d, { cargo: new Map(d.cargo) });
+    return Object.assign(new Vehicle(d.id, d.tile, w.width), d, { cargo: new Map(d.cargo) });
   }
   const d = reply.building;
-  const building = d ? w.buildings.get(d.id) ?? Object.assign(new Building(d.id, d.type, d.x, d.y, d.dir), d,
+  const building = d ? Object.assign(new Building(d.id, d.type, d.x, d.y, d.dir), d,
     { inBuf: new Map(d.inBuf), outBuf: new Map(d.outBuf), targets: new Map(d.targets) }) : undefined;
   return { ...reply.value, ...(building ? { building } : {}) };
 }

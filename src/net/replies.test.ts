@@ -28,9 +28,11 @@ it('차량 생성 응답은 노선 getter와 화물 Map을 복원하며 차량�
   expect(result.load).toBe(5);expect(result.cargo.get('coal')).toBe(5);expect(w.vehicles.size).toBe(0);
 });
 
-it('수신 세계에 이미 있는 차량이면 그 차량을 반환한다', () => {
-  const w=new World(40,30),v=new Vehicle(8,20,w.width);w.vehicles.set(v.id,v);
-  expect(unpackReply(network(packReply({t:'clone-truck',id:v.id},v)),w)).toBe(v);
+it('수신 세계의 같은 id 차량이 오래된 상태여도 응답은 호스트의 실제 결과를 사용한다', () => {
+  const w=new World(40,30),local=new Vehicle(8,20,w.width),host=new Vehicle(8,20,w.width);
+  local.stops=[{id:77,act:'load'},{id:88,act:'unload'}];host.stops=[{id:3,act:'load'},{id:4,act:'unload'}];w.vehicles.set(local.id,local);
+  const result=unpackReply(network(packReply({t:'clone-truck',id:host.id},host)),w) as Vehicle;
+  expect(result.loadId).toBe(3);expect(result.unloadId).toBe(4);expect(local.loadId).toBe(77);expect(w.vehicles.size).toBe(1);
 });
 
 it.each([undefined,null,false,true,0])('값 %s도 JSON을 거친 뒤 명령을 다시 실행하지 않고 복원한다',value=>{

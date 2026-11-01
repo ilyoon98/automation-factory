@@ -13,13 +13,14 @@ export async function copyText(text: string): Promise<boolean> {
   ta.style.position = 'fixed';
   ta.style.opacity = '0';
   document.body.appendChild(ta);
-  ta.select();
-  let ok = false;
+  const previous = document.activeElement;
   try {
-    ok = document.execCommand('copy');
+    ta.select();
+    return document.execCommand('copy');
   } catch {
-    ok = false;
+    return false;
+  } finally {
+    ta.remove();
+    if (previous instanceof HTMLElement && previous.isConnected) previous.focus({ preventScroll:true });
   }
-  ta.remove();
-  return ok;
 }

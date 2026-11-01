@@ -1,5 +1,5 @@
 import { BUILDINGS, isBeltType, type BuildingType } from '../data/buildings';
-import type { ItemId } from '../data/items';
+import { ITEMS, type ItemId } from '../data/items';
 import type { Blueprint, BlueprintEntry } from '../sim/blueprint';
 import type { Dir } from '../sim/dir';
 
@@ -18,16 +18,35 @@ const KEY = 'automation-blueprints';
 
 let list: SavedBlueprint[] | null = null;
 
+/** 손상된 행은 제외한다. 불러오기 자체는 저장 내용을 덮어쓰지 않는다. */
+function readBlueprint(raw: unknown): Blueprint | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const bp = raw as Partial<Blueprint>;
+  if (!Number.isSafeInteger(bp.w) || !Number.isSafeInteger(bp.h) || bp.w! < 1 || bp.h! < 1 || !Array.isArray(bp.entries)) return null;
+  const entries: BlueprintEntry[] = [];
+  for (const e of bp.entries) {
+    if (!e || typeof e !== 'object' || typeof e.type !== 'string' || !Object.hasOwn(BUILDINGS, e.type) || !BUILDINGS[e.type].placeable ||
+      !Number.isSafeInteger(e.dx) || !Number.isSafeInteger(e.dy) || e.dx < 0 || e.dy < 0 ||
+      !Number.isInteger(e.dir) || e.dir < 0 || e.dir > 3) continue;
+    entries.push({ type:e.type, dx:e.dx, dy:e.dy, dir:e.dir,
+      recipe:typeof e.recipe === 'string' ? e.recipe : null,
+      filter:typeof e.filter === 'string' && Object.hasOwn(ITEMS,e.filter) ? e.filter : null,
+      ...(e.mode === 'load' || e.mode === 'unload' ? {mode:e.mode} : {}),
+    });
+  }
+  return entries.length ? {w:bp.w!,h:bp.h!,entries} : null;
+}
+
 /** 저장한 청사진들 (오래된 것부터). 모르는 건물이 섞인 항목은 그 건물만 뺀다 */
 export function blueprints(): SavedBlueprint[] {
   if (list) return list;
   list = [];
   try {
-    const raw = JSON.parse(localStorage.getItem(KEY) ?? '[]') as SavedBlueprint[];
+    const raw = JSON.parse(localStorage.getItem(KEY) ?? '[]') as unknown;
+    if (!Array.isArray(raw)) return list;
     for (const s of raw) {
-      if (!s?.bp?.entries) continue;
-      const entries = s.bp.entries.filter((e) => e.type in BUILDINGS);
-      if (entries.length) list.push({ name: String(s.name), at: Number(s.at) || 0, bp: { ...s.bp, entries } });
+      const bp = readBlueprint(s?.bp);
+      if (bp) list.push({ name: String(s.name), at: Number(s.at) || 0, bp });
     }
   } catch {
     // 깨진 저장은 무시하고 빈 저장함으로
@@ -116,19 +135,20 @@ export async function parseBlueprintCode(code: string): Promise<{ name: string; 
   try {
     const raw = await pipe(fromBase64Url(text.slice(CODE_PREFIX.length)), new DecompressionStream('deflate-raw'));
     const d = JSON.parse(new TextDecoder().decode(raw)) as { n: string; w: number; h: number; e: CodeEntry[] };
-    const entries: BlueprintEntry[] = d.e
-      .filter((r) => r[0] in BUILDINGS)
+    if (!Array.isArray(d?.e)) return null;
+    const entries = d.e
+      .filter((r) => Array.isArray(r) && typeof r[0] === 'string' && Object.hasOwn(BUILDINGS,r[0]))
       .map(([type, dx, dy, dir, recipe, filter, mode]) => ({
         type: type as BuildingType,
-        dx: Number(dx),
-        dy: Number(dy),
-        dir: (Number(dir) & 3) as Dir,
+        dx,
+        dy,
+        dir: dir as Dir,
         recipe: recipe || null,
         filter: (filter || null) as ItemId | null,
         ...(mode === 'load' || mode === 'unload' ? { mode } : {}),
       }));
-    if (!entries.length) return null;
-    return { name: String(d.n || '받은 청사진').slice(0, 24), bp: { entries, w: Number(d.w), h: Number(d.h) } };
+    const bp = readBlueprint({entries,w:d.w,h:d.h});
+    return bp ? { name: String(d.n || '받은 청사진').slice(0, 24), bp } : null;
   } catch {
     return null;
   }

@@ -29,6 +29,18 @@ app.whenReady().then(async()=>{
     await js(`game.input.layer='base';window.dispatchEvent(new KeyboardEvent('keydown',{key:'@',code:'Digit2',shiftKey:true,bubbles:true}));
       for(let i=0;i<5;i++)window.dispatchEvent(new KeyboardEvent('keydown',{key:'@',code:'Digit2',shiftKey:true,repeat:true,bubbles:true}));`);
     await check('holding a map layer shortcut does not flicker the selected layer',`return game.input.layer==='power';`);
+    await js(`window.clipField=document.createElement('input');clipField.value='공유 코드';document.body.append(clipField);clipField.focus();clipField.setSelectionRange(1,3);
+      Object.defineProperty(window,'isSecureContext',{value:false,configurable:true});document.execCommand=()=>false;
+      window.clipResult=await (await import('/src/ui/clipboard.ts')).copyText('복사할 내용');`);
+    await check('failed fallback copy returns focus and selection to the original input',`return clipResult===false&&document.activeElement===clipField&&clipField.selectionStart===1&&clipField.selectionEnd===3;`);
+    await js(`document.execCommand=()=>true;clipResult=await (await import('/src/ui/clipboard.ts')).copyText('복사할 내용');`);
+    await check('successful fallback copy also preserves keyboard focus',`return clipResult===true&&document.activeElement===clipField;`);
+    await js(`const bp={w:1,h:1,entries:[{type:'belt',dx:0,dy:0,dir:1,recipe:null,filter:null}]};
+      localStorage.setItem('automation-blueprints',JSON.stringify([{name:'손상',bp:{...bp,entries:[null]}},{name:'복구한 공장',bp,at:123}]));
+      ui.toolbar.selectByKey('k');ui.update();`);
+    await check('blueprint tab still renders usable cards after a damaged saved entry',`return [...document.querySelectorAll('#palette button.pal .name')].some(e=>e.textContent==='복구한 공장');`);
+    await js(`ui.toolbar.slot(0);`);
+    await check('a recovered blueprint can still be selected for placement',`return game.input.paste?.entries.length===1&&game.input.paste.entries[0].type==='belt'&&game.input.pasteName==='복구한 공장';`);
     console.log(JSON.stringify({passed:true,checks}));await server.close();app.exit(0);
   }catch(error){console.error(error);await server.close();app.exit(1);}
 }).catch(error=>{console.error(error);app.exit(1);});

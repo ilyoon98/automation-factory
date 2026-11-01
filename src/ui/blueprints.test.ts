@@ -1,6 +1,40 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { Blueprint } from '../sim/blueprint';
 import { blueprintCode, parseBlueprintCode } from './blueprints';
+
+afterEach(()=>vi.unstubAllGlobals());
+
+async function rawCode(value:unknown):Promise<string>{
+  const stream=new Blob([JSON.stringify(value)]).stream().pipeThrough(new CompressionStream('deflate-raw'));
+  const bytes=new Uint8Array(await new Response(stream).arrayBuffer());
+  return 'AF1.'+btoa(String.fromCharCode(...bytes)).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
+}
+
+it('공유 코드의 손상된 행을 제외해도 정상 건물은 가져온다',async()=>{
+  const code=await rawCode({n:'혼합',w:2,h:1,e:[null,['constructor',0,0,1],['belt',null,0,1],['belt',0,0,1]]});
+  const result=await parseBlueprintCode(code);
+  expect(result?.bp.entries).toEqual([{type:'belt',dx:0,dy:0,dir:1,recipe:null,filter:null}]);
+});
+
+it.each([0,-1,null,'2'])('잘못된 청사진 너비 %s는 미리보기·붙여넣기로 넘기지 않는다',async w=>{
+  expect(await parseBlueprintCode(await rawCode({n:'손상',w,h:1,e:[['belt',0,0,1]]}))).toBeNull();
+});
+
+it('손상된 청사진 한 개 때문에 뒤에 저장한 정상 청사진을 잃지 않는다', async()=>{
+  vi.resetModules();
+  const bp={w:1,h:1,entries:[{type:'belt',dx:0,dy:0,dir:1,recipe:null,filter:null}]};
+  const raw=[{name:'손상',bp:{...bp,entries:[null]}},{name:'정상',bp,at:123}];
+  const setItem=vi.fn();vi.stubGlobal('localStorage',{getItem:()=>JSON.stringify(raw),setItem});
+  const saved=(await import('./blueprints')).blueprints();
+  expect(saved.map(s=>s.name)).toEqual(['정상']);expect(saved[0].bp).toEqual(bp);expect(setItem).not.toHaveBeenCalled();
+});
+
+it('혼합 저장의 잘못된 건물·좌표는 건너뛰고 유효한 건물은 남긴다', async()=>{
+  vi.resetModules();
+  const good={type:'belt',dx:0,dy:0,dir:1,recipe:null,filter:null};
+  vi.stubGlobal('localStorage',{getItem:()=>JSON.stringify([{name:'혼합',bp:{w:2,h:1,entries:[{...good,type:'constructor'},{...good,dx:null},good]}}])});
+  expect((await import('./blueprints')).blueprints()[0].bp.entries).toEqual([good]);
+});
 
 describe('청사진 공유 코드', () => {
   const bp: Blueprint = {

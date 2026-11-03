@@ -466,7 +466,6 @@ export const ACHIEVEMENTS: AchDef[] = [
   hidden('H13', '리튬의 두 얼굴', '전기를 담는 일 외에도 재능이 있어요.', '300초 안에 배터리 팩·고급 윤활제를 각각 10개 이상 제작', '생산', ['R'], (w) =>
     w.ach.winSum('m:battery-pack', 300, w.time) >= 10 && w.ach.winSum('m:adv-lubricant', 300, w.time) >= 10,
   ),
-  hidden('H14', '바람으로 달리는 밤', '밤바람이 바퀴까지 움직여요.', '한밤에 풍력으로 1MJ 넘게 충전한 트럭이 그 밤이 끝나기 전에 20개 이상 배송', '물류', ['P'], (w) => w.ach.get('h14') > 0),
   hidden('H15', '진짜 독립한 오후', '증표 다음에는 실제 하루가 있어요.', '광맥 독립 뒤 철광석·구리광석·석탄을 전혀 쓰지 않고 300초, 그동안 정광 철판·정광 구리판·전기 강철 각 10개', '생산', ['K'], (w) =>
     w.ach.get('h15:secs') >= 300 && w.ach.get('h15:iron-plate-c') >= 10 && w.ach.get('h15:copper-plate-c') >= 10 && w.ach.get('h15:steel-e') >= 10,
   ),

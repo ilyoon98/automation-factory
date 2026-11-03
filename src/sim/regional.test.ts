@@ -98,8 +98,8 @@ describe('P0: 규칙 프로필과 새 데이터', () => {
     const legacy = techsFor('legacy-v042');
     const regional = techsFor('regional-v1');
     expect(legacy).toBe(TECHS);
-    expect(legacy.length).toBe(20);
-    expect(regional.length).toBe(28);
+    expect(legacy.length).toBe(19);
+    expect(regional.length).toBe(27);
     expect(legacy.find((t) => t.id === 'automation')!.cost).toEqual([{ item: 'iron-plate', count: 40 }]);
     expect(regional.find((t) => t.id === 'automation')!.cost).toEqual([{ item: 'iron-plate', count: 20 }]);
     // 첫 트럭 기준 8종 합계 (경제 기획 §3)
@@ -535,7 +535,7 @@ describe('고급 트럭 (V01~V08)', () => {
     expect(countOf(s.inBuf, 'truck-kit')).toBe(0);
     expect([...w.stock]).toEqual(hub);
     expect(w.truckCapacity(v)).toBe(100);
-    expect(w.truckBattery(v)).toBe(3600 * 1.5); // 연구 "고용량 배터리" 배율은 종류 기본값 위에
+    expect(w.truckBattery(v)).toBe(3600); // 연구 "고용량 배터리" 배율은 종류 기본값 위에
   });
 
   it('V02: 다른 정류장·먼 창고·허브에만 조립품이 있으면 실패, 재고·id 순서 유지', () => {
@@ -593,29 +593,21 @@ describe('고급 트럭 (V01~V08)', () => {
     expect(w.doneCmds.size).toBe(2);
   });
 
-  it('V06: 전력과 상관없이 만들어지고 0kJ에서 정류장 전력으로 충전한다 (혼자 400kW면 9초에 가득)', () => {
-    const { w, st } = yard();
-    w.researched.delete('battery'); // 배율 없이
-    st.inBuf.set('truck-kit', 1);
-    const v = w.vehicles.get(build(w, st).vehicle!)!;
-    expect(v.battery).toBe(0);
-    run(w, 1);
-    expect(v.status).toBe('charging');
-    expect(v.battery).toBeCloseTo(400, 0);
-    expect(w.power.charge).toBeGreaterThan(0);
-    run(w, 8.1);
-    expect(v.battery).toBe(3600);
-    expect(v.status).toBe('no-station');
+
+  it('V06: 노선이 없으면 충전 대신 노선 설정만 기다린다',()=>{
+    const {w,st}=yard();st.inBuf.set('truck-kit',1);
+    const v=w.vehicles.get(build(w,st).vehicle!)!;run(w,10);
+    expect(v.status).toBe('no-station');expect(v.receivedCharge).toBe(0);expect(w.power.charge).toBe(0);
   });
 
-  it('V07: 노선 없이 조립한 정류장에서만 충전, 정류장을 지우면 충전은 멈추고 차량·화물은 남는다', () => {
+  it('V07: 조립한 정류장을 지워도 차량·화물은 남는다', () => {
     const { w, st } = yard();
     st.inBuf.set('truck-kit', 1);
     const v = w.vehicles.get(build(w, st).vehicle!)!;
     v.cargo.set('coal', 7);
     run(w, 1);
     const b1 = v.battery;
-    expect(b1).toBeGreaterThan(0);
+    expect(b1).toBe(0);
     w.remove(st);
     run(w, 2);
     expect(v.battery).toBe(b1);

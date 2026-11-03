@@ -72,8 +72,8 @@ describe('작업 사실과 개인 화면의 위상', () => {
     const events: Activity[] = []; w.onActivity = (e) => events.push(e);
     v.battery = 0;
     for (let i = 0; i < 60 && v.receivedCharge <= 0; i++) w.tick();
-    expect(v.receivedCharge).toBeGreaterThan(0);
-    expect(events.some((e) => e.kind === 'charge' && e.amount > 0)).toBe(true);
+    expect(v.receivedCharge).toBe(0);
+    expect(events.some((e) => e.kind === 'charge')).toBe(false);
     for (let i = 0; i < 120; i++) w.tick();
     expect(events.filter((e) => e.kind === 'cargo')).toEqual([]);
     events.length = 0; a.inBuf.set('iron-plate', 5);

@@ -31,10 +31,11 @@ if (!process.versions.electron) {
   const failures = [];
   win.webContents.on('console-message', (event) => { if (event.level === 'error' && !event.message.includes('WebSocket')) failures.push(event.message); });
   const run = (fn) => win.webContents.executeJavaScript(`(${fn.toString()})()`);
-  const check = async (fn, label) => { if (!await run(fn)) throw new Error(label); console.log(`PASS ${label}`); };
+  const check = async (fn, label) => { if (!await run(fn)) throw new Error([label, ...failures, ...await run(() => window.__smokeErrors ?? [])].join('\n')); console.log(`PASS ${label}`); };
   const screenshot = async (name) => { await new Promise((resolve) => setTimeout(resolve, 200)); await writeFile(path.join(output, `${name}.png`), (await win.webContents.capturePage()).toPNG()); };
   try {
     await win.loadURL("review://localhost/");
+    await run(() => { window.__smokeErrors = []; window.addEventListener('error', e => window.__smokeErrors.push(e.error?.stack ?? e.message)); });
     await check(() => !!document.querySelector("#guide").textContent.trim(), "game renders");
     for (const id of ["goals", "ach", "research", "stats", "codex"]) {
       await run(() => document.querySelectorAll(".modal").forEach(el => el.hidden = true));

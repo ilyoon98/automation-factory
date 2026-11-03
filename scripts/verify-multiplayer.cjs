@@ -65,10 +65,10 @@ app.whenReady().then(async()=>{
     await check('old and new destinations each receive the correct shipment',host,`const w=game.getWorld();return w.poolCount(tripB,'motor')===20&&w.poolCount(tripC,'motor')===20&&tripTruck.pendingStops===null;`);
     await check('host and guest still agree after deferred route delivery',guest,`return game.getWorld().checksum()===${deliveredHash};`);
     await js(guest,`window.originalCatchUp=session.catchUp.bind(session);session.catchUp=()=>{};window.commandReply=null;window.commandReplyCount=0;
-      game.exec({t:'station-target',id:${trip.b},item:'motor',n:137},result=>{commandReply=result;commandReplyCount++;});`);
-    await until(host,`tripB.targets.get('motor')===137`,'command applies while guest is busy');
+      game.exec({t:'station-name',id:${trip.b},name:'검증137'},result=>{commandReply=result;commandReplyCount++;});`);
+    await until(host,`tripB.stationName==='검증137'`,'command applies while guest is busy');
     await js(host,`session.sendSnapshot(${player});`);
-    await until(guest,`game.getWorld().buildings.get(${trip.b}).targets.get('motor')===137`,'snapshot includes completed command');
+    await until(guest,`game.getWorld().buildings.get(${trip.b}).stationName==='검증137'`,'snapshot includes completed command');
     await js(guest,`session.catchUp=originalCatchUp;session.advance(0);`);
     await check('resync preserves the reply to a command already included in the snapshot',guest,`return commandReply===true&&commandReplyCount===1&&session.pending.size===0;`);
     await until(host,'session.replies.size===0','acknowledgement clears cached replies');

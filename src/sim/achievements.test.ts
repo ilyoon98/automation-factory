@@ -4,7 +4,7 @@ import { TICK_RATE, World } from './world';
 import type { Building } from './building';
 import { ITEM_IDS, type ItemId } from '../data/items';
 
-/** 업적 1차 85종 (최초 42 · 심화 27 · 숨은 16) */
+/** 업적 1차 85종 (최초 42 · 심화 27 · 숨은 15) */
 
 function run(w: World, seconds: number) {
   for (let i = 0; i < Math.round(seconds * TICK_RATE); i++) w.tick();
@@ -26,11 +26,11 @@ function regional(): World {
 }
 
 describe('업적 목록', () => {
-  it('최초 42 · 심화 27 · 숨은 16, id가 겹치지 않고 탐사(D24)는 없다', () => {
+  it('최초 42 · 심화 27 · 숨은 15, id가 겹치지 않고 탐사(D24)는 없다', () => {
     expect(ACHIEVEMENTS.filter((a) => a.kind === 'first')).toHaveLength(42);
     expect(ACHIEVEMENTS.filter((a) => a.kind === 'deep')).toHaveLength(27);
-    expect(ACHIEVEMENTS.filter((a) => a.kind === 'hidden')).toHaveLength(16);
-    expect(new Set(ACHIEVEMENTS.map((a) => a.id)).size).toBe(115);
+    expect(ACHIEVEMENTS.filter((a) => a.kind === 'hidden')).toHaveLength(15);
+    expect(new Set(ACHIEVEMENTS.map((a) => a.id)).size).toBe(114);
     expect(ACH_BY_ID.D24).toBeUndefined();
     for (const a of ACHIEVEMENTS.filter((x) => x.kind === 'deep')) {
       expect(a.tiers, a.id).toHaveLength(4);
@@ -39,11 +39,11 @@ describe('업적 목록', () => {
     for (const a of ACHIEVEMENTS.filter((x) => x.kind === 'hidden')) expect(a.hint, a.id).toBeTruthy();
   });
 
-  it('예전 세계는 기본 기능 업적만, 확장 세계는 115종 모두', () => {
+  it('예전 세계는 기본 기능 업적만, 확장 세계는 114종 모두', () => {
     const l = activeAchievements(legacy());
     expect(l.length).toBeGreaterThan(20);
     expect(l.every((a) => a.needs.every((n) => n === 'K'))).toBe(true);
-    expect(activeAchievements(regional())).toHaveLength(115);
+    expect(activeAchievements(regional())).toHaveLength(114);
   });
 
   it('기록 30종: record-v1 저장 id, 네 메달, 예전 세계 26계열(주석·청동·알루미늄·폭풍 제외)', () => {

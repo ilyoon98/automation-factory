@@ -132,6 +132,8 @@ export class Vehicle {
   period = 0;
   nextDue = 0;
   early = false;
+  /** 만차 또는 도착 후 N초 출발. null은 이전 저장의 정기편 규칙. */
+  departureWait: number | null = 10;
   /** 이번 적재·하역 작업 경과 (초, -1 = 작업 전), 하나도 못 내린 시간 */
   loadTimer = -1;
   stuck = 0;

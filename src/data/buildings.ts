@@ -68,7 +68,7 @@ export const CATEGORIES: { id: Category; name: string; key: string; items: Build
   { id: 'generation', name: '발전', key: 'c', items: ['wind', 'generator', 'solar', 'hydro', 'fuel-generator', 'geothermal'] },
   { id: 'power', name: '전력', key: 'u', items: ['pole', 'substation', 'accumulator'] },
   { id: 'storage', name: '보관', key: 'v', items: ['storage', 'unloader'] },
-  { id: 'transport', name: '운송', key: 'b', items: ['road', 'station', 'charger'] },
+  { id: 'transport', name: '운송', key: 'b', items: ['road', 'station'] },
   { id: 'forest', name: '숲', key: 'n', items: ['lumberjack', 'sawmill', 'planter'] },
   // regional-v1 세계에서만 탭이 보인다
   { id: 'industry', name: '산업', key: 'l', items: ['sap-extractor', 'chem-reactor', 'drill', 'refinery', 'electrolyzer', 'large-assembler'] },
@@ -415,7 +415,7 @@ export const BUILDINGS: Record<BuildingType, BuildingDef> = {
     color: '#d9b44a',
     description:
       '도로 옆에 놓는다. 옆 도로를 지나는 트럭이 남은 길을 갈 배터리가 모자라면 서서 공장 전력으로 빠르게(400kW) 가득 충전하고 간다. 배터리가 넉넉한 트럭은 그냥 지나간다.',
-    placeable: true,
+    placeable: false,
   },
 
   // ───── 숲·나무 ─────

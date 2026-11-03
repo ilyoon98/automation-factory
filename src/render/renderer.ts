@@ -1717,20 +1717,13 @@ export class Renderer {
       if (problem) { this.ctx.fillStyle = PAL.orange; this.ctx.fillRect(sx + 4 * u, sy - 2, 3, 3); }
       return;
     }
-    const charging = v.receivedCharge > 0;
-    if (selected || v.status === 'charging' || charging) {
-      const p = v.battery / world.truckBattery(v);
-      this.artRect(sx, sy, 3, -5, 9, 4, PAL.ink);
-      this.artRect(sx, sy, 4, -4, Math.round(7 * p), 2, p > 0.2 ? PAL.green : PAL.orange);
-      if (charging && !reducedEffects()) this.artRect(sx, sy, 4 + Math.floor((this.activity.charge.get(v.id) ?? 0) / 10) % 7, -4, 1, 2, CREAM);
-    }
     if (problem) {
       const icon = v.status === 'no-route' ? 'alert' : v.status === 'no-station' ? 'what' : v.status === 'unload-full' ? 'full' : v.status === 'no-battery' ? 'power' : 'wait';
       this.blit(`badge:${icon}`, 0, sx + 12 * u, sy - 7 * u);
       this.text(problem, sx + 8 * u, sy - 8 * u, CREAM, 10, PAL.ink, 'center', 'bottom');
     }
-    else if (['queued', 'scheduled', 'satisfied', 'paused', 'charging'].includes(v.status)) {
-      this.text(v.status === 'charging' ? charging ? '충전 중' : '충전 대기' : '대기', sx + 8 * u, sy - 8 * u, CREAM, 10, '#5f6350', 'center', 'bottom');
+    else if (['queued', 'scheduled', 'satisfied', 'paused'].includes(v.status)) {
+      this.text('대기', sx + 8 * u, sy - 8 * u, CREAM, 10, '#5f6350', 'center', 'bottom');
     }
   }
 
@@ -1854,7 +1847,10 @@ export class Renderer {
     const z = cam.zoom;
     const u = this.u;
     const def = BUILDINGS[tool];
-    const [ox, oy] = centered ? World.originFor(tool, hx, hy) : [hx, hy];
+    const existing = centered ? world.buildingAt(hx, hy) : null;
+    const upgrading = tool === 'miner-2' && existing?.type === 'miner';
+    const [ox, oy] = upgrading ? [existing.x, existing.y] : centered ? World.originFor(tool, hx, hy) : [hx, hy];
+    if (upgrading) dir = existing.dir;
     // 도구 미리보기는 클릭 한 번과 같은 규칙: 컨베이어 위면 덮어쓰고 흐름 방향을 따른다
     const replace = centered && !isBeltType(tool) && tool !== 'road';
     const flow = replace ? world.flowDirUnder(tool, ox, oy, hx, hy) : null;

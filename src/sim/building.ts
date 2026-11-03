@@ -141,7 +141,7 @@ export class Building {
 
   constructor(
     readonly id: number,
-    readonly type: BuildingType,
+    public type: BuildingType,
     readonly x: number,
     readonly y: number,
     public dir: Dir,

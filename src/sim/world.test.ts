@@ -1336,7 +1336,7 @@ describe('연구', () => {
       expect(speedAfter(2)).toBeCloseTo(base * 1.2, 6);
     });
 
-    it('트럭 성능: 단계마다 트럭이 10% 빨라지고 배터리도 10% 커진다 (칸당 전기는 그대로)', () => {
+    it('트럭 성능 연구는 주행 속도를 높이고 전력을 소비하지 않는다', () => {
       const w = makeWorld();
       w.researched.delete('battery'); // 기본 배터리로 (고용량 배터리 연구 전)
       for (const it of ['steel', 'circuit', 'gear'] as const) w.stock.set(it, 100000);
@@ -1362,7 +1362,8 @@ describe('연구', () => {
       const b0 = v.battery;
       run(w, 1);
       expect(Math.abs(x0 - v.x)).toBeCloseTo(TRUCK.speed * 1.2, 6);
-      expect(b0 - v.battery).toBeCloseTo(TRUCK.speed * 1.2 * (TRUCK.drive / TRUCK.speed), 6);
+      expect(v.battery).toBe(b0);
+      expect(w.power.charge).toBe(0);
     });
 
     it('저장·불러오기와 체크섬에 단계가 들어간다', () => {
@@ -1611,10 +1612,12 @@ describe('차량 운송', () => {
     expect(v.perMinute).toBeLessThan(200);
   });
 
-  it('덜 찼어도 잠깐 새 짐이 없으면 있는 만큼 싣고 출발한다', () => {
+  it('새 트럭은 덜 찼어도 도착 후 기본 10초가 지나면 출발한다', () => {
     const { w, a } = roadWorld(10);
     const v = w.buildTruck(a)!;
     run(w, 3);
+    expect(v.state).toBe('loading');
+    run(w, 4);
     expect(v.state).toBe('loading');
     run(w, 4);
     expect(v.state).toBe('to-unload');
@@ -2045,153 +2048,63 @@ describe('차량 운송', () => {
     });
   });
 
-  describe('배터리 (전기 트럭)', () => {
-    /** cond가 될 때까지 한 틱씩 (최대 sec초) */
-    const until = (w: World, cond: () => boolean, sec = 60) => {
-      for (let i = 0; i < sec * 60 && !cond(); i++) w.tick();
+
+  describe('전력 없는 차량 운송', () => {
+    const until = (w: World, cond: () => boolean, sec=60) => {
+      for(let i=0;i<sec*60&&!cond();i++)w.tick();
       expect(cond()).toBe(true);
     };
-    const perTile = TRUCK.drive / TRUCK.speed;
-    /** 기본 배터리·충전 속도로 (고용량 배터리 연구 전) */
-    const baseWorld = () => {
-      const r = roadWorld();
-      r.w.researched.delete('battery');
-      return r;
-    };
-
-    it('달린 칸 수만큼 배터리가 줄고, 정류장에 서 있으면 공장 전력으로 충전한다 (그만큼 전력을 더 쓴다)', () => {
-      const { w, a } = baseWorld();
-      const v = w.buildTruck(a)!;
-      until(w, () => v.state === 'to-unload');
-      const x0 = v.x;
-      run(w, 2);
-      expect(v.battery).toBeCloseTo(TRUCK.battery - Math.abs(x0 - v.x) * perTile, 6);
-
-      until(w, () => v.state === 'unloading');
-      w.tick();
-      expect(w.power.charge).toBe(TRUCK.charge);
-      expect(w.power.demand).toBeGreaterThanOrEqual(TRUCK.charge);
-      run(w, 4);
-      expect(v.battery).toBe(TRUCK.battery);
-      expect(w.power.charge).toBe(0);
+    it('이전 배터리가 0이어도 정상 속도로 달린다',()=>{
+      const {w,a}=roadWorld();const v=w.buildTruck(a)!;
+      until(w,()=>v.state==='to-unload');run(w,.5);v.battery=0;
+      const x=v.x;run(w,1);
+      expect(Math.abs(x-v.x)).toBeCloseTo(w.truckSpeed(v),6);expect(v.status).toBe('moving');
     });
-
-    it('떠날 때가 돼도 배터리가 다 찰 때까지 충전한 뒤 떠난다 (그동안 짐은 계속 싣는다)', () => {
-      const { w, a } = baseWorld();
-      const v = w.buildTruck(a)!;
-      v.battery = 0;
-      run(w, 6); // 50개는 5초면 다 싣지만, 빈 배터리는 9초 걸린다
-      expect(v.load).toBe(TRUCK.capacity);
-      expect(v.state).toBe('loading');
-      expect(v.status).toBe('charging');
-      expect(v.battery).toBeGreaterThan(1000);
-      run(w, 4);
-      expect(v.state).toBe('to-unload');
+    it('배터리 0에서도 만차 즉시 출발한다',()=>{
+      const {w,a}=roadWorld();const v=w.buildTruck(a)!;v.battery=0;
+      run(w,6);expect(v.load).toBe(TRUCK.capacity);expect(v.state).toBe('to-unload');
     });
-
-    it('충전하는 트럭이 많아 전력이 모자라면 기계처럼 같은 비율로 느리게 충전한다', () => {
-      const { w, a } = baseWorld();
-      const v1 = w.buildTruck(a)!;
-      const v2 = w.cloneTruck(v1)!;
-      const others = [w.cloneTruck(v1)!, w.cloneTruck(v1)!];
-      for (const v of [v1, v2, ...others]) v.battery = 0;
-      run(w, 1);
-      // 허브 400kW에 트럭 넷이 200kW씩 → 50%
-      expect(w.power.charge).toBe(4 * TRUCK.charge);
-      expect(w.power.satisfaction).toBeCloseTo(0.5, 6);
-      // 첫 틱은 정류장에 닿기만 하고, 그다음부터 100kW씩
-      expect(v1.battery).toBeCloseTo(TRUCK.charge * 0.5 * (1 - 1 / 60), 3);
-      expect(v2.battery).toBeCloseTo(v1.battery, 6);
+    it('여러 트럭도 발전 전력과 충전 수요를 소비하지 않는다',()=>{
+      const {w,a}=roadWorld();const v=w.buildTruck(a)!;
+      for(let i=0;i<3;i++)w.cloneTruck(v);
+      for(const t of w.vehicles.values())t.battery=0;
+      run(w,2);expect(w.power.charge).toBe(0);expect(w.power.satisfaction).toBe(1);
+      expect([...w.vehicles.values()].every(t=>t.receivedCharge===0)).toBe(true);
     });
-
-    it('배터리가 떨어지면 멈추지 않고 천천히 간다', () => {
-      const { w, a } = baseWorld();
-      const v = w.buildTruck(a)!;
-      until(w, () => v.state === 'to-unload');
-      run(w, 0.5);
-      v.battery = 0;
-      const x0 = v.x;
-      run(w, 1);
-      expect(v.status).toBe('no-battery');
-      expect(Math.abs(x0 - v.x)).toBeCloseTo(TRUCK.speed * TRUCK.emptySpeed, 6);
-      // 내리는 곳에 닿으면 다시 충전해서 가득 찬 뒤 돌아간다
-      until(w, () => v.state === 'to-load', 120);
-      expect(v.battery).toBe(TRUCK.battery);
+    it('이전 충전 중 플래그가 있어도 다음 틱에 운행한다',()=>{
+      const {w,a}=roadWorld();const v=w.buildTruck(a)!;
+      until(w,()=>v.state==='to-unload');v.charger=true;v.battery=0;
+      w.tick();expect(v.charger).toBe(false);expect(v.status).toBe('moving');
     });
-
-    it('고용량 배터리 연구: 배터리 크기와 정류장 충전 속도가 1.5배', () => {
-      const { w } = baseWorld();
-      expect(w.truckBattery()).toBe(TRUCK.battery);
-      expect(w.stationCharge()).toBe(TRUCK.charge);
-      w.applyTech('battery');
-      expect(w.truckBattery()).toBe(TRUCK.battery * 1.5);
-      expect(w.stationCharge()).toBe(TRUCK.charge * 1.5);
-      expect(w.unlockedBuildings.has('charger')).toBe(true);
+    it('폐기한 충전 연구와 설비를 새로 열지 않는다',()=>{
+      const {w}=roadWorld();w.applyTech('battery');
+      expect(w.techs.some(t=>t.id==='battery')).toBe(false);expect(w.unlockedBuildings.has('charger')).toBe(false);
+      expect(w.canPlace('charger',12,7).ok).toBe(false);
     });
-
-    describe('충전기', () => {
-      /** 가로 도로(5~21, 6)의 (12,6) 칸 옆 (12,7)에 충전기 */
-      const chargerWorld = () => {
-        const r = roadWorld();
-        r.w.stock.set('copper-plate', 100);
-        const c = r.w.place('charger', 12, 7, 0)!;
-        expect(c).toBeTruthy();
-        return { ...r, c, stop: 6 * r.w.width + 12 };
-      };
-
-      it('남은 길을 갈 배터리가 모자란 트럭은 충전기 옆에 서서 빠르게 가득 채우고 다시 간다', () => {
-        const { w, a, stop } = chargerWorld();
-        const v = w.buildTruck(a)!;
-        until(w, () => v.state === 'to-unload');
-        v.battery = 30; // 두 칸 거리
-        until(w, () => v.charger, 30);
-        expect(v.tile).toBe(stop);
-        expect(v.status).toBe('charging');
-        w.tick();
-        expect(w.power.charge).toBe(TRUCK.fastCharge);
-        until(w, () => !v.charger, 30);
-        // 가득 채우고 떠난 첫 틱 (한 걸음만큼 줄어 있다)
-        expect(v.battery).toBeGreaterThan(w.truckBattery() - TRUCK.drive);
-        until(w, () => v.state === 'unloading', 30);
-      });
-
-      it('배터리가 넉넉한 트럭은 서지 않고 지나간다', () => {
-        const { w, a } = chargerWorld();
-        const v = w.buildTruck(a)!;
-        let stopped = false;
-        for (let i = 0; i < 60 * 40 && v.state !== 'unloading'; i++) {
-          w.tick();
-          if (v.charger) stopped = true;
-        }
-        expect(v.state).toBe('unloading');
-        expect(stopped).toBe(false);
-      });
-
-      it('충전 중에 충전기를 철거하면 바로 다시 간다. 저장·불러오기에 충전 중인 것도 남는다', () => {
-        const { w, a, c } = chargerWorld();
-        const v = w.buildTruck(a)!;
-        until(w, () => v.state === 'to-unload');
-        v.battery = 30;
-        until(w, () => v.charger, 30);
-        const copy = World.deserialize(JSON.parse(JSON.stringify(w.serialize())));
-        expect(copy.vehicles.get(v.id)!.charger).toBe(true);
-        w.remove(c);
-        w.tick();
-        expect(v.charger).toBe(false);
-        expect(v.status).not.toBe('charging');
-      });
+    it('충전기 직접 배치는 실패하고 재료는 그대로다',()=>{
+      const {w}=roadWorld();w.unlockedBuildings.add('charger');const stock=[...w.stock];
+      expect(w.place('charger',12,7,0)).toBeNull();expect([...w.stock]).toEqual(stock);
     });
-
-    it('저장·불러오기에 배터리가 남고, 배터리가 없던 예전 저장은 가득 찬 채로 불러온다', () => {
-      const { w, a } = baseWorld();
-      const v = w.buildTruck(a)!;
-      v.battery = 777;
-      const data = JSON.parse(JSON.stringify(w.serialize()));
-      expect(World.deserialize(data).vehicles.get(v.id)!.battery).toBe(777);
-      delete data.vehicles[0].battery;
-      expect(World.deserialize(data).vehicles.get(v.id)!.battery).toBe(TRUCK.battery);
+    it('예전 충전기는 저장 변환 시 재료를 한 번만 반환한다',()=>{
+      const {w}=roadWorld();w.place('charger',12,7,0,true);
+      const stock=[...w.stock];const copy=World.deserialize(JSON.parse(JSON.stringify(w.serialize())));
+      expect([...copy.buildings.values()].some(b=>b.type==='charger')).toBe(false);
+      for(const c of BUILDINGS.charger.cost)expect(copy.stockOf(c.item)).toBe((new Map(stock).get(c.item)??0)+c.count);
+      const again=World.deserialize(JSON.parse(JSON.stringify(copy.serialize())));expect([...again.stock]).toEqual([...copy.stock]);
+    });
+    it('예전 목표 재고는 불러온 뒤 배송 제한으로 남지 않는다',()=>{
+      const {w,a,b}=roadWorld();b.targets.set('iron-ore',1);const v=w.buildTruck(a)!;
+      const copy=World.deserialize(JSON.parse(JSON.stringify(w.serialize())));
+      expect(copy.buildings.get(b.id)!.targets.size).toBe(0);expect(copy.requestOf(copy.buildings.get(b.id)!,'iron-ore')).toBe(Infinity);
+      expect(copy.vehicles.has(v.id)).toBe(true);
+    });
+    it('이전 저장의 배터리 값은 읽지만 소비하지 않는다',()=>{
+      const {w,a}=roadWorld();const v=w.buildTruck(a)!;v.battery=777;
+      const copy=World.deserialize(JSON.parse(JSON.stringify(w.serialize())));
+      expect(copy.vehicles.get(v.id)!.battery).toBe(777);run(copy,20);expect(copy.vehicles.get(v.id)!.battery).toBe(777);
     });
   });
+
 });
 
 describe('목표 진행 저장', () => {

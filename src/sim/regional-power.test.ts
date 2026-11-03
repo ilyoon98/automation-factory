@@ -211,22 +211,14 @@ describe('전봇대 연결 전력망', () => {
 });
 
 describe('차량 충전 예산', () => {
-  it('거점 기본 400kW: 고급 트럭 두 대면 먼저 온 한 대만, 예산을 올리면 둘 다', () => {
-    const w = makeWorld();
-    w.researched.delete('battery');
-    for (let x = 4; x <= 14; x++) w.place('road', x, 20, 0);
-    const st = w.place('station', 8, 18, 0)!;
-    st.inBuf.set('truck-kit', 2);
-    const a = w.vehicles.get(applyCommand(w, 0, { t: 'build-adv-truck', rid: 'a', station: st.id, key: '' }).vehicle!)!;
-    const b = w.vehicles.get(applyCommand(w, 0, { t: 'build-adv-truck', rid: 'b', station: st.id, key: '' }).vehicle!)!;
-    run(w, 1);
-    expect(a.battery).toBeCloseTo(400, 0);
-    expect(b.battery).toBe(0);
-    expect(applyCommand(w, 0, { t: 'zone-budget', zone: w.zones[0].id, kw: 800 })).toBe(true);
-    run(w, 1);
-    // 예산은 둘 다 받지만 허브 망 전력이 400kW뿐이라 같은 비율로 200kW씩
-    expect(b.battery).toBeCloseTo(200, 0);
-    expect(a.battery).toBeCloseTo(600, 0);
+
+  it('여러 고급 트럭이 있어도 발전 전력을 사용하지 않는다',()=>{
+    const w=makeWorld();
+    for(let x=4;x<=14;x++)w.place('road',x,20,0);
+    const st=w.place('station',8,18,0)!;st.inBuf.set('truck-kit',2);
+    for(const rid of ['a','b'])expect(applyCommand(w,0,{t:'build-adv-truck',rid,station:st.id,key:''}).ok).toBe(true);
+    run(w,2);expect(w.power.charge).toBe(0);
+    expect([...w.vehicles.values()].every(v=>v.receivedCharge===0)).toBe(true);
   });
 
   it('공급 범위 밖 정류장에서는 0kJ로 기다린다 (V06: 전력 0에서도 조립은 된다)', () => {

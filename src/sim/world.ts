@@ -107,6 +107,7 @@ export const STATS_TAU = 15;
  * (철거했다가 되돌려 다시 지으면 id가 바뀌므로).
  */
 export type EditOp =
+  | { kind: 'upgrade'; x: number; y: number; from: BuildingType; to: BuildingType }
   | {
       kind: 'place';
       type: BuildingType;
@@ -155,7 +156,7 @@ interface TruckEdit {
   settings?: TruckSettings;
 }
 
-type TruckSettings = Pick<Vehicle, 'plan' | 'period' | 'early' | 'paused'> & { name?: string };
+type TruckSettings = Pick<Vehicle, 'plan' | 'period' | 'early' | 'paused'> & { name?: string; departureWait?: number | null };
 
 /**
  * 현지 회수 더미의 한 덩어리 (regional-v1). 철거·레시피 변경·모듈 분리 등으로 실제 물건이 있던 칸에 남는다.
@@ -400,12 +401,14 @@ export function describeEdit(ops: EditOp[]): string {
   const removed = count('remove');
   const trucks = count('truck-add', 'truck-remove');
   const routes = count('route');
-  const other = ops.length - placed - removed - trucks - routes;
+  const upgrades = count('upgrade');
+  const other = ops.length - placed - removed - trucks - routes - upgrades;
   return [
     placed && `짓기 ${placed}개`,
     removed && `철거 ${removed}개`,
     trucks && `트럭 ${trucks}대`,
     routes && `노선 ${routes}번`,
+    upgrades && `업그레이드 ${upgrades}개`,
     other && `회전·설정 ${other}개`,
   ]
     .filter(Boolean)
@@ -543,8 +546,7 @@ export class World {
   netState = new Map<number, NetState>();
   /** 거점마다 이번 틱 작업 수요·실제 작업·차량 충전 (kW) */
   siteState = new Map<number, SiteState>();
-  /** 이번 틱 트럭마다 실제로 받는 충전 kW (거점 충전 예산·망 전력 비율 반영) */
-  private chargeGrant = new Map<number, number>();
+  /** 전력망 재계산 여부 */
   private gridDirty = true;
   /** 배치가 바뀔 때마다 하나씩 (철거 미리보기 캐시) */
   private gridVersion = 0;
@@ -1040,6 +1042,7 @@ export class World {
    * 비용도 그 컨베이어를 돌려받은 뒤 기준으로 따진다.
    */
   canPlace(type: BuildingType, x: number, y: number, replaceBelts = false): PlaceCheck {
+    if (type === 'charger') return { ok: false, reason: '사용하지 않는 설비' };
     const def = BUILDINGS[type];
     const replacing = replaceBelts && !isBeltType(type);
     for (let dy = 0; dy < def.size; dy++) {
@@ -1518,6 +1521,31 @@ export class World {
     const nb = this.place(type, b.x, b.y, dir)!;
     nb.items = items;
     return nb;
+  }
+
+  /** 같은 크기의 상위 설비로 교체한다. id와 모든 운전 상태를 보존한다. */
+  upgradeBuilding(b: Building | undefined): UseResult {
+    if (!b || this.buildings.get(b.id) !== b) return { ok: false, reason: '설비 없음' };
+    const target = b.type === 'miner' ? 'miner-2' : b.type === 'belt' ? 'fast-belt' : null;
+    if (!target) return { ok: false, reason: '업그레이드 대상 아님' };
+    if (!this.unlockedBuildings.has(target)) return { ok: false, reason: '연구 필요' };
+    return this.edit(() => this.changeBuildingTier(b, target));
+  }
+
+  private changeBuildingTier(b: Building, target: BuildingType): UseResult {
+    const from = b.type;
+    if (!((from === 'miner' && target === 'miner-2') || (from === 'miner-2' && target === 'miner') ||
+      (from === 'belt' && target === 'fast-belt') || (from === 'fast-belt' && target === 'belt'))) return { ok: false };
+    // 기존 설비 비용을 돌려받아 상위 설비 비용에 보탠다. 검사가 끝나기 전에는 바꾸지 않는다.
+    const back = new Map(b.def.cost.map(c => [c.item, c.count]));
+    if (!BUILDINGS[target].cost.every(c => this.stockOf(c.item) + (back.get(c.item) ?? 0) >= c.count)) return { ok: false, reason: '재료 부족' };
+    for (const c of b.def.cost) addTo(this.stock, c.item, c.count);
+    for (const c of BUILDINGS[target].cost) addTo(this.stock, c.item, -c.count);
+    b.type = target;
+    this.layoutDirty = true;
+    this.gridDirty = true;
+    this.record({ kind: 'upgrade', x: b.x, y: b.y, from, to: target });
+    return { ok: true };
   }
 
   rotate(b: Building, dir: Dir): void {
@@ -2156,7 +2184,7 @@ export class World {
       const last = this.truckId(op.id);
       if (back === (op.kind === 'truck-add')) {
         const v = this.vehicles.get(last);
-        if (!v) return false;
+        if (!v || v.kind !== 'basic') return false;
         this.removeVehicle(v);
         return true;
       }
@@ -2170,6 +2198,8 @@ export class World {
     const b = this.buildingAt(op.x, op.y);
     const here = b && b.x === op.x && b.y === op.y ? b : null;
     switch (op.kind) {
+      case 'upgrade':
+        return !!here && here.type === (back ? op.to : op.from) && this.changeBuildingTier(here, back ? op.from : op.to).ok;
       case 'place': {
         if (back) {
           if (here?.type === op.type) [op.id, op.no] = [here.id, here.stationNo];
@@ -2516,9 +2546,9 @@ export class World {
     return isGeneratorType(b.type) ? GRID.generator.radius : 0;
   }
 
-  /** 노드에 접속해 전기를 받는 건물 (작업 기계·정류장·충전기·축전기). 서로 다른 망을 잇지 않는다 */
+  /** 노드에 접속해 전기를 받는 작업 기계·축전기. 서로 다른 망을 잇지 않는다 */
   isPowerUser(b: Building): boolean {
-    return this.nodeRadius(b) === 0 && (b.def.power > 0 || b.type === 'station' || b.type === 'charger' || b.type === 'accumulator');
+    return this.nodeRadius(b) === 0 && (b.def.power > 0 || b.type === 'accumulator');
   }
 
   private xy(b: { x: number; y: number; size: number }): [number, number] {
@@ -2892,27 +2922,6 @@ export class World {
         b.load = 0;
       }
     }
-    // 차량 충전: 거점 충전 예산 안에서 도착 순서·id 순으로. 받은 충전은 그 정류장이 접속한 망에서만
-    this.chargeGrant.clear();
-    const wants: { v: Vehicle; want: number; site: number; net: number }[] = [];
-    for (const v of this.vehicles.values()) {
-      const want = this.chargeWant(v);
-      if (want <= 0) continue;
-      const spot = this.chargeSpot(v);
-      const net = spot ? this.netOfB.get(spot.id) : undefined;
-      if (spot && net && spot.zone) wants.push({ v, want, site: spot.zone, net });
-    }
-    wants.sort((a, c) => a.v.arrivedAt - c.v.arrivedAt || a.v.id - c.v.id);
-    const left = new Map(this.zones.map((z) => [z.id, z.budget]));
-    const chargeNet = new Map<number, number>();
-    for (const w of wants) {
-      const g = Math.min(w.want, left.get(w.site) ?? 0);
-      if (g <= 0) continue;
-      left.set(w.site, left.get(w.site)! - g);
-      this.chargeGrant.set(w.v.id, g);
-      chargeNet.set(w.v.id, w.net);
-      accOf(w.net).charge += g;
-    }
     this.netState.clear();
     this.siteState.clear();
     const day = Math.floor(this.time / DAY_SEC);
@@ -3051,18 +3060,6 @@ export class World {
         sites: [...s.bySite.keys()].sort((a, b) => a - b),
       });
     }
-    // 차량 충전은 그 망의 비율만큼
-    for (const [vid, g] of this.chargeGrant) {
-      const net = chargeNet.get(vid)!;
-      const v = this.vehicles.get(vid)!;
-      const spot = this.chargeSpot(v);
-      if (spot?.zone) {
-        const ss = this.siteState.get(spot.zone) ?? { demand: 0, work: 0, charge: 0 };
-        ss.charge += g;
-        this.siteState.set(spot.zone, ss);
-      }
-      this.chargeGrant.set(vid, g * (this.netState.get(net)?.satisfaction ?? 0));
-    }
     // 화면용 합계
     this.ach.roll(this.time);
     let demand = 0;
@@ -3103,7 +3100,7 @@ export class World {
    * 업적: 풍력·태양광의 쓰임 (H04 비 오는 날 지은 풍력의 공급, H12 낮 태양광·한밤 풍력, 지형별 발전량).
    * 망 하나의 발전원별 kW(src), 그중 작업 몫, 그 망 풍력 출력 합
    */
-  private achSolarWind(src: Map<string, number>, workFrac: number, windOut: number, net: number, ren: Building[]): void {
+  private achSolarWind(src: Map<string, number>, workFrac: number, windOut: number, _net: number, ren: Building[]): void {
     const day = Math.floor(this.time / DAY_SEC);
     const sun = src.get('solar') ?? 0;
     const wind = src.get('wind') ?? 0;
@@ -3117,32 +3114,6 @@ export class World {
         if (this.ach.get(`w:${b.id}`) >= 1000) this.ach.add('h04', 1);
       }
     }
-    // H14: 한밤에 이 망 충전 중 풍력 몫
-    if (this.isNight() && wind > 0) {
-      let served = 0;
-      for (const v of src.values()) served += v;
-      for (const [vid, g] of this.chargeGrant) {
-        const v = this.vehicles.get(vid);
-        const spot = v ? this.chargeSpot(v) : null;
-        if (!spot || (this.regional && this.netOfB.get(spot.id) !== net)) continue;
-        this.ach.add(`vw:${vid}:${day}`, g * (wind / Math.max(1, served)) * DT);
-      }
-    }
-  }
-
-  /** 트럭이 충전하는 건물 (정류장·길가 충전기) */
-  chargeSpot(v: Vehicle): Building | null {
-    if (v.charger) {
-      for (const b of this.buildings.values()) {
-        if (b.type !== 'charger') continue;
-        const x = v.tile % this.width;
-        const y = Math.floor(v.tile / this.width);
-        if (Math.abs(b.x - x) + Math.abs(b.y - y) === 1) return b;
-      }
-      return null;
-    }
-    if (!this.routeOk(v) && !this.finishingDelivery(v)) return v.home ? (this.buildings.get(v.home) ?? null) : null;
-    return this.buildings.get(v.stopId) ?? null;
   }
 
   /** 거점의 차량 충전 예산 (0~800kW) */
@@ -3214,11 +3185,10 @@ export class World {
     return n;
   }
 
-  /** 목적지의 추가 요청량: 목표 - 실물 - 입고 예정 (목표가 없으면 제한 없음) */
-  requestOf(st: Building, item: ItemId): number {
-    const target = st.targets.get(item);
-    if (target === undefined) return Infinity;
-    return Math.max(0, target - this.poolCount(st, item) - this.inReserved(st, item));
+  /** 이전 명령/저장 호환용. 품목별 목표는 없고, 실제 공간 예약으로 적재량을 제한한다. */
+  requestOf(_st: Building, _item: ItemId): number {
+    // 이전 저장의 목표값이 남아 있어도 배송을 제한하지 않는다. 공간은 별도로 예약한다.
+    return Infinity;
   }
 
   /** 계획 운송 또는 아직 끝나지 않은 반송: 확장 세계의 싣기 → 내리기 두 정류장 */
@@ -3245,7 +3215,7 @@ export class World {
     const n = v.plan.length;
     for (let k = 0; k < n; k++) {
       const { item, cap } = v.plan[(v.planTurn + k) % n];
-      const want = Math.min(cap - countOf(v.cargo, item), this.requestOf(dst, item), space, room);
+      const want = Math.min((v.departureWait === null ? cap : this.truckCapacity(v)) - countOf(v.cargo, item), this.requestOf(dst, item), space, room);
       if (want <= 0) continue;
       let got = 0;
       for (const h of this.poolOf(src)) {
@@ -3300,12 +3270,15 @@ export class World {
       if (v.load > 0) {
         this.trimInbound(v);
         v.loadTimer = -1;
-        if (this.batteryFull(v)) this.goTo(v, 1);
-        else v.status = 'charging';
+        this.goTo(v, 1);
         return;
       }
       v.status = 'paused';
       v.loadTimer = -1;
+      return;
+    }
+    if (v.departureWait !== null) {
+      this.loadSimplePlanned(v, st, dst);
       return;
     }
     if (v.loadTimer < 0) {
@@ -3317,8 +3290,7 @@ export class World {
       const got = this.reserveTrip(v, st, dst);
       if (got <= 0 && v.load <= 0) {
         // 빈 편: 이번 주기를 넘긴다
-        const want = v.plan.some((p) => this.requestOf(dst, p.item) > 0);
-        v.status = want ? 'no-supply' : 'satisfied';
+        v.status = this.poolFree(dst) <= 0 ? 'unload-full' : 'no-supply';
         if (v.period > 0) v.nextDue = Math.max(v.nextDue, this.time) + v.period;
         else v.nextDue = this.time + TRUCK.wait;
         return;
@@ -3352,14 +3324,30 @@ export class World {
       v.status = 'scheduled';
       return;
     }
-    if (!this.batteryFull(v)) {
-      v.status = 'charging';
-      return;
-    }
     v.nextDue = v.period > 0 ? Math.max(v.nextDue + v.period, this.time + 1) : this.time;
     v.loadTimer = -1;
     this.ach.num.set(`tl:${v.id}`, v.load);
     this.goTo(v, 1);
+  }
+
+  private loadSimplePlanned(v: Vehicle, st: Building, dst: Building): void {
+    v.loadTimer = Math.max(0, v.loadTimer) + DT;
+    if (v.load >= this.truckCapacity(v) || (v.load > 0 && v.loadTimer > v.departureWait! + 1e-9)) {
+      this.releaseReservations(v, 'out');
+      this.trimInbound(v);
+      this.goTo(v, 1);
+      return;
+    }
+    // 새 물량이 들어오면 다시 예약한다. 이미 실은 화물의 목적지 공간은 유지한다.
+    if (!this.reservations.some(r => r.v === v.id && r.dir === 'out')) this.reserveTrip(v, st, dst);
+    const gap = 1 / TRUCK.transfer;
+    v.timer = Math.min(gap, v.timer + DT);
+    if (v.timer >= gap - 1e-9 && this.loadOne(v)) {
+      v.timer -= gap;
+      v.status = 'loading';
+      return;
+    }
+    v.status = v.load > 0 ? 'scheduled' : this.poolFree(dst) <= 0 ? 'unload-full' : 'no-supply';
   }
 
   /**
@@ -3487,7 +3475,7 @@ export class World {
         return;
       }
     }
-    if (v.loadTimer >= 10 || v.stuck >= 5) {
+    if ((v.departureWait === null && v.loadTimer >= 10) || v.stuck >= 5) {
       // 반송
       this.releaseReservations(v);
       v.returning = true;
@@ -3529,11 +3517,27 @@ export class World {
     v.plan = plan.map((p) => ({ ...p }));
     v.period = period;
     v.early = early;
+    v.departureWait = null;
     // 같은 노선 트럭들은 주기/대수 간격으로 나눠 출발
     const same = [...this.vehicles.values()].filter((o) => o.stops.length === 2 && o.stops[0].id === v.stops[0].id && o.stops[1].id === v.stops[1].id && o.period > 0);
     const k = Math.max(0, same.indexOf(v));
     v.nextDue = this.time + (period > 0 && same.length ? (k * period) / same.length : 0);
     v.loadTimer = -1;
+    return true;
+  }
+
+  /** 적재량은 차량 용량으로 자동 처리하고, 출발은 만차 또는 도착 후 N초. */
+  setDispatch(v: Vehicle, items: ItemId[], wait: number): boolean {
+    if (!Array.isArray(items) || ![5, 10, 15, 30].includes(wait) ||
+      items.some(item => !ITEM_IDS.includes(item)) || new Set(items).size !== items.length || items.length > this.truckCapacity(v)) return false;
+    if (items.length && !(v.route.length === 2 && v.route[0].act === 'load' && v.route[1].act === 'unload')) return false;
+    const elapsed = v.departureWait !== null && v.state === 'loading' ? v.loadTimer : -1;
+    // 내부 저장 형식의 cap은 호환용이다. 새 규칙의 적재 판단에는 품목만 사용한다.
+    const cap = Math.floor(this.truckCapacity(v) / Math.max(1, items.length));
+    if (!this.setPlan(v, items.map(item => ({ item, cap })), 0, false)) return false;
+    v.departureWait = wait;
+    v.loadTimer = elapsed;
+    v.nextDue = this.time;
     return true;
   }
 
@@ -3550,18 +3554,9 @@ export class World {
     return true;
   }
 
-  /** 목적지 목표 재고 (n = 0이면 지운다) */
-  setTarget(st: Building, item: ItemId, n: number): boolean {
-    if (st.type !== 'station' || !Number.isSafeInteger(n) || n < 0) return false;
-    const before = st.targets.get(item);
-    if (n === 0) st.targets.delete(item);
-    else st.targets.set(item, n);
-    if (before !== st.targets.get(item)) {
-      for (const v of this.vehicles.values()) {
-        if (this.planned(v) && v.stops[1].id === st.id) this.refreshLoadingReservations(v);
-      }
-    }
-    return true;
+  /** 삭제된 목표 재고 명령은 기존 상태를 바꾸지 않고 거절한다. */
+  setTarget(_st: Building, _item: ItemId, _n: number): boolean {
+    return false;
   }
 
   /** 이미 실은 화물은 유지하고 미적재 예약만 다음 적재 판정에서 다시 계산한다. */
@@ -3599,10 +3594,7 @@ export class World {
         }
       }
     }
-    // 정류장에 선 트럭의 충전도 공장 전력을 쓴다 (모자라면 기계처럼 같은 비율로 느려진다)
-    let charge = 0;
-    for (const v of this.vehicles.values()) charge += this.chargeWant(v);
-    demand += charge;
+    const charge = 0; // 이전 저장/전력 통계의 필드만 유지
     // 허브·태양광·풍력: 아무것도 들지 않는 전력
     const free = HUB_BASE_POWER + solar;
     const capacity = free + hydros.length * HYDRO_POWER + gens.length * GENERATOR_POWER;
@@ -3776,12 +3768,6 @@ export class World {
     const fz = v.fromZone;
     const tz = this.siteId(st);
     if (fz && tz && fz !== tz) a.addWin(`pw:${fz}>${tz}`, 1, this.time);
-    // H14: 한밤에 풍력으로 1MJ 넘게 충전한 트럭의 그 밤 배송
-    const day = Math.floor(this.time / DAY_SEC);
-    if (this.isNight() && a.get(`vw:${v.id}:${day}`) >= 1000) {
-      a.add(`vd:${v.id}:${day}`, 1);
-      if (a.get(`vd:${v.id}:${day}`) >= 20) a.add('h14', 1);
-    }
   }
 
   /** 노선 한 바퀴를 마칠 때: D15 정류장 수, H11 두 곳에서 실은 철·구리를 세 번째 정류장에 함께 납품 */
@@ -4592,13 +4578,14 @@ export class World {
   }
 
   private truckSettings(v: Vehicle): TruckSettings {
-    return { plan: v.plan.map(p => ({ ...p })), period: v.period, early: v.early, paused: v.paused, name: v.name };
+    return { plan: v.plan.map(p => ({ ...p })), period: v.period, early: v.early, paused: v.paused, name: v.name, departureWait: v.departureWait };
   }
 
   private applyTruckSettings(v: Vehicle, settings: TruckSettings): void {
     this.setPlan(v, settings.plan, settings.period, settings.early);
     v.paused = settings.paused;
     v.name = settings.name ?? '';
+    v.departureWait = settings.departureWait ?? null;
   }
 
   /** 재료를 내고 tile 칸에 트럭을 놓는다 (확인은 부르는 쪽에서). 노선의 stop번째 정류장부터 */
@@ -4680,6 +4667,27 @@ export class World {
     return { ok: true, vehicle: v.id, from: holder.id };
   }
 
+  /** 현지 조립품으로 정차한 기본 트럭을 개조한다. 노선·화물·배터리 kJ는 보존한다. */
+  upgradeTruck(v: Vehicle | undefined, st: Building | undefined, key: string): UseResult {
+    if (!v || v.kind !== 'basic') return { ok: false, reason: '기본 트럭만 업그레이드 가능' };
+    const no = this.advTruckSupport(st);
+    if (no) return { ok: false, reason: no };
+    const station = st!;
+    if (!this.stationStops(station).includes(v.tile) || v.path?.length ||
+      (v.state !== 'loading' && v.state !== 'unloading')) return { ok: false, reason: '정류장 정차 후 가능' };
+    const g = key ? this.touchingStorageGroups(station).find(g => g.key === key) : undefined;
+    if (key && !g) return { ok: false, reason: '연결 창고 변경' };
+    const kit = ADVANCED_TRUCK.kit;
+    const holder = this.stationFree(station, kit) >= 1 ? station : g ? this.groupHolder(g.group, kit) : null;
+    if (!holder) return { ok: false, reason: '현지 고급 트럭 조립품 부족' };
+    if (holder === station) addTo(countOf(station.inBuf, kit) > 0 ? station.inBuf : station.outBuf, kit, -1);
+    else addTo(holder.inBuf, kit, -1);
+    v.kind = 'advanced';
+    v.kit = { item: kit, from: holder.id };
+    v.home = station.id;
+    return { ok: true, vehicle: v.id, from: holder.id };
+  }
+
   /** 트럭 한 번에 싣는 개수 */
   truckCapacity(v?: Vehicle): number {
     return v?.kind === 'advanced' ? ADVANCED_TRUCK.capacity : TRUCK.capacity;
@@ -4698,13 +4706,6 @@ export class World {
   /** 한 칸 달리는 데 드는 전기 (kJ). 두 종류 모두 15kJ */
   truckPerTile(v?: Vehicle): number {
     return v ? this.truckDrive(v) / this.baseSpeed(v) : TRUCK.drive / TRUCK.speed;
-  }
-
-  /** 노선 없이 조립한 정류장 옆 도로에 서 있는 고급 트럭: 그 정류장에서 충전할 수 있다 */
-  private parkedAtHome(v: Vehicle): boolean {
-    if (v.kind !== 'advanced' || !v.home) return false;
-    const st = this.buildings.get(v.home);
-    return st?.type === 'station' && this.stationStops(st).includes(v.tile) && v.x === (v.tile % this.width) + 0.5 && v.y === Math.floor(v.tile / this.width) + 0.5;
   }
 
   /** 두 곳만 오가는 노선 (싣는 곳 → 내리는 곳) */
@@ -4757,6 +4758,7 @@ export class World {
     v.state = v.stops[i]?.act === 'unload' ? 'to-unload' : 'to-load';
     v.timer = 0;
     v.idle = 0;
+    if (v.departureWait !== null) v.loadTimer = -1;
   }
 
   /** 노선의 다른 싣는 곳 중에 이 트럭이 지금 실을 짐이 있는 곳이 있는지 */
@@ -4898,20 +4900,6 @@ export class World {
     return src?.type !== 'station' && dst?.type === 'station' && dst.stationMode === 'unload';
   }
 
-  /**
-   * 이번 틱에 충전하고 싶은 전력 (kW). 정류장에 서 있고(싣는 중·내리는 중) 배터리가 덜 찼을 때만.
-   * updatePower(수요 계산)와 updateVehicle(실제 충전)이 같은 값을 쓰도록 한곳에서 정한다.
-   */
-  private chargeWant(v: Vehicle): number {
-    if (this.batteryFull(v)) return 0;
-    const need = (this.truckBattery(v) - v.battery) / DT;
-    if (!this.routeOk(v) && !this.finishingDelivery(v)) return this.parkedAtHome(v) ? Math.min(this.stationCharge(v), need) : 0;
-    // 길 중간 충전기 앞에 선 트럭은 더 빨리
-    if (v.charger) return Math.min(TRUCK.fastCharge, need);
-    if (v.state !== 'loading' && v.state !== 'unloading') return 0;
-    return Math.min(this.stationCharge(v), need);
-  }
-
   /** 트럭 배터리 크기 (kJ). 차량 종류 기본값에 연구 "고용량 배터리"와 끝없는 연구 "트럭 성능"을 곱한다 */
   truckBattery(v?: Vehicle): number {
     const base = v?.kind === 'advanced' ? ADVANCED_TRUCK.battery : TRUCK.battery;
@@ -4927,36 +4915,9 @@ export class World {
     return this.researched.has('battery') ? TRUCK.batteryTech : 1;
   }
 
-  /** 충전기 옆 도로 칸들. 도로·정류장·충전기가 바뀔 때만 다시 센다 */
-  chargerTiles(): Set<number> {
-    if (this.chargerCache?.ver === this.roadVersion) return this.chargerCache.tiles;
-    const tiles = new Set<number>();
-    for (const b of this.buildings.values()) {
-      if (b.type !== 'charger') continue;
-      for (const [dx, dy] of [
-        [0, -1],
-        [1, 0],
-        [0, 1],
-        [-1, 0],
-      ]) {
-        const x = b.x + dx;
-        const y = b.y + dy;
-        if (this.inBounds(x, y) && this.isRoad(y * this.width + x)) tiles.add(y * this.width + x);
-      }
-    }
-    this.chargerCache = { ver: this.roadVersion, tiles };
-    return tiles;
-  }
-  private chargerCache: { ver: number; tiles: Set<number> } | null = null;
-
   /** 트럭 속도 (칸/초). 차량 종류 기본값에 끝없는 연구 "트럭 성능"을 곱한다 */
   truckSpeed(v?: Vehicle): number {
     return (v?.kind === 'advanced' ? ADVANCED_TRUCK.speed : TRUCK.speed) * this.boost('endless-truck');
-  }
-
-  /** 배터리가 다 찼는지 (더하고 나눌 때 생기는 아주 작은 오차는 봐준다) */
-  private batteryFull(v: Vehicle): boolean {
-    return v.battery >= this.truckBattery(v) - 1e-6;
   }
 
   private updateVehicle(v: Vehicle): void {
@@ -4966,20 +4927,10 @@ export class World {
       this.applyStops(v, next);
     }
     v.receivedCharge = 0;
-    // 정류장에 서 있으면 충전 (전력이 모자라면 그 비율만큼만). 노선 없는 고급 트럭도 조립한 정류장 옆이면
-    const want = this.chargeWant(v);
-    if (want > 0) {
-      // regional-v1: 구역 충전 예산 안에서 받은 만큼 (예산을 못 받은 트럭은 기다린다)
-      const got = this.regional ? (this.chargeGrant.get(v.id) ?? 0) : want * this.power.satisfaction;
-      const before = v.battery;
-      v.battery = Math.min(this.truckBattery(v), v.battery + got * DT);
-      v.receivedCharge = v.battery - before;
-      if (v.battery > before) this.onActivity?.({ kind: 'charge', id: v.id, amount: v.battery - before });
-      if (this.batteryFull(v)) v.battery = this.truckBattery(v);
-    }
+    v.charger = false;
     if (this.planExceptions(v)) return;
     if (!this.routeOk(v) && !this.finishingDelivery(v)) {
-      v.status = want > 0 ? 'charging' : 'no-station';
+      v.status = 'no-station';
       return;
     }
     const st = this.buildings.get(v.stopId)!;
@@ -4994,8 +4945,7 @@ export class World {
     if (v.pendingStops && !v.returning && v.load > 0 && v.state === 'loading') {
       this.releaseReservations(v, 'out');
       this.trimInbound(v);
-      if (this.batteryFull(v)) this.goTo(v, Math.max(0, v.stops.findIndex(s => s.act === 'unload')));
-      else v.status = 'charging';
+      this.goTo(v, Math.max(0, v.stops.findIndex(s => s.act === 'unload')));
       return;
     }
     if (this.planned(v)) {
@@ -5007,24 +4957,9 @@ export class World {
     else this.unloadTruck(v, st);
   }
 
-  /** 정류장 st까지 한 틱만큼 달린다. 달린 거리만큼 배터리를 쓰고, 배터리가 없으면 천천히. 도착해 있으면 true */
+  /** 정류장 st까지 한 틱만큼 달린다. 차량 전력은 쓰지 않는다. 도착해 있으면 true */
   private drive(v: Vehicle, st: Building): boolean {
-    if (v.charger) {
-      // 다 찼거나 충전기가 없어졌으면 다시 간다
-      if (this.batteryFull(v) || !this.chargerTiles().has(v.tile)) v.charger = false;
-      else {
-        v.status = 'charging';
-        return false;
-      }
-    }
-    const empty = v.battery <= 0;
-    // regional-v1: 지금 바퀴가 있는 칸의 날씨만큼 느려진다 (칸당 전기는 그대로)
-    const full = this.truckSpeed(v) * DT * (empty ? TRUCK.emptySpeed : 1) * this.weatherEffect(v.tile).truck;
-    const [arrived, left] = this.move(v, st, full);
-    // 한 칸에 drive / speed kJ (기본 속도 기준: 빨라져도 칸당 드는 전기는 같다)
-    v.battery = Math.max(0, v.battery - (full - left) * this.truckPerTile(v));
-    if (empty && v.status === 'moving') v.status = 'no-battery';
-    return arrived;
+    return this.move(v, st, this.truckSpeed(v) * DT * this.weatherEffect(v.tile).truck)[0];
   }
 
   /** step 칸만큼 길을 따라 움직인다. [도착했는지, 남은 거리] */
@@ -5058,12 +4993,6 @@ export class World {
         return [false, step];
       }
       if (v.path.length === 0) return [true, step];
-      // 충전기 옆 칸: 남은 길을 갈 배터리가 모자라면 서서 가득 채운다 (넉넉하면 그냥 지나간다)
-      if (v.battery < v.path.length * this.truckPerTile(v) && !this.batteryFull(v) && this.chargerTiles().has(v.tile)) {
-        v.charger = true;
-        v.status = 'charging';
-        return [false, step];
-      }
       if (step <= 0) {
         v.status = 'moving';
         return [false, 0];
@@ -5090,6 +5019,10 @@ export class World {
    */
   private loadTruck(v: Vehicle, st: Building): void {
     if (v.load >= this.truckCapacity(v)) return this.leave(v);
+    if (v.departureWait !== null) {
+      v.loadTimer = Math.max(0, v.loadTimer) + DT;
+      if (v.load > 0 && v.loadTimer > v.departureWait + 1e-9) return this.leave(v);
+    }
     // 먼저 온 트럭부터 하나씩 채운다 (여럿이 나눠 실으면 모두 덜 찬 채로 떠나게 된다)
     for (const o of this.vehicles.values()) {
       if (o === v || o.state !== 'loading' || o.stopId !== v.stopId) continue;
@@ -5120,7 +5053,7 @@ export class World {
     }
     v.idle += DT;
     v.status = v.load > 0 ? 'loading' : 'waiting';
-    if ((v.load > 0 || this.otherLoadReady(v)) && v.idle >= TRUCK.wait) this.leave(v);
+    if ((v.load > 0 || this.otherLoadReady(v)) && (v.departureWait === null ? v.idle >= TRUCK.wait : v.loadTimer >= v.departureWait - 1e-9)) this.leave(v);
   }
 
   /**
@@ -5150,14 +5083,10 @@ export class World {
   }
 
   /**
-   * 다음 정류장으로 떠난다. 떠날 준비가 됐어도 배터리가 다 찰 때까지는 충전한다 (그동안 짐은 계속 싣는다).
+   * 다음 정류장으로 떠난다. 차량 전력이나 충전 대기는 없다.
    * 노선 마지막 정류장을 떠나면 한 바퀴: 걸린 시간과 그동안 내린 개수를 기록한다
    */
   private leave(v: Vehicle): void {
-    if (!this.batteryFull(v)) {
-      v.status = 'charging';
-      return;
-    }
     const next = (v.stop + 1) % v.stops.length;
     if (next === 0) {
       this.achLap(v);
@@ -5344,6 +5273,7 @@ export class World {
         ...(v.fromStation ? { from: [v.fromStation, v.fromZone] as [number, number] } : {}),
         // 계획을 꺼도 다음 출발 시각·품목 차례는 남는다. 중간 참가의 해시와 맞게 함께 저장한다.
         plan: v.plan.map((p) => ({ ...p })), period: v.period, nextDue: v.nextDue, early: v.early,
+        ...(v.departureWait !== null ? { departureWait: v.departureWait } : {}),
         loadTimer: v.loadTimer, stuck: v.stuck, returning: v.returning, planTurn: v.planTurn, paused: v.paused,
       })),
       // 예전 세계는 모양을 그대로 (없으면 legacy-v042로 읽는다)
@@ -5412,7 +5342,13 @@ export class World {
     // 송전 터미널 시제품 시절의 확장 세계 저장: 터미널은 이제 없다. 조용히 바꾸지 않고, 걷어 낸 것과 돌려준 재료를 알린다
     const oldGrid = rules !== 'legacy-v042' && data.grid !== 'pole-grid-v1';
     let terminals = 0;
+    let retiredChargers = 0;
     for (const s of data.buildings) {
+      if (s.type === 'charger') {
+        retiredChargers++;
+        for (const c of BUILDINGS.charger.cost) addTo(w.stock, c.item, c.count);
+        continue;
+      }
       if ((s.type as string) === 'terminal') {
         terminals++;
         for (const [item, n] of OLD_TERMINAL_COST) addTo(w.stock, item, n);
@@ -5442,7 +5378,7 @@ export class World {
       b.partner = s.partner ?? 0;
       b.zone = s.zone ?? 0;
       b.dock = s.dock ?? 0;
-      b.targets = new Map(s.targets ?? []);
+      // 목표 재고는 폐기한다. 연결 창고·실제 재고·입고 공간 예약은 유지한다.
       b.node = s.node ?? 0;
       b.stationNo = s.no ?? 0;
       b.stationMode = s.mode ?? 'load';
@@ -5484,6 +5420,7 @@ export class World {
       // 배터리가 생기기 전 저장이면 가득 찬 채로
       v.battery = s.battery ?? w.truckBattery();
       v.charger = s.charger ?? false;
+      v.departureWait = s.departureWait ?? null;
       // 종류가 없는 차량은 기존 기본 트럭
       if (s.from) [v.fromStation, v.fromZone] = s.from;
       if (s.plan) {
@@ -5529,6 +5466,7 @@ export class World {
     w.advDelivered = data.counters?.advDelivered ?? 0;
     // v1은 입출구 방향이 없던 시절이라, 이어진 컨베이어를 보고 방향을 맞춰 준다.
     if (data.v === 1) for (const b of w.buildings.values()) w.orientLegacy(b);
+    if (retiredChargers) w.loadNote = [w.loadNote, '충전기를 제거하고 건설 재료를 돌려드렸어요.'].filter(Boolean).join(' ');
     return w;
   }
 
@@ -5644,6 +5582,7 @@ export class World {
       h.num(v.stop).str(v.kind).num(v.home).str(v.kit?.item ?? '').num(v.kit?.from ?? 0);
       h.num(v.fromStation).num(v.fromZone).num(v.paused ? 1 : 0);
       h.num(v.period).num(v.nextDue).num(v.loadTimer).num(v.stuck).num(v.returning ? 1 : 0).num(v.planTurn).num(v.early ? 1 : 0);
+      h.num(v.departureWait ?? -1);
       for (const p of v.plan) h.str(p.item).num(p.cap);
       for (const s of v.stops) h.num(s.id).str(s.act).str(s.item ?? '');
       h.num(v.pendingStops ? 1 : 0);
@@ -5762,6 +5701,7 @@ export interface SavedVehicle {
   period?: number;
   nextDue?: number;
   early?: boolean;
+  departureWait?: number;
   loadTimer?: number;
   stuck?: number;
   returning?: boolean;

@@ -30,8 +30,9 @@ function newWorld(): World {
   const seed = (Math.random() * 2 ** 31) | 0;
   const w = generateRegionalWorld(seed);
   if (REGIONAL_DEV) {
+    w.revealSites(['*']);
     for (const t of w.techs) w.applyTech(t.id);
-    for (const item of ITEM_IDS) w.stock.set(item, 500);
+    for (const item of ITEM_IDS) w.stock.set(item, 10000);
   }
   return w;
 }
@@ -144,6 +145,10 @@ function commandSound(cmd: Command, r: unknown): void {
 
 /** 위쪽 저장 버튼: 마지막 저장이 됐는지, 그 뒤로 내가 공장을 바꿨는지 */
 const saveState = { ok: true, dirty: false };
+let savedWorld: World | null = null;
+let savedTick = -1;
+let savedTime = -1;
+let pendingSave: number | null = null;
 
 const game: GameApi = {
   getWorld: () => world,
@@ -174,10 +179,17 @@ const game: GameApi = {
   save() {
     // 손님은 호스트의 공장을 빌려 쓰는 중이라, 내 저장(혼자 하던 공장)을 덮어쓰지 않는다
     if (!session.canSave) return false;
+    if (pendingSave !== null) {
+      cancelIdleCallback(pendingSave);
+      pendingSave = null;
+    }
     try {
       localStorage.setItem(SAVE_KEY, JSON.stringify(world.serialize()));
       saveState.ok = true;
       saveState.dirty = false;
+      savedWorld = world;
+      savedTick = world.tickCount;
+      savedTime = world.time;
       return true;
     } catch (err) {
       console.warn('저장 실패', err);
@@ -205,7 +217,10 @@ const game: GameApi = {
       ui.toast('새 게임은 호스트만 시작할 수 있어요');
       return;
     }
-    backupWorld();
+    if (!backupWorld()) {
+      ui.toast(BACKUP_FAILURE, 9000);
+      return;
+    }
     game.input.resetWorld();
     world = newWorld();
     centerOnHub();
@@ -233,7 +248,7 @@ const game: GameApi = {
       return '공장 파일이 아니에요';
     }
     if (!w.regional) return '구맵 저장은 지원하지 않아요. 지역 생산망 확장 지도 공장 파일을 선택해 주세요.';
-    backupWorld();
+    if (!backupWorld()) return BACKUP_FAILURE;
     replaceWorld(w);
     return null;
   },
@@ -249,7 +264,7 @@ const game: GameApi = {
     }
     if (!w.regional) return '구맵 백업은 지원하지 않아요. 새 공장은 지역 생산망 확장 지도를 사용해요.';
     // 지금 공장과 맞바꿔 둔다 (한 번 더 누르면 다시 돌아오게)
-    backupWorld();
+    if (!backupWorld()) return BACKUP_FAILURE;
     replaceWorld(w);
     return null;
   },
@@ -268,13 +283,16 @@ let hasBackup = (() => {
   }
 })();
 
-function backupWorld(): void {
+const BACKUP_FAILURE = '현재 공장을 보관하지 못해 전환을 중단했어요. 공장을 파일로 내보낸 뒤 저장 공간을 확인해 주세요.';
+
+function backupWorld(): boolean {
   try {
     localStorage.setItem(BACKUP_KEY, JSON.stringify(world.serialize()));
     hasBackup = true;
+    return true;
   } catch (err) {
-    // 아주 큰 공장이면 저장 공간이 모자랄 수 있다. 되돌리기만 못 할 뿐 바꾸기는 그대로 한다
     console.warn('되돌리기용 보관 실패', err);
+    return false;
   }
 }
 
@@ -360,7 +378,6 @@ minimap.marks = () => [
 
 let last = performance.now();
 let uiTimer = 0;
-let saveTimer = 0;
 
 function frame(now: number): void {
   const dt = Math.min(0.25, (now - last) / 1000);
@@ -383,14 +400,24 @@ function frame(now: number): void {
     uiTimer = 0;
     ui.update();
   }
-  saveTimer += dt;
-  if (saveTimer >= AUTOSAVE_SEC) {
-    saveTimer = 0;
-    game.save();
-  }
   requestAnimationFrame(frame);
 }
 requestAnimationFrame(frame);
+
+// 화면 갱신과 독립적으로 저장한다. 멈춘 공장은 다시 직렬화하지 않고,
+// 보이는 창은 유휴 시간에 저장하되 1초 안에는 실행한다.
+setInterval(() => {
+  if (!session.canSave || pendingSave !== null) return;
+  if (saveState.ok && !saveState.dirty && savedWorld === world && savedTick === world.tickCount && savedTime === world.time) return;
+  if (document.hidden || typeof requestIdleCallback !== 'function') {
+    game.save();
+  } else {
+    pendingSave = requestIdleCallback(() => {
+      pendingSave = null;
+      game.save();
+    }, { timeout: 1000 });
+  }
+}, AUTOSAVE_SEC * 1000);
 
 // 탭이 가려지거나 창이 다른 창에 덮이면 브라우저가 화면 그리기(rAF)를 멈추거나 늦춘다.
 // 같이 하는 중이면 시뮬레이션만 따로 돌린다: 호스트가 멈추면 손님들도 멈추고, 손님이 멈추면 받은 명령이 쌓이기만 한다.

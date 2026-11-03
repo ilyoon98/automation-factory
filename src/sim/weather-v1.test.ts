@@ -74,7 +74,7 @@ describe('날씨 시작·종료', () => {
 });
 
 describe('날씨 효과', () => {
-  it('폭풍에는 트럭이 ×0.8로 달리고 칸당 전기는 그대로', () => {
+  it('폭풍에는 트럭이 ×0.8로 달리며 전력은 소비하지 않는다', () => {
     // 폭풍이 오는 씨앗과 시각을 찾는다
     let seed = 1;
     let at = 0;
@@ -120,6 +120,7 @@ describe('날씨 효과', () => {
     const dStorm = storm.v.x - 4.5;
     expect(dStorm / dCalm).toBeCloseTo(WEATHER_FX.storm.truck, 1);
     // 같은 거리만큼 쓴 전기: 칸당 15kJ
-    expect((1800 * 1.5 - storm.v.battery) / dStorm).toBeCloseTo(15, 0);
+    expect(storm.v.battery).toBe(1800);
+    expect(storm.w.power.charge).toBe(0);
   });
 });

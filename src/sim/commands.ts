@@ -31,6 +31,8 @@ export type Command =
   | { t: 'junction'; id: number; ports: JunctionPorts | null }
   | { t: 'research'; id: string }
   | { t: 'build-truck'; station: number }
+  | { t: 'upgrade-building'; id: number }
+  | { t: 'upgrade-truck'; rid: string; id: number; station: number; key: string }
   | { t: 'clone-truck'; id: number }
   | { t: 'remove-truck'; id: number }
   /** 트럭 노선 (정류장 ROUTE_MIN ~ ROUTE_MAX곳, 차례대로) */
@@ -57,6 +59,7 @@ export type Command =
   | { t: 'power-node'; id: number; node: number }
   /** 계획 운송: 품목별 1회 상한, 정기편 주기(초, 0 = 예전 방식), 조기 출발 */
   | { t: 'truck-plan'; id: number; plan: { item: ItemId; cap: number }[]; period: number; early: boolean }
+  | { t: 'truck-dispatch'; id: number; items: ItemId[]; wait: number }
   /** 계획 운송 노선 일시정지 (새 편을 싣지 않음) */
   | { t: 'truck-pause'; id: number; on: boolean }
   /** 트럭 화물을 지금 칸의 회수 더미에 내려놓기 */
@@ -100,6 +103,8 @@ export interface CommandResults {
   junction: boolean;
   research: boolean;
   'build-truck': Vehicle | null;
+  'upgrade-building': UseResult;
+  'upgrade-truck': UseResult;
   'clone-truck': Vehicle | null;
   'remove-truck': boolean;
   route: void;
@@ -116,6 +121,7 @@ export interface CommandResults {
   'zone-budget': boolean;
   project: boolean;
   'truck-plan': boolean;
+  'truck-dispatch': boolean;
   'station-dock': boolean;
   'truck-pause': boolean;
   'truck-dump': boolean;
@@ -259,6 +265,10 @@ function run(w: World, c: Command): CommandResults[Command['t']] {
         const copy = c.copy ? w.vehicles.get(c.copy) : undefined;
         return w.buildAdvancedTruck(w.buildings.get(c.station), String(c.key ?? ''), copy);
       });
+    case 'upgrade-building':
+      return w.upgradeBuilding(w.buildings.get(c.id));
+    case 'upgrade-truck':
+      return applyOnce(w, c.rid, () => w.upgradeTruck(w.vehicles.get(c.id), w.buildings.get(c.station), String(c.key ?? '')));
     case 'power-node': {
       const b = w.buildings.get(c.id);
       return b ? w.setPowerNode(b, Number(c.node) || 0) : { ok: false, reason: '건물이 없어요' };
@@ -267,6 +277,10 @@ function run(w: World, c: Command): CommandResults[Command['t']] {
       const v = w.vehicles.get(c.id);
       if (!v) return false;
       return w.setPlan(v, c.plan, c.period, !!c.early);
+    }
+    case 'truck-dispatch': {
+      const v = w.vehicles.get(c.id);
+      return !!v && w.setDispatch(v, c.items, c.wait);
     }
     case 'truck-pause': {
       const v = w.vehicles.get(c.id);
@@ -318,6 +332,10 @@ function place(w: World, c: Extract<Command, { t: 'place' }>): PlaceResult {
   // 지하 컨베이어는 입구·출구를 하나씩 정확히 놓아야 해서 드래그로 깔지 않는다
   if (tool === 'underground' && !initial) return { ok: false };
   const existing = w.buildingAt(x, y);
+  if (tool === 'miner-2' && existing?.type === 'miner') {
+    const result = w.upgradeBuilding(existing);
+    return { ...result, ...(result.ok ? { building: existing } : {}) };
+  }
   // 컨베이어 위에 컨베이어: 같은 종류면 방향만, 다른 종류면 교체 (예: 일반 → 고속)
   if (isBeltType(tool) && existing && isBeltType(existing.type)) {
     const nb = w.replaceBelt(existing, tool, dir);

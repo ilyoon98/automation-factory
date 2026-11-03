@@ -1,17 +1,7 @@
 import { UNLOADER_INTERVAL } from '../data/buildings';
 import type { Building } from '../sim/building';
 import { DX, DY } from '../sim/dir';
-import { DT, type World } from '../sim/world';
-
-/** 실제 충전원과 차량이 받은 전력만 집계한다. */
-export function chargerInfo(w: World, b: Building) {
-  const roads = [0, 1, 2, 3].map((d) => [b.x + DX[d], b.y + DY[d]])
-    .filter(([x, y]) => w.inBounds(x, y) && w.isRoad(w.idx(x, y)));
-  const trucks = [...w.vehicles.values()].filter((v) => v.charger && w.chargeSpot(v)?.id === b.id);
-  const active = trucks.filter((v) => v.receivedCharge > 0);
-  return { roads: roads.length, active: active.length, waiting: trucks.length - active.length,
-    kw: active.reduce((n, v) => n + v.receivedCharge / DT, 0) };
-}
+import { type World } from '../sim/world';
 
 /** 허브·창고를 우선하고 다른 설비와 겹친 더미도 실제 하역기와 같은 순서로 읽는다. */
 export function unloaderInfo(w: World, b: Building) {

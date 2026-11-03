@@ -277,7 +277,8 @@ async function main() {
     app.quit();
   });
   setupUpdates(win);
-  await win.loadURL(`http://localhost:${port}/`);
+  await win.loadURL(`http://localhost:${port}/${process.argv.includes('--regional-dev') ? '?regional-dev' : ''}`);
+  if (process.argv.includes('--regional-dev')) win.setTitle('자동화 공장 · 전체 해금 테스트');
 }
 
 /**

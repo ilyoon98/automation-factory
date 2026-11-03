@@ -33,7 +33,7 @@ export function constructionCheck(w: World, tool: BuildingType, hx: number, hy: 
   if (!w.unlockedBuildings.has(tool)) return { ok: false, reason: '연구 필요' };
   if (tool === 'underground' && dragging) return { ok: false, reason: '지하 컨베이어는 한 칸씩 클릭해서 배치해요' };
   const b = w.buildingAt(hx, hy);
-  if (isBeltType(tool) && b && isBeltType(b.type)) {
+  if (b && ((isBeltType(tool) && isBeltType(b.type)) || (tool === 'miner-2' && b.type === 'miner'))) {
     const affordable = tool === b.type || BUILDINGS[tool].cost.every((c) => w.stockOf(c.item) + (b.def.cost.find((v) => v.item === c.item)?.count ?? 0) >= c.count);
     return affordable ? { ok: true } : { ok: false, reason: '재료 부족' };
   }
@@ -59,13 +59,15 @@ export function pointerFeedback(w: World, s: PointerState): PointerFeedback | nu
   if (s.gesture === 'multi' || (s.shift && !s.tool && !s.paste)) return { kind: 'multi', label: '드래그: 설비 단체 선택', color: BLUE };
   if (s.paste) return { kind: 'build', label: '클릭: 청사진 배치 · 우클릭: 취소', color: GREEN };
   if (s.tool) {
-    if (s.gesture !== 'place' && b && !isBeltType(b.type) && !(s.tool === 'road' && b.type === 'road')) {
+    if (s.gesture !== 'place' && b && !isBeltType(b.type) && !(s.tool === 'road' && b.type === 'road') && !(s.tool === 'miner-2' && b.type === 'miner')) {
       return { kind: 'select', label: `클릭: ${b.def.name} 선택`, color: BLUE, target: body(b) };
     }
     const tool = s.tool, [x, y] = World.originFor(tool, h.x, h.y);
-    const target = { x, y, size: BUILDINGS[tool].size };
+    const upgrading = tool === 'miner-2' && b?.type === 'miner';
+    const target = upgrading ? body(b) : { x, y, size: BUILDINGS[tool].size };
     const check = constructionCheck(w, tool, h.x, h.y, s.gesture === 'place');
     if (!check.ok) return { kind: 'blocked', label: `건설 불가 · ${check.reason}`, color: RED, target };
+    if (upgrading) return { kind: 'build', label: '클릭: 고급 채굴기로 업그레이드', color: GREEN, target };
     const action = s.shift ? s.gesture === 'place' ? '직선 건설 중' : 'Shift 직선 건설' : s.gesture === 'place' ? '건설 중' : '클릭: 건설';
     return { kind: 'build', label: `${BUILDINGS[tool].name} · ${action}`, color: GREEN, target };
   }

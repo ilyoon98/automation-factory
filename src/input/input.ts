@@ -348,7 +348,7 @@ export class Input implements ViewState {
       // 도구를 든 채로 이미 있는 건물을 누르면 짓지 않고 그 건물을 연다
       // (컨베이어 덮어쓰기, 도로를 든 채 도로에서 시작하는 드래그는 예외)
       const existing = this.cb.getWorld().buildingAt(t.x, t.y);
-      if (existing && !isBeltType(existing.type) && !(this.tool === 'road' && existing.type === 'road')) {
+      if (existing && !isBeltType(existing.type) && !(this.tool === 'road' && existing.type === 'road') && !(this.tool === 'miner-2' && existing.type === 'miner')) {
         this.selectedId = existing.id;
         this.selectedVehicle = null;
         this.cb.changed();

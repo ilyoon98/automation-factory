@@ -184,20 +184,6 @@ export const TECHS: Tech[] = [
     requires: ['steel', 'electronics'],
     unlockBuildings: ['road', 'station'],
   },
-  {
-    id: 'battery',
-    icon: '🔋',
-    category: 'logistics',
-    name: '고용량 배터리',
-    description: '트럭 배터리 1.5배 (120 → 180칸), 정류장 충전 1.5배 빠르게. 충전기: 길 중간에서 배터리가 모자란 트럭을 빠르게 충전',
-    cost: [
-      { item: 'copper-plate', count: 300 },
-      { item: 'circuit', count: 200 },
-      { item: 'steel', count: 100 },
-    ],
-    requires: ['vehicles'],
-    unlockBuildings: ['charger'],
-  },
 
   // ───── M7: 광맥 독립 ─────
   {
@@ -523,7 +509,7 @@ export const ENDLESS_TECHS: EndlessTech[] = [
     id: 'endless-truck',
     icon: '🚚',
     name: '트럭 성능',
-    description: '트럭이 단계마다 10% 빨라지고 배터리도 10% 커져요. 칸당 드는 전기와 충전 속도는 그대로예요.',
+    description: '트럭이 단계마다 10% 빨라져요.',
     base: [
       { item: 'steel', count: 150 },
       { item: 'gear', count: 100 },

@@ -138,7 +138,7 @@ export function replaceTransportInfo(el: HTMLElement, html: string, context: str
   if (same) {
     const attrs = ['data-target-item', 'data-target-n'];
     if (planVersion !== undefined && el.dataset.transportPlanVersion === planVersion) {
-      attrs.push('data-plan-item', 'data-plan-cap', 'data-plan-period', 'data-plan-early');
+      attrs.push('data-plan-item');
     }
     for (const attr of attrs) {
       for (const field of el.querySelectorAll<HTMLInputElement | HTMLSelectElement>(`[${attr}]`)) {
@@ -149,6 +149,10 @@ export function replaceTransportInfo(el: HTMLElement, html: string, context: str
   }
   const scroll = same ? el.scrollTop : 0;
   el.innerHTML = html;
+  // 접힌 설정을 먼저 복원해야 그 안의 이름 입력에도 포커스를 돌려줄 수 있다.
+  for (const d of el.querySelectorAll<HTMLDetailsElement>('details[data-transport-section]')) {
+    d.open = open.has(d.dataset.transportSection!);
+  }
   const nextName = el.querySelector<HTMLInputElement>('[data-name-input]');
   if (nameDraft && nextName && nextName.defaultValue === nameDraft.initial) {
     nextName.value = nameDraft.value;
@@ -159,9 +163,6 @@ export function replaceTransportInfo(el: HTMLElement, html: string, context: str
   }
   el.dataset.transportContext = context;
   el.dataset.transportPlanVersion = planVersion ?? '';
-  for (const d of el.querySelectorAll<HTMLDetailsElement>('details[data-transport-section]')) {
-    d.open = open.has(d.dataset.transportSection!);
-  }
   for (const saved of draft) {
     const field = el.querySelector<HTMLInputElement | HTMLSelectElement>(saved.selector);
     if (!field) continue;

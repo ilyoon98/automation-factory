@@ -19,7 +19,7 @@ import {
 } from '../data/buildings';
 import { ITEMS, ITEM_IDS, type ItemId, type ItemStack } from '../data/items';
 import { RECIPES, recipesFor, type MachineKind, type Recipe } from '../data/recipes';
-import { ENDLESS_BY_ID, ENDLESS_REQUIRES, ENDLESS_TECHS, TECH_CATEGORIES, endlessCost, type TechCategory } from '../data/tech';
+import { ENDLESS_BY_ID, ENDLESS_REQUIRES, ENDLESS_TECHS, TECH_CATEGORIES, TECH_ADVANCED_TRUCK, endlessCost, type TechCategory } from '../data/tech';
 import type { Input } from '../input/input';
 import { DAY_SEC, ambientEnabled, dayLabel, dayPhase, setAmbientEnabled, skyLabel } from '../render/ambient';
 import { darkness } from '../sim/sky';
@@ -37,7 +37,6 @@ import { DX, DY, type Dir } from '../sim/dir';
 import { ROUTE_MAX, ROUTE_MIN, TRUCK_KIND_LABEL, VEHICLE_STATUS_LABEL, type RouteStop, type Vehicle, type VehicleStatus } from '../sim/vehicle';
 import {
   PATCH_LOW_MIN,
-  DT,
   describeEdit,
   patchAlert,
   storageBounds,
@@ -65,7 +64,7 @@ import { topbar } from './topbar';
 import { reducedEffects, setReducedEffects } from '../render/effects';
 import { ResearchObserver, NoticeQueue, completionSummary, type NoticeKind } from './completion';
 import { focusRouteStation, reachableStations, refreshTransportItemSelect, replaceTransportInfo, sourceStock, stationMapButton, transportItemOptions, transportSection } from './transport';
-import { chargerInfo, equipmentHelp, unloaderInfo } from './equipment-info';
+import { equipmentHelp, unloaderInfo } from './equipment-info';
 import { planRoad, type RoadPlanResult } from '../sim/road-plan';
 import { replaceRoadBuilder, roadBuilderHtml, roadPlanKey } from './road-builder';
 import { replacePanel } from './panel';
@@ -138,15 +137,6 @@ const VEHICLE_STATUS_COLOR: Record<VehicleStatus, string> = {
   satisfied: '#3f8a3a',
   returning: '#e8893a',
   paused: '#8a7a66',
-};
-
-/** 트럭이 멈춰 있을 때 할 일 */
-const VEHICLE_HINT: Partial<Record<VehicleStatus, string>> = {
-  waiting: '싣는 정류장에 짐이 없어요. 컨베이어로 정류장에 넣어 주세요.',
-  'no-battery': `배터리가 떨어져 천천히 가요. 정류장에 닿으면 충전해요. 한 번 충전으로 기본 ${(TRUCK.battery / TRUCK.drive) * TRUCK.speed}칸까지 가니, 길이 더 길면 연구 "고용량 배터리"의 충전기를 길 중간 도로 옆에 놓아 주세요.`,
-  'unload-full': '내리는 정류장이 꽉 찼어요. 정류장 앞(노란 화살표)으로 짐이 빠져나가는지 확인하세요.',
-  'no-route': '다음 정류장으로 가는 도로가 끊겼어요. 도로를 이어 주세요.',
-  'no-station': '노선의 정류장을 모두 골라 주세요. 바로 다음 정류장은 서로 달라야 해요.',
 };
 
 const STATION_MODE_NAME: Record<StationMode, string> = { load: '벨트 입고', unload: '벨트 출고' };
@@ -633,6 +623,11 @@ export class UI {
       }
       const v = this.selectedVehicle();
       if (v) {
+        if (sel.dataset.act === 'dispatch-wait') {
+          const items = v.route.length === 2 && v.route[0].act === 'load' && v.route[1].act === 'unload' ? v.plan.map(p => p.item) : [];
+          game.exec({ t: 'truck-dispatch', id: v.id, items, wait: Number(sel.value) }, ok => { if (!ok) this.toast('출발 설정을 확인해 주세요'); this.update(); });
+          return;
+        }
         if (sel.dataset.act === 'truck-name') {
           game.exec({ t: 'truck-name', id: v.id, name: sel.value });
           this.update();
@@ -990,7 +985,7 @@ export class UI {
       this.achFocus = null;
     }
     if (id === 'goals') this.goalsKey = '';
-    if (id === 'stats') this.statsAt = 0;
+    if (id === 'stats') this.statsAt = -Infinity;
     this.update();
   }
 
@@ -1882,7 +1877,7 @@ export class UI {
         .map((t) => `${t.id}${t.name}${t.stops.map((st) => st.id + st.act).join('-')}`)
         .join(',')}:${w.canBuildTruck(b).reason ?? ''}`;
     }
-    const key = `${b.id}|${b.recipe}|${b.filter}|${b.dir}|${JSON.stringify(b.junction)}|${w.unlockedRecipes.size}|${srcKey}|${this.useSig(w, b)}|${b.type === 'hub' ? `${w.stats.projectOn}${w.stats.projectDelivered}${w.researched.size}` : ''}`;
+    const key = `${b.id}|${b.type}|${b.recipe}|${b.filter}|${b.dir}|${JSON.stringify(b.junction)}|${w.unlockedRecipes.size}|${w.unlockedBuildings.size}|${srcKey}|${this.useSig(w, b)}|${b.type === 'hub' ? `${w.stats.projectOn}${w.stats.projectDelivered}${w.researched.size}` : ''}`;
     if (key !== this.infoKey) {
       this.infoKey = key;
       replaceTransportInfo(el, this.infoStatic(w, b), `building:${b.id}`);
@@ -1892,22 +1887,12 @@ export class UI {
     if (lineItems) el.querySelectorAll<HTMLElement>('[data-line-count]').forEach((s) => {
       s.textContent = String(lineItems.get(s.dataset.lineCount as ItemId) ?? 0);
     });
-    const stationPower = el.querySelector('.station-power');
-    if (stationPower) stationPower.innerHTML = this.gridLines(w, b).join('');
+    const stationMetrics = el.querySelector('.station-metrics');
+    if (stationMetrics) stationMetrics.innerHTML = this.stationMetrics(w, b);
     // 정류장의 트럭 목록: 버튼은 그대로 두고 상태 글자만 바꾼다
     el.querySelectorAll<HTMLElement>('[data-truck-status]').forEach((s) => {
       const t = w.vehicles.get(Number(s.dataset.truckStatus));
       if (t) s.textContent = `· ${VEHICLE_STATUS_LABEL[t.status]} (${t.load}/${w.truckCapacity(t)})`;
-    });
-    // 현재/목표와 입고 예정을 다른 줄에 표시한다. 예약량을 현재 재고처럼 더하지 않는다.
-    el.querySelectorAll<HTMLElement>('[data-target-row]').forEach((s) => {
-      const item = s.dataset.targetRow as ItemId;
-      s.textContent = String(w.poolCount(b, item));
-    });
-    el.querySelectorAll<HTMLElement>('[data-target-incoming]').forEach((s) => {
-      const incoming = w.inReserved(b, s.dataset.targetIncoming as ItemId);
-      s.hidden = incoming === 0;
-      s.textContent = `입고 예정 ${incoming}개`;
     });
     // 목록을 다시 만들지 않고 개수만 바꾼다 (고르는 도중에 목록이 흔들리지 않게)
     if (src) {
@@ -1988,12 +1973,14 @@ export class UI {
     let html = `<header><img class="swatch" src="${buildingIconUrl(b.type)}" alt=""><h3>${escapeHtml(title)}</h3>
       <button class="x" data-act="close">×</button></header>`;
     if (b.type === 'station') {
-      html += `<label class="recipe">이름 <input data-name-input data-act="station-name" maxlength="32" value="${escapeHtml(b.stationName)}" placeholder="정류장 ${b.stationNo}" aria-label="정류장 이름"></label><p class="muted">Enter 또는 다른 곳 클릭으로 저장 · 비우면 기본 이름</p>`;
+      const name = `<label class="recipe">이름 <input data-name-input data-act="station-name" maxlength="32" value="${escapeHtml(b.stationName)}" placeholder="정류장 ${b.stationNo}" aria-label="정류장 이름"></label>`;
       const opt = (m: StationMode) =>
         `<option value="${m}" ${b.stationMode === m ? 'selected' : ''}>${m === 'load' ? '벨트 입고 (상차)' : '벨트 출고 (하차)'}</option>`;
-      html += `<label class="recipe">벨트 입출력 <select data-act="station-mode">
+      html += '<div class="dyn"></div>';
+      html += transportSection('settings', '설정', `${name}<label class="recipe">벨트 입출력 <select data-act="station-mode">
         ${opt('load')}${opt('unload')}</select></label>
-        <div class="transport-flow muted">${b.stationMode === 'load' ? '컨베이어 → 트럭' : '트럭 → 앞면 출력'}</div><div class="dyn"></div>`;
+        <div class="transport-flow muted">${b.stationMode === 'load' ? '컨베이어 → 정류장 입고' : '정류장 → 앞면 출력'}</div>
+        `);
       html += '<button data-act="road-start">도로로 연결</button><div class="road-builder" hidden></div>';
       const trucks = w.trucksOf(b);
       const check = w.canBuildTruck(b);
@@ -2011,8 +1998,8 @@ export class UI {
       if (w.regional) {
         const advanced = this.advTruckBlock(w, b);
         if (advanced) html += transportSection('advanced-truck', '고급 트럭 조립', advanced);
-        html += transportSection('charging', '충전·전력 상세', '<div class="station-power"></div>' + this.budgetBlock(w, b) + this.powerNodeBlock(w, b));
       }
+      html += transportSection('metrics', '운행 정보', '<div class="station-metrics"></div>');
       if (w.regional) html += this.dockBlock(w, b);
       html += transportSection('help', '정류장 사용법', `<p class="muted">${def.description}</p>`);
     }
@@ -2021,7 +2008,6 @@ export class UI {
       if (node) html += transportSection('power-node', '전력 연결 선택', node);
     }
     if (isLineType(b.type)) html += this.lineBlock(w, b);
-    if (b.type === 'charger' && w.regional) html += transportSection('charge-budget', '충전 예산', this.budgetBlock(w, b));
     if (isRecipeMachine(b.type)) {
       // 들어오는 재료로 만들 수 있는 레시피를 위로, 일부만 들어오는 것, 나머지 순 (아무것도 안 이어졌으면 그대로)
       const incoming = new Set(incomingItems(w, b));
@@ -2108,6 +2094,11 @@ export class UI {
       }
     }
     html += b.type === 'station' ? '' : '<div class="dyn"></div>' + transportSection('building-help', '설비 사용법', equipmentHelp(w, b));
+    const upgrade = b.type === 'miner' ? 'miner-2' : b.type === 'belt' ? 'fast-belt' : null;
+    if (upgrade && w.unlockedBuildings.has(upgrade)) {
+      const cost = BUILDINGS[upgrade].cost.map(c => ({ ...c, count: Math.max(0, c.count - (b.def.cost.find(old => old.item === c.item)?.count ?? 0)) })).filter(c => c.count);
+      html += transportSection('upgrade', '업그레이드', `<button data-act="upgrade-building">${BUILDINGS[upgrade].name}로 업그레이드 <span class="cost">${cost.map(c => `${itemIcon(c.item)}${c.count}`).join(' ')}</span></button>`);
+    }
     html += '<div class="actions">';
     if (!['hub', 'generator', 'underground', 'storage', 'road', 'solar', 'hydro', 'wind', 'charger', 'planter'].includes(b.type)) {
       html += `<button data-act="rotate">회전 (R)</button>`;
@@ -2155,24 +2146,17 @@ export class UI {
     }
     const rows = this.planRows.get(v.id) ?? Math.max(1, v.plan.length);
     const opts = (sel: ItemId | '') => transportItemOptions(w, v.route[0].id, sel, true, '품목 고르기');
-    let html = `<div class="route plan"><div class="route-head"><span>품목별 적재 상한</span><span class="muted">합계 ${w.truckCapacity(v)}개 이하</span></div>`;
+    let html = '<div class="route plan">';
     for (let i = 0; i < rows; i++) {
       const p = v.plan[i];
-      html += `<div class="line"><select data-plan-item="${i}">${opts(p?.item ?? '')}</select>
-        <input type="number" min="1" max="${w.truckCapacity(v)}" value="${p?.cap ?? 10}" data-plan-cap="${i}" style="width:4em"></div>`;
+      html += `<div class="line"><select data-plan-item="${i}">${opts(p?.item ?? '')}</select></div>`;
     }
-    const per = [0, 60, 120, 180, 240]
-      .map((s) => `<option value="${s}" ${s === v.period ? 'selected' : ''}>${s ? `${s}초마다` : '짐 대기 후 출발'}</option>`)
-      .join('');
     html += `<button data-act="plan-row">+ 품목</button>
-      <label class="recipe">출발 <select data-plan-period>${per}</select></label>
-      <label><input type="checkbox" data-plan-early ${v.early ? 'checked' : ''}> 다 실으면 바로 출발</label>
-      <div class="actions"><button data-act="plan-apply">계획 적용</button>${v.plan.length ? '<button data-act="plan-clear">계획 끄기</button>' : ''}</div>
-      ${transportSection('plan-help', '운송 계획 도움말', '<p class="muted">목적지에 목표 재고를 정하면 부족한 만큼만 실어요. 재고와 도착 공간은 자동으로 예약해요. 출발 간격이 없으면 새 짐 없이 5초 기다린 뒤 출발해요.</p>')}</div>`;
-    return transportSection('plan', `품목별 운송 설정${v.plan.length ? ` · ${v.plan.length}품목 사용 중` : ''}`, html);
+      <div class="actions"><button data-act="plan-apply">품목 적용</button>${v.plan.length ? '<button data-act="plan-clear">품목 선택 해제</button>' : ''}</div></div>`;
+    return transportSection('plan', `운반 품목${v.plan.length ? ` · ${v.plan.length}종` : ''}`, html);
   }
 
-  /** 정류장 연결 창고와 목표 재고 (확장 세계) */
+  /** 정류장 연결 창고 (확장 세계) */
   private dockBlock(w: World, b: Building): string {
     const groups = w.touchingStorageGroups(b);
     let html = `<label class="recipe">연결 창고 <select data-act="station-dock"><option value="0">없음 (정류장만)</option>${groups
@@ -2183,26 +2167,7 @@ export class UI {
       })
       .join('')}</select></label>`;
     if (!groups.length) html += '<p class="muted">창고를 붙여 보관량을 늘릴 수 있어요.</p>';
-    let targets = '<div class="route-head"><span>현재 / 목표</span></div>';
-    for (const [item, n] of b.targets) {
-      targets += `<div class="row"><span>${itemIcon(item)}${ITEMS[item].name}</span><b><span data-target-row="${item}"></span> / ${n}
-        <button data-act="target-del" data-target-remove="${item}" title="목표 지우기">×</button></b></div>
-        <small class="muted target-incoming" data-target-incoming="${item}" hidden></small>`;
-    }
-    targets += `<div class="line"><select data-target-item><option value="">품목</option>${ITEM_IDS.map((i) => `<option value="${i}">${ITEMS[i].name}</option>`).join('')}</select>
-      <input type="number" min="1" value="40" data-target-n style="width:4em"><button data-act="target-add">목표 정하기</button></div>`;
-    return html + transportSection('targets', `목표 재고${b.targets.size ? ` · ${b.targets.size}품목` : ''}`, targets);
-  }
-
-  /** 정류장·충전기가 속한 거점의 차량 충전 예산 고르기 */
-  private budgetBlock(w: World, b: Building): string {
-    const z = w.siteOf(b);
-    if (!z) return '';
-    const opts = [0, 100, 200, 300, 400, 500, 600, 700, 800]
-      .map((k) => `<option value="${k}" ${k === z.budget ? 'selected' : ''}>${k} kW${k === GRID.charge ? ' (기본)' : ''}</option>`)
-      .join('');
-    return `<label class="recipe">거점 ${z.id} 충전 예산 <select data-act="zone-budget" data-zone="${z.id}">${opts}</select></label>
-      <p class="muted">이 거점의 모든 정류장·충전기가 나눠 써요. 먼저 온 트럭부터 받고, 남은 트럭은 기다려요. 전기는 정류장이 접속한 망에서 받아요.</p>`;
+    return transportSection('dock', '창고 연결', html);
   }
 
   /** 전기를 받는 건물: 공급 범위 안 노드가 여럿이면 접속할 노드를 고른다 (다른 망이면 그 망에서 받는다) */
@@ -2243,9 +2208,6 @@ export class UI {
       const pct = b.energy / GRID.accumulator.capacity;
       lines.push(`<div class="row"><span>저장</span><b>${(b.energy / 1000).toFixed(2)} / ${GRID.accumulator.capacity / 1000} MJ <span class="muted">${b.load > 0 ? `충전 ${Math.round(b.load)}kW` : b.load < 0 ? `방전 ${Math.round(-b.load)}kW` : ''}</span></b></div>`);
       lines.push(`<div class="bar"><div style="width:${pct * 100}%;background:#3f8a6a"></div></div>`);
-    }
-    if ((b.type === 'station' || b.type === 'charger') && site) {
-      lines.push(`<div class="row"><span>거점 충전 배정</span><b>${Math.round(w.siteState.get(site.id)?.charge ?? 0)} / 예산 ${site.budget} kW</b></div>`);
     }
     const cut = node ? w.removalPreview(b) : null;
     if (cut && cut.cut) {
@@ -2349,7 +2311,7 @@ export class UI {
     const have = inside + (s?.free ?? 0) > 0;
     const busy = this.useBusy.has(`adv:${b.id}`);
     html += `<button data-act="adv-truck" ${!no && have && !busy ? '' : 'disabled'}>🚛 고급 트럭 조립</button>
-      <p class="muted">${have ? '허브 재료는 쓰지 않아요. 새 트럭은 짐 0·노선 없음·배터리 0kJ로 옆 도로에 서서 이 정류장 전력으로 충전해요.' : '이 정류장이나 붙은 창고에 고급 트럭 조립품을 실제로 옮겨 와야 해요 (다른 정류장·허브의 것은 쓰지 않아요).'}</p></div>`;
+      <p class="muted">${have ? '현지 조립품 1개를 사용해요.' : '이 정류장이나 붙은 창고에 고급 트럭 조립품을 실제로 옮겨 와야 해요 (다른 정류장·허브의 것은 쓰지 않아요).'}</p></div>`;
     return html;
   }
 
@@ -2486,13 +2448,6 @@ export class UI {
       case 'fuel-generator':
         lines.push(`<div class="row"><span>정유 연료</span><b>${itemIcon('fuel')} ${b.fuel} / ${GRID.fuel.cap}</b></div>`);
         break;
-      case 'charger': {
-        const info = chargerInfo(w, b);
-        lines.push(`<div class="row"><span>실제 충전</span><b>${info.active}대 · ${Math.round(info.kw)} kW</b></div>`);
-        if (info.waiting) lines.push(`<div class="row"><span>충전 대기</span><b>${info.waiting}대</b></div>`);
-        if (!info.roads) lines.push('<p class="bad">옆에 도로가 필요해요.</p>');
-        break;
-      }
       case 'belt':
       case 'fast-belt':
         lines.push(`<div class="row"><span>운반 중</span><b>${countItems(b)}개</b></div>`);
@@ -2544,47 +2499,19 @@ export class UI {
       }
       case 'station': {
         const load = b.stationMode === 'load';
-        if (w.regional) lines.push(`<div class="row"><span>거점</span><b>${b.zone ? `거점 ${b.zone}` : '미배정'}</b></div>`);
-        if (w.regional) {
-          const net = w.netOf(b);
-          const sat = net ? w.netState.get(net)?.satisfaction ?? 1 : 0;
-          if (!net || !w.netHasSource(net)) lines.push('<p class="bad">충전 전력 없음</p>');
-          else if (sat < 0.999) lines.push('<p class="bad">충전 전력 부족</p>');
-        }
+        let blocked = !w.stationStops(b).length ? '도로 미연결' : '';
+
+        if (blocked) lines.push(`<div class="row"><span>상태</span><b class="bad">${blocked}</b></div>`);
         const box = load ? b.inBuf : b.outBuf;
         let total = 0;
         for (const n of box.values()) total += n;
         lines.push(`<div class="row"><span>${load ? '실을 짐' : '내보낼 짐'}</span><b>${total} / ${STATION_CAPACITY}</b></div>`);
-        // 오가는 트럭들의 운송량 합 (한 바퀴 기준)
-        const rates = w.trucksOf(b).map((t) => t.perMinute);
-        if (rates.length) {
-          const known = rates.filter((r): r is number => r !== null);
-          const sum = known.reduce((s, r) => s + r, 0);
-          lines.push(
-            `<div class="row"><span>트럭 운송량</span><b>${known.length ? `분당 ${fmtNum(sum)}개` : '<span class="muted">한 바퀴 돌면 나와요</span>'}</b></div>`,
-          );
-        }
-        // 여기 서서 충전하는 트럭 (공장 전력을 쓴다)
-        const charging = w.trucksOf(b).filter(
-          (t) =>
-            (t.state === 'loading' || t.state === 'unloading') &&
-            t.stopId === b.id &&
-            t.receivedCharge > 0,
-        );
-        if (charging.length) {
-          lines.push(
-            `<div class="row"><span>충전 중</span><b>${charging.length}대 · ${Math.round(charging.reduce((sum, t) => sum + t.receivedCharge / DT, 0))} kW</b></div>`,
-          );
-        }
         const rows = [...box]
           .filter(([, n]) => n > 0)
           .sort((a, c) => c[1] - a[1])
           .map(([i, n]) => `<div class="row content-row">${itemIcon(i)}<span>${ITEMS[i].name}</span><b>${n}</b></div>`)
           .join('');
         lines.push(rows);
-        if (!w.stationStops(b).length) {
-          lines.push(`<p class="bad">옆에 도로가 없어요. 정류장 테두리에 도로가 닿아야 트럭이 서요.</p>`);
-        }
         break;
       }
       case 'hub':
@@ -2595,6 +2522,20 @@ export class UI {
   }
 
   // ───────────────────────── 트럭 정보창 ─────────────────────────
+
+  private stationMetrics(w: World, b: Building): string {
+    const lines: string[] = [];
+        // 오가는 트럭들의 운송량 합 (한 바퀴 기준)
+        const rates = w.trucksOf(b).map((t) => t.perMinute);
+        if (rates.length) {
+          const known = rates.filter((r): r is number => r !== null);
+          const sum = known.reduce((s, r) => s + r, 0);
+          lines.push(
+            `<div class="row"><span>트럭 운송량</span><b>${known.length ? `분당 ${fmtNum(sum)}개` : '<span class="muted">한 바퀴 돌면 나와요</span>'}</b></div>`,
+          );
+        }
+    return lines.join('');
+  }
 
   private updateVehicleInfo(w: World, v: Vehicle): void {
     const el = $('info');
@@ -2613,7 +2554,7 @@ export class UI {
       const station = w.buildings.get(stop.id);
       return station?.type === 'station' ? `${stop.id}:${reachable.has(stop.id) ? 1 : 0}` : `${stop.id}:deleted`;
     }).join(',');
-    const key = `v${v.id}|${v.name}|${stops.map((st) => `${st.id}${st.act}${st.item ?? ''}${w.buildings.get(st.id)?.stationName ?? ''}`).join(',')}|${!!v.pendingStops}|${w.endlessLevel('endless-truck')}|${stations.map((s) => `${s.id}${s.stationMode}${s.stationName}`).join(',')}|${roadState}|${clone.reason ?? ''}|${JSON.stringify(v.plan)}${v.period}${v.early}${v.paused}|${this.planRows.get(v.id) ?? ''}`;
+    const key = `v${v.id}|${v.kind}|${v.departureWait}|${w.researched.has(TECH_ADVANCED_TRUCK)}|${v.name}|${stops.map((st) => `${st.id}${st.act}${st.item ?? ''}${w.buildings.get(st.id)?.stationName ?? ''}`).join(',')}|${!!v.pendingStops}|${w.endlessLevel('endless-truck')}|${stations.map((s) => `${s.id}${s.stationMode}${s.stationName}`).join(',')}|${roadState}|${clone.reason ?? ''}|${JSON.stringify(v.plan)}${v.period}${v.early}${v.paused}|${this.planRows.get(v.id) ?? ''}`;
     if (key !== this.infoKey) {
       this.infoKey = key;
       const opt = (sel: number) =>
@@ -2626,11 +2567,9 @@ export class UI {
           .join('');
       replaceTransportInfo(el, `<header><img class="swatch" src="${truckIconUrl()}" alt=""><h3>${escapeHtml(v.label)}</h3>
           <button class="x" data-act="close">×</button></header>
-        <label class="recipe">이름 <input data-name-input data-act="truck-name" maxlength="32" value="${escapeHtml(v.name)}" placeholder="${TRUCK_KIND_LABEL[v.kind]} ${v.id}" aria-label="트럭 이름"></label><p class="muted">Enter 또는 다른 곳 클릭으로 저장 · 비우면 기본 이름</p>
         <div class="dyn"></div>
-        <div class="route">
+        ${transportSection('route', '노선', `<div class="route">
           <div class="route-head"><b>노선 ↻</b><span class="muted">도로 연결 ${stations.length}곳</span></div>
-          ${stations.length ? '' : '<p class="bad">연결된 정류장이 없어요. 도로를 이어 주세요.</p>'}
           ${stops
             .map(
               (st, i) => `<div class="stop" data-stop="${i}">
@@ -2657,8 +2596,10 @@ export class UI {
             .join('')}
           <button data-act="stop-add" ${stops.length >= ROUTE_MAX ? 'disabled' : ''}>+ 정류장 더하기 <span class="muted">(최대 ${ROUTE_MAX}곳)</span></button>
         </div>
+        <label class="recipe">출발 <select data-act="dispatch-wait" title="만차면 즉시, 덜 찼으면 정류장 도착 후 설정 시간에 출발">${v.departureWait === null ? '<option value="legacy" selected disabled>이전 설정</option>' : ''}${[5,10,15,30].map(wait => `<option value="${wait}" ${wait === v.departureWait ? 'selected' : ''}>만차 또는 ${wait}초</option>`).join('')}</select></label>
         ${w.regional ? this.planBlock(w, v) : ''}
         ${w.regional && v.plan.length ? `<div class="actions"><button data-act="plan-pause">${v.paused ? '▶ 노선 다시 운행' : '⏸ 노선 일시정지'}</button></div>` : ''}
+        `)}
         ${transportSection('metrics', '운행 정보', '<div class="vehicle-metrics"></div>')}
         <div class="actions">
           ${
@@ -2671,19 +2612,21 @@ export class UI {
           <button data-act="follow">📍 트럭으로 가기</button>
         </div>
         ${transportSection('help', '운송 도움말', `<p class="muted">정류장을 순서대로 돌고 마지막에는 처음으로 돌아와요. 같은 도로로 갈 수 있는 정류장만 목록에 보여요.</p>
-          <p class="muted">싣는 곳에서는 가득 차거나 새 짐 없이 ${TRUCK.wait}초 기다리면 출발하고, 내리는 곳에서는 모두 내린 뒤 출발해요. 운송 계획 사용 시 설정한 주기를 따라요.</p>
-          ${v.kind === 'advanced' ? '<p class="muted">고급 트럭은 노선이 없어도 조립한 정류장에서 충전해요.</p>' : ''}`)}
-        ${transportSection('manage', '차량 관리', `<div class="actions">${w.regional ? '<button data-act="truck-dump">📦 화물 내려놓기</button>' : ''}<button data-act="remove-truck" class="danger">철거 (Del)</button></div>`)}
-        `, `vehicle:${v.id}`, JSON.stringify([v.plan, v.period, v.early]));
+          <p class="muted">만차 또는 도착 후 설정 시간이 지나면 출발해요. 빈 차는 짐을 기다리고, 도착지에서는 다 내린 뒤 출발해요.</p>
+          `)}
+        ${transportSection('manage', '차량 설정', `<label class="recipe">이름 <input data-name-input data-act="truck-name" maxlength="32" value="${escapeHtml(v.name)}" placeholder="${TRUCK_KIND_LABEL[v.kind]} ${v.id}" aria-label="트럭 이름"></label><div class="actions">${w.regional && v.kind === 'basic' && w.researched.has(TECH_ADVANCED_TRUCK) ? `<button data-act="upgrade-truck">고급 트럭으로 업그레이드 <span class="cost">${itemIcon('truck-kit')}1</span></button>` : ''}${w.regional ? '<button data-act="truck-dump">📦 화물 내려놓기</button>' : ''}<button data-act="remove-truck" class="danger">철거 (Del)</button></div>`)}
+        `, `vehicle:${v.id}`, JSON.stringify(v.plan.map(p => p.item)));
     }
     const lines: string[] = [];
     const st = w.buildings.get(v.stopId);
     const shortReason: Partial<Record<VehicleStatus, string>> = {
       waiting: v.stopItem ? `${ITEMS[v.stopItem].name} 대기` : '실을 짐 대기',
       'no-supply': '출발지 재료 부족', 'unload-full': '도착지 보관 공간 부족',
+      'no-route': '도로 끊김', 'no-station': '노선 정류장 미설정',
+      'no-battery': '배터리 부족',
+      scheduled: v.departureWait !== null ? '출발 대기' : VEHICLE_STATUS_LABEL.scheduled,
     };
     let state = shortReason[v.status] ?? VEHICLE_STATUS_LABEL[v.status];
-    if (v.status === 'charging' && v.receivedCharge <= 0) state = '충전 대기 (받은 전력 없음)';
     if (v.status === 'moving' && st) state += ` → ${st.stationLabel} (${v.stops[v.stop].act === 'load' ? '실으러' : '내리러'})`;
     // 노선에서 지금 가거나 서 있는 정류장 표시
     el.querySelectorAll<HTMLElement>('.route [data-stop]').forEach((row) => row.classList.toggle('now', !v.pendingStops && Number(row.dataset.stop) === v.stop));
@@ -2693,40 +2636,25 @@ export class UI {
       const source = w.buildings.get(stop.id);
       const planned = w.regional && v.plan.length > 0 && stops.length === 2 && stops[0].act === 'load' && stops[1].act === 'unload';
       const stock = sourceStock(w, stop.id, planned, v.id);
-      row.innerHTML = `<div class="muted">담을 수 있는 재고 · ${planned ? '정류장 + 연결 창고' : '정류장 적재함'}</div>` +
-        (stock.length ? stock.map(i => `<div class="row"><span>${itemIcon(i.item)} ${ITEMS[i.item].name}</span><b>${i.available}개${i.available !== i.count ? ` <small class="muted">(재고 ${i.count}, 다른 트럭 예약 ${i.count - i.available})</small>` : ''}</b></div>`).join('') : `<p class="muted">${source?.type === 'station' ? '현재 담을 재고가 없어요. 입고되면 표시돼요.' : '정류장을 먼저 골라 주세요.'}</p>`) +
-        (!planned && source?.dock ? '<p class="muted">연결 창고의 재고를 직접 실으려면 품목별 운송 계획을 설정해 주세요.</p>' : '') +
-        (planned ? '<p class="muted">계획 품목·상한·목적지 수요에 따라 실제 적재량이 정해져요.</p>' : '');
+      row.innerHTML = `<div class="muted">${planned ? '정류장·창고 재고' : '정류장 재고'}</div>` +
+        (stock.length ? stock.map(i => `<div class="row"><span>${itemIcon(i.item)} ${ITEMS[i.item].name}</span><b>${i.available}개${i.available !== i.count ? ` <small class="muted">(예약 ${i.count - i.available})</small>` : ''}</b></div>`).join('') : `<p class="muted">${source?.type === 'station' ? '재고 없음' : '정류장 미선택'}</p>`);
     }
-    if (v.pendingStops) lines.push('<p class="muted">새 노선은 현재 화물의 배송·반송을 마친 뒤 적용해요.</p>');
+    if (v.pendingStops) lines.push('<p class="muted">배송·반송 후 노선 변경</p>');
     const cargo = [...v.cargo].filter(([, n]) => n > 0).map(([i, n]) => `${itemIcon(i)}${n}`).join(' ');
-    lines.push(`<div class="row"><span>짐</span><b>${cargo || '<span class="muted">없음</span>'} <span class="muted">${v.load} / ${w.truckCapacity(v)}</span></b></div>`);
-    lines.push(`<div class="bar"><div style="width:${(v.load / w.truckCapacity(v)) * 100}%;background:#c9b27a"></div></div>`);
-    // 배터리: 남은 양과 그만큼 갈 수 있는 칸 수. 충전 중이면 공장 전력이 모자란 만큼 느려진다
-    const charge = v.battery / w.truckBattery(v);
-    const range = Math.floor(v.battery / w.truckPerTile(v));
-    const charging = v.status === 'charging' || ((v.state === 'loading' || v.state === 'unloading') && charge < 1);
-    const rate = charging ? v.receivedCharge > 0 ? ` · 충전 ${Math.round(v.receivedCharge / DT)}kW` : ' · 충전 대기 0kW' : '';
-    const batColor = charge > 0.5 ? '#3f8a3a' : charge > 0.2 ? '#b7791f' : '#c0392b';
-    lines.push(`<div class="row"><span>배터리</span><b>${Math.round(charge * 100)}% <span class="muted">${range}칸${rate}</span></b></div>`);
-    lines.push(`<div class="bar"><div style="width:${charge * 100}%;background:${batColor}"></div></div>`);
-    const disconnected = stops.filter((s) => s.id && !reachable.has(s.id));
-    if (disconnected.length) lines.push('<p class="bad">노선의 도로가 끊겼어요. 정류장 연결을 확인하세요.</p>');
+    lines.push(`<div class="row"><span>짐</span><b>${cargo ? `${cargo} <span class="muted">${v.load} / ${w.truckCapacity(v)}</span>` : '<span class="muted">없음</span>'}</b></div>`);
+    if (v.load > 0) lines.push(`<div class="bar"><div style="width:${(v.load / w.truckCapacity(v)) * 100}%;background:#c9b27a"></div></div>`);
     const legs = w.routeLegs(stops);
-    const fullRange = Math.floor(w.truckBattery(v) / w.truckPerTile(v));
-    if (legs && Math.max(...legs) > fullRange) lines.push('<p class="bad">정류장 사이 거리가 완충 주행거리보다 길어요. 중간 충전기를 확인하세요.</p>');
     el.querySelector('.dyn')!.innerHTML = lines.join('');
     lines.length = 0;
     lines.push(`<div class="row"><span>적재 한도</span><b>${w.truckCapacity(v)}개</b></div>`);
     lines.push(`<div class="row"><span>주행 속도</span><b>${fmtNum(w.truckSpeed(v))}칸/초</b></div>`);
-    // 길 길이: 정류장마다 충전하므로, 가장 긴 구간이 배터리 가득일 때 갈 수 있는 칸보다 길면 중간에 배터리가 떨어진다
+    // 노선 거리 (접힌 운행 정보)
     if (legs) {
       const longest = Math.max(...legs);
       const total = legs.reduce((a, b) => a + b, 0);
-      const ok = longest <= fullRange;
       const what = legs.length === 2 ? `${legs[0]}칸 (한쪽)` : `한 바퀴 ${total}칸 · 가장 긴 구간 ${longest}칸`;
       lines.push(
-        `<div class="row"><span>길</span><b>${what} <span ${ok ? 'class="muted"' : 'style="color:#c0392b"'}>· 완충 ${fullRange}칸${ok ? '' : ' 초과'}</span></b></div>`,
+        `<div class="row"><span>길</span><b>${what}</b></div>`,
       );
     }
     const perMin = v.perMinute;
@@ -2735,11 +2663,6 @@ export class UI {
         ? `<div class="row"><span>운송량</span><b class="muted">한 바퀴 돌면 나와요</b></div>`
         : `<div class="row"><span>운송량</span><b>분당 ${fmtNum(perMin)}개 <span class="muted">(${Math.round(v.lastTrip)}초에 ${v.lastLoad}개)</span></b></div>`,
     );
-    const hint =
-      v.status === 'waiting' && v.stopItem
-        ? `여기서 실을 짐(${ITEMS[v.stopItem].name})이 정류장에 없어요. 컨베이어로 넣거나 노선에서 이 정류장의 짐을 바꿔 주세요.`
-        : VEHICLE_HINT[v.status];
-    if (hint) lines.push(`<p class="muted">→ ${hint}</p>`);
     el.querySelector('.vehicle-metrics')!.innerHTML = lines.join('');
   }
 
@@ -2833,6 +2756,16 @@ export class UI {
     }
     const v = this.selectedVehicle();
     if (v) {
+      if (act === 'upgrade-truck') {
+        const w = this.game.getWorld();
+        const st = w.stations().find(s => w.stationStops(s).includes(v.tile));
+        if (!st) this.toast('정류장 정차 후 가능');
+        else {
+          const groups = w.touchingStorageGroups(st);
+          const g = groups.find(g => g.group.some(s => (s.inBuf.get('truck-kit') ?? 0) - w.reservedAt(s, 'truck-kit') >= 1)) ?? groups[0];
+          this.sendUse(`upgrade-truck:${v.id}`, { t: 'upgrade-truck', rid: newRid(), id: v.id, station: st.id, key: g?.key ?? '' }, () => this.toast('업그레이드 완료'));
+        }
+      }
       if (act === 'close') input.selectedVehicle = null;
       if (act === 'follow') this.game.focus(v.x, v.y);
       if (act === 'clone-truck') {
@@ -2848,29 +2781,20 @@ export class UI {
         this.game.exec({ t: 'truck-dump', id: v.id }, (ok) => this.toast(ok ? '화물을 이 자리 회수 더미에 내려놨어요' : '내려놓을 화물이 없어요', 2500));
       if (act === 'plan-row') this.planRows.set(v.id, (this.planRows.get(v.id) ?? Math.max(1, v.plan.length)) + 1);
       if (act === 'plan-clear') {
-        this.game.exec({ t: 'truck-plan', id: v.id, plan: [], period: 0, early: false });
+        this.game.exec({ t: 'truck-dispatch', id: v.id, items: [], wait: v.departureWait ?? 10 });
         this.planRows.delete(v.id);
       }
       if (act === 'plan-apply') {
         const el = $('info');
-        const plan: { item: ItemId; cap: number }[] = [];
-        let invalidCap = false;
+        const items: ItemId[] = [];
         el.querySelectorAll<HTMLSelectElement>('select[data-plan-item]').forEach((s) => {
-          const cap = Number(el.querySelector<HTMLInputElement>(`input[data-plan-cap="${s.dataset.planItem}"]`)?.value);
-          if (!s.value) return;
-          if (!Number.isSafeInteger(cap) || cap < 1) invalidCap = true;
-          else plan.push({ item: s.value as ItemId, cap });
+          if (s.value) items.push(s.value as ItemId);
         });
-        const period = Number(el.querySelector<HTMLSelectElement>('select[data-plan-period]')?.value ?? 0);
-        const early = !!el.querySelector<HTMLInputElement>('input[data-plan-early]')?.checked;
-        const total = plan.reduce((a, p) => a + p.cap, 0);
-        const cap = this.game.getWorld().truckCapacity(v);
-        if (invalidCap) this.toast('품목별 상한은 1 이상의 정수로 입력해 주세요. 기존 계획은 바꾸지 않았어요', 3500);
-        else if (new Set(plan.map((p) => p.item)).size !== plan.length) this.toast('같은 품목은 한 줄에만 넣어 주세요. 기존 계획은 바꾸지 않았어요', 3500);
-        else if (total > cap) this.toast(`상한 합계 ${total}개가 한 번에 싣는 ${cap}개보다 많아요. 줄여 주세요`, 3500);
+        const wait = Number(el.querySelector<HTMLSelectElement>('[data-act="dispatch-wait"]')?.value) || 10;
+        if (new Set(items).size !== items.length) this.toast('중복 품목을 확인해 주세요', 2500);
         else
-          this.game.exec({ t: 'truck-plan', id: v.id, plan, period, early }, (ok) => {
-            this.toast(ok ? (plan.length ? '운송 계획을 적용했어요' : '계획을 껐어요') : '계획을 적용하지 못했어요', 2500);
+          this.game.exec({ t: 'truck-dispatch', id: v.id, items, wait }, (ok) => {
+            this.toast(ok ? '운반 품목 적용' : '품목을 확인해 주세요', 2500);
             if (ok) {
               this.planRows.delete(v.id);
               delete el.dataset.transportPlanVersion;
@@ -2888,7 +2812,7 @@ export class UI {
           const g = w.touchingStorageGroups(home)[0];
           this.sendUse(`adv:${home.id}`, { t: 'build-adv-truck', rid: newRid(), station: home.id, key: g?.key ?? '', copy: v.id }, (r) => {
             input.selectedVehicle = r.vehicle ?? null;
-            this.toast(`고급 트럭 ${r.vehicle} 추가 (고급 트럭 ${v.id}의 노선과 같음, 배터리 0kJ부터)`, 3500);
+            this.toast(`고급 트럭 ${r.vehicle} 추가 (고급 트럭 ${v.id}의 노선과 같음)`, 3500);
           });
         }
       }
@@ -2920,6 +2844,9 @@ export class UI {
     }
     const b = this.selected();
     if (!b) return;
+    if (act === 'upgrade-building') {
+      this.game.exec({ t: 'upgrade-building', id: b.id }, r => { this.toast(r.ok ? '업그레이드 완료' : r.reason ?? '업그레이드 불가'); this.update(); });
+    }
     // 설비 모듈: 명령을 보낼 때 본 공급 창고군의 구조를 함께 보내서, 그사이 군이 바뀌었으면 실패하게 한다
     if (act === 'mod-install') {
       const g = this.moduleGroup(this.game.getWorld(), b);
@@ -2946,25 +2873,6 @@ export class UI {
         ),
       );
     }
-    if (act === 'target-add' || act === 'target-del') {
-      const el = $('info');
-      const item = (act === 'target-add'
-        ? el.querySelector<HTMLSelectElement>('select[data-target-item]')?.value
-        : (e.target as HTMLElement).closest<HTMLElement>('[data-target-remove]')?.dataset.targetRemove) as ItemId | undefined;
-      const n = act === 'target-add' ? Number(el.querySelector<HTMLInputElement>('input[data-target-n]')?.value) : 0;
-      if (!item) {
-        this.toast('목표로 정할 품목을 먼저 골라 주세요', 2500);
-        return;
-      }
-      if (act === 'target-add' && (!Number.isSafeInteger(n) || n < 1)) {
-        this.toast('목표 재고는 1 이상의 정수로 입력해 주세요. 기존 목표는 바꾸지 않았어요', 3500);
-        return;
-      }
-      this.game.exec({ t: 'station-target', id: b.id, item, n }, (ok) => {
-        if (!ok) this.toast('목표 재고를 바꾸지 못했어요', 2500);
-        this.update();
-      });
-    }
     if (act === 'project') {
       const on = !this.game.getWorld().stats.projectOn;
       this.game.exec({ t: 'project', on }, (ok) => {
@@ -2979,7 +2887,7 @@ export class UI {
       this.sendUse(`adv:${b.id}`, { t: 'build-adv-truck', rid: newRid(), station: b.id, key: g?.key ?? '' }, (r) => {
         input.selectedVehicle = r.vehicle ?? null;
         input.selectedId = null;
-        this.toast(`고급 트럭 ${r.vehicle} 조립 · 노선을 정해 주세요 (그동안 이 정류장에서 충전해요)`, 3500);
+        this.toast(`고급 트럭 ${r.vehicle} 조립 · 노선을 정해 주세요`, 3500);
       });
     }
     if (act === 'build-truck') {

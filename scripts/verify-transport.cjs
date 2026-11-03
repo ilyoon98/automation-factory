@@ -46,25 +46,42 @@ app.whenReady().then(async () => {
     `);
     await check('compact default shows status cargo battery and folds all advanced text', `
       return document.querySelectorAll('#info .dyn').length===1 && !document.querySelector('#info [data-transport-section][open]') &&
-        ['상태','짐','배터리'].every(t=>document.querySelector('#info .dyn').textContent.includes(t));
+        ['상태','짐'].every(t=>document.querySelector('#info .dyn').textContent.includes(t));
     `);
     await shot('vehicle-default');
+    await check('truck overview folds route and name without battery controls', `
+      const panel=document.querySelector('#info');
+      return !panel.querySelector('[data-transport-section="route"]').open &&
+        !panel.querySelector('[data-act="truck-name"]').checkVisibility() &&
+        !panel.querySelector('[data-act="stop-station"]').checkVisibility() &&
+        !panel.querySelector('.dyn').textContent.includes('배터리') && !panel.querySelector('.dyn').textContent.includes('kW') && !panel.querySelector('.dyn').textContent.includes('칸');
+    `);
+    await js(`document.querySelector('[data-transport-section="route"]').open=true;`);
+    await check('blocked truck uses one short status without extra warning paragraphs', `
+      const previous=tv.status;
+      try {
+        for(const [status,label] of [['no-route','도로 끊김'],['unload-full','도착지 보관 공간 부족'],['no-supply','출발지 재료 부족']]){
+          tv.status=status;ui.update();
+          const summary=document.querySelector('#info .dyn');
+          if(!summary.textContent.includes(label)||summary.querySelector('p.bad'))return false;
+        }
+        return !document.querySelector('#info .route').textContent.includes('노선의 싣기·내리기는');
+      } finally {tv.status=previous;ui.update();}
+    `);
     await js(`document.querySelector('[data-transport-section="plan"]').open=true; document.querySelector('[data-transport-section="metrics"]').open=true;
       const select=document.querySelector('[data-act="stop-item"]'); select.value='iron-ore'; select.dispatchEvent(new Event('change',{bubbles:true}));`);
-    await check('normal route change is applied and expanded settings stay open', `return tv.stops[0].item==='iron-ore' && document.querySelector('[data-transport-section="plan"]').open && document.querySelector('[data-transport-section="metrics"]').open;`);
+    await check('normal route change is applied and expanded settings stay open', `return tv.stops[0].item==='iron-ore' && document.querySelector('[data-transport-section="route"]').open && document.querySelector('[data-transport-section="plan"]').open && document.querySelector('[data-transport-section="metrics"]').open;`);
     await js(`
+      const wait=document.querySelector('[data-act="dispatch-wait"]');wait.value='15';wait.dispatchEvent(new Event('change',{bubbles:true}));
       document.querySelector('[data-plan-item="0"]').value='tin-ore';
-      document.querySelector('[data-plan-cap="0"]').value='37';
-      document.querySelector('[data-plan-period]').value='120';
-      document.querySelector('[data-plan-early]').checked=true;
       document.querySelector('[data-act="plan-row"]').click();
     `);
     await check('adding another plan item preserves the unsubmitted first row and schedule', `
       return document.querySelectorAll('[data-plan-item]').length===2 && document.querySelector('[data-plan-item="0"]').value==='tin-ore' &&
-        document.querySelector('[data-plan-cap="0"]').value==='37' && document.querySelector('[data-plan-period]').value==='120' && document.querySelector('[data-plan-early]').checked && tv.plan.length===0;
+        document.querySelector('[data-act="dispatch-wait"]').value==='15' && tv.departureWait===15 && !document.querySelector('[data-plan-cap], [data-plan-period], [data-plan-early]') && tv.plan.length===0;
     `);
-    await js(`document.querySelector('[data-plan-cap="0"]').focus(); tw.beginEdit(); tw.remove(tw.buildingAt(10,6)); tw.endEdit(); ui.update();`);
-    await check('road refresh preserves unsent values and focus', `return document.querySelector('[data-plan-cap="0"]').value==='37' && document.querySelector('[data-plan-period]').value==='120' && document.activeElement.dataset.planCap==='0' && tv.plan.length===0;`);
+    await js(`document.querySelector('[data-plan-item="0"]').focus(); tw.beginEdit(); tw.remove(tw.buildingAt(10,6)); tw.endEdit(); ui.update();`);
+    await check('road refresh preserves unsent values and focus', `return document.querySelector('[data-plan-item="0"]').value==='tin-ore' && document.querySelector('[data-act="dispatch-wait"]').value==='15' && document.activeElement.dataset.planItem==='0' && tv.plan.length===0;`);
     await check('broken selected stop stays selected with a disabled reason', `
       const select = document.querySelector('[data-act="stop-station"][data-i="1"]');
       return Number(select.value)===tb.id && select.selectedOptions[0].disabled && select.selectedOptions[0].textContent.includes('도로 끊김') && tv.stops[1].id===tb.id;
@@ -73,28 +90,21 @@ app.whenReady().then(async () => {
     await js('tw.undo(); ui.update();');
     await check('undo restores the selected destination without changing the route', `const s=document.querySelector('[data-act="stop-station"][data-i="1"]'); return Number(s.value)===tb.id && !s.selectedOptions[0].disabled;`);
     await js(`document.querySelector('[data-act="plan-apply"]').click();`);
-    await check('applying a draft updates the actual plan and removes the unused row', `return tv.plan.length===1 && tv.plan[0].item==='tin-ore' && tv.plan[0].cap===37 && tv.period===120 && tv.early && document.querySelectorAll('[data-plan-item]').length===1;`);
-    await js(`document.querySelector('[data-plan-cap="0"]').value='77'; tw.setPlan(tv,[{item:'coal',cap:12}],60,false); ui.update();`);
-    await check('an authoritative plan change replaces the draft instead of restoring stale inputs', `return document.querySelector('[data-plan-item="0"]').value==='coal' && document.querySelector('[data-plan-cap="0"]').value==='12' && document.querySelector('[data-plan-period]').value==='60' && !document.querySelector('[data-plan-early]').checked;`);
-    await js(`window.commandCount = sentCommands.length; document.querySelector('[data-plan-cap="0"]').value='0'; document.querySelector('[data-act="plan-apply"]').click();`);
-    await check('invalid capacity leaves the existing plan and draft untouched without sending a command', `return sentCommands.length===commandCount && tv.plan.length===1 && tv.plan[0].cap===12 && document.querySelector('[data-plan-cap="0"]').value==='0' && document.getElementById('toast').textContent.includes('상한');`);
+    await check('applying a draft updates the actual plan and removes the unused row', `return tv.plan.length===1 && tv.plan[0].item==='tin-ore' && tv.departureWait===15 && tv.period===0 && !tv.early && document.querySelectorAll('[data-plan-item]').length===1;`);
+    await js(`document.querySelector('[data-plan-item="0"]').value='motor'; tw.setDispatch(tv,['coal'],5); ui.update();`);
+    await check('an authoritative plan change replaces the draft instead of restoring stale inputs', `return document.querySelector('[data-plan-item="0"]').value==='coal' && document.querySelector('[data-act="dispatch-wait"]').value==='5';`);
+    await js(`document.querySelector('[data-act="plan-row"]').click();document.querySelector('[data-plan-item="1"]').value='coal';window.commandCount=sentCommands.length; document.querySelector('[data-act="plan-apply"]').click();`);
+    await check('duplicate items leave the existing plan and draft untouched without sending a command', `return sentCommands.length===commandCount && tv.plan.length===1 && tv.plan[0].item==='coal' && document.getElementById('toast').textContent.includes('중복');`);
     await js('tw.remove(tc); tw.remove(tb); ui.update();');
     await check('deleted stop is retained as an explicit invalid selection', `return document.querySelector('[data-act="stop-station"][data-i="1"]').selectedOptions[0].textContent.includes('삭제된 정류장');`);
     await js(`game.input.selectedVehicle=null; game.input.selectedId=ta.id; ui.update();`);
     await check('station shows inventory once and folds charging targets assembly help', `return document.querySelectorAll('#info .dyn').length===1 && document.querySelectorAll('#info details[data-transport-section]').length>=4 && !document.querySelector('#info details[open]');`);
-    await check('power connection details are folded instead of filling the station summary', `return document.querySelector('[data-transport-section="charging"] .station-power') && !document.querySelector('#info .dyn').textContent.includes('접속') && !document.querySelector('#info .dyn').textContent.includes('거점 충전');`);
-    await js(`document.querySelector('[data-transport-section="targets"]').open=true;
-      document.querySelector('[data-target-item]').value='motor';const field=document.querySelector('[data-target-n]');field.value='137';field.focus();
-      ta.inBuf.set('truck-kit',1);ui.update();`);
-    await check('station inventory refresh preserves an unfinished inventory target and focus', `return document.querySelector('[data-target-item]').value==='motor'&&document.querySelector('[data-target-n]').value==='137'&&document.activeElement===document.querySelector('[data-target-n]');`);
-    await js(`tw.setTarget(ta,'motor',50);ui.update();window.targetCommandCount=sentCommands.length;
-      document.querySelector('[data-target-item]').value='motor';document.querySelector('[data-target-n]').value='';document.querySelector('[data-act="target-add"]').click();`);
-    await check('an empty target amount never deletes an existing target', `return ta.targets.get('motor')===50&&sentCommands.length===targetCommandCount&&document.getElementById('toast').textContent.includes('정수');`);
-    await check('zero negative fractional and unsafe target amounts leave the old target intact', `for(const value of ['0','-2','1.5','1e20']){document.querySelector('[data-target-n]').value=value;document.querySelector('[data-act="target-add"]').click();if(ta.targets.get('motor')!==50||sentCommands.length!==targetCommandCount)return false;}return true;`);
-    await js(`document.querySelector('[data-target-n]').value='137';document.querySelector('[data-act="target-add"]').click();`);
-    await check('a valid target is applied and explicit delete never opens the item encyclopedia', `if(ta.targets.get('motor')!==137)return false;document.querySelector('[data-act="target-del"][data-target-remove="motor"]').click();return !ta.targets.has('motor')&&!ui.codex.isOpen;`);
+    await check('station settings and operating metrics stay out of the overview', `return !document.querySelector('[data-act="station-name"]').checkVisibility() && !document.querySelector('[data-act="station-mode"]').checkVisibility() && !document.querySelector('#info .dyn').textContent.includes('트럭 운송량');`);
+    await check('station has no charge or target controls', `return !document.querySelector('[data-transport-section="charging"], [data-transport-section="targets"], [data-target-item], [data-act="zone-budget"]')&&!document.querySelector('#info').textContent.includes('충전');`);
+    await js(`document.querySelector('[data-transport-section="settings"]').open=true;const name=document.querySelector('[data-act="station-name"]');name.focus();name.value='출발지 초안';ta.inBuf.set('truck-kit',1);ui.update();`);
+    await check('inventory refresh keeps the station name draft and focus', `return document.activeElement===document.querySelector('[data-act="station-name"]')&&document.activeElement.value==='출발지 초안';`);
     await js(`window.td=tw.place('station',26,4,0);game.input.selectedId=td.id;ui.update();`);
-    await check('another station never inherits the previous target draft', `return document.querySelector('[data-target-item]').value===''&&document.querySelector('[data-target-n]').value==='40';`);
+    await check('another station does not inherit the draft name', `return document.querySelector('[data-act="station-name"]').value==='';`);
     await js(`game.input.selectedId=ta.id;ui.update();`);
     await shot('station-default');
     await js('game.input.selectedId=null; game.input.selectedVehicle=tv.id; ui.update();');
@@ -102,12 +112,13 @@ app.whenReady().then(async () => {
     await check('320px route controls stay inside the panel', `const panel=document.getElementById('info'); const r=panel.getBoundingClientRect(); return {pass:[...panel.querySelectorAll('select,summary,button')].filter(el=>el.getClientRects().length).every(el=>{const b=el.getBoundingClientRect();return b.left>=r.left && b.right<=r.right+1;}) && panel.scrollWidth<=panel.clientWidth+1,width:panel.clientWidth,scroll:panel.scrollWidth};`);
     await check('narrow layout leaves readable vertical space for transport', `return document.getElementById('info').getBoundingClientRect().height >= 150 && document.getElementById('tabs').scrollWidth > document.getElementById('tabs').clientWidth;`);
     await shot('vehicle-narrow');
-    await js(`document.querySelector('[data-transport-section="plan"]').open=true; document.querySelector('[data-transport-section="metrics"]').open=true;`);
+    await js(`document.querySelector('[data-transport-section="route"]').open=true;document.querySelector('[data-transport-section="plan"]').open=true; document.querySelector('[data-transport-section="metrics"]').open=true;`);
     await check('expanded transport settings also fit 320px', `const p=document.getElementById('info');return p.scrollWidth<=p.clientWidth+1;`);
-    await js(`document.querySelector('[data-plan-cap="0"]').value='29'; tw = (await import('/src/sim/world.ts')).World.deserialize(tw.serialize()); tv = tw.vehicles.get(tv.id); ui.update();`);
-    await check('loading a different world never copies a draft to a reused truck id', `return document.querySelector('[data-plan-cap="0"]').value===String(tv.plan[0].cap);`);
+    await shot('vehicle-expanded-narrow');
+    await js(`document.querySelector('[data-plan-item="0"]').value='motor'; tw = (await import('/src/sim/world.ts')).World.deserialize(tw.serialize()); tv = tw.vehicles.get(tv.id); ui.update();`);
+    await check('loading a different world never copies a draft to a reused truck id', `return document.querySelector('[data-plan-item="0"]').value===tv.plan[0].item;`);
     await js(`document.querySelector('[data-act="clone-truck"]').click();`);
-    await check('same route button creates a truck with the displayed transport plan', `const copy=tw.vehicles.get(game.input.selectedVehicle);return copy&&copy.id!==tv.id&&JSON.stringify(copy.plan)===JSON.stringify(tv.plan)&&copy.period===tv.period&&copy.early===tv.early&&copy.load===0&&document.querySelector('[data-plan-cap="0"]').value===String(tv.plan[0].cap);`);
+    await check('same route button creates a truck with the displayed transport plan', `const copy=tw.vehicles.get(game.input.selectedVehicle);return copy&&copy.id!==tv.id&&JSON.stringify(copy.plan)===JSON.stringify(tv.plan)&&copy.departureWait===tv.departureWait&&copy.load===0&&document.querySelector('[data-plan-item="0"]').value===tv.plan[0].item;`);
     await js(`tw=new (await import('/src/sim/world.ts')).World(40,30);tw.rules='regional-v1';tw.createHub(0,0);
       for(const t of tw.techs)tw.applyTech(t.id);for(const item of (await import('/src/data/items.ts')).ITEM_IDS)tw.stock.set(item,10000);
       for(let x=3;x<=29;x++)tw.place('road',x,6,0);
@@ -115,16 +126,17 @@ app.whenReady().then(async () => {
       tv=tw.buildTruck(ta);tw.setStops(tv,[{id:ta.id,act:'load'},{id:tb.id,act:'unload'}]);tw.setPlan(tv,[{item:'motor',cap:20}],0,false);
       tv.cargo.set('motor',10);tv.stop=1;tv.state='to-unload';game.input.selectedVehicle=tv.id;game.input.selectedId=null;ui.update();
       const select=document.querySelector('[data-act="stop-station"][data-i="1"]');select.value=String(tc.id);select.dispatchEvent(new Event('change',{bubbles:true}));`);
-    await check('editing a loaded route displays the next destination and explains deferred application',`return tv.stops[1].id===tb.id&&tv.route[1].id===tc.id&&Number(document.querySelector('[data-act="stop-station"][data-i="1"]').value)===tc.id&&document.querySelector('#info .dyn').textContent.includes('배송·반송을 마친 뒤')&&!document.querySelector('.route .stop.now');`);
+    await check('editing a loaded route displays the next destination and explains deferred application',`return tv.stops[1].id===tb.id&&tv.route[1].id===tc.id&&Number(document.querySelector('[data-act="stop-station"][data-i="1"]').value)===tc.id&&document.querySelector('#info .dyn').textContent.includes('배송·반송 후 노선 변경')&&!document.querySelector('.route .stop.now');`);
     await js(`game.input.cb.getWorld=()=>tw;renderer.resize(camera);renderer.draw(tw,camera,game.input);`);
     await shot('vehicle-pending-narrow');
     win.setSize(1280,800);await delay(100);await js(`ui.update();renderer.resize(camera);renderer.draw(tw,camera,game.input);`);
     await shot('vehicle-pending-wide');
     await js(`const select=document.querySelector('[data-act="stop-station"][data-i="1"]');select.value=String(tb.id);select.dispatchEvent(new Event('change',{bubbles:true}));`);
-    await check('choosing the current destination cancels a pending route in the UI',`return tv.pendingStops===null&&tv.stops[1].id===tb.id&&!document.querySelector('#info .dyn').textContent.includes('배송·반송을 마친 뒤');`);
+    await check('choosing the current destination cancels a pending route in the UI',`return tv.pendingStops===null&&tv.stops[1].id===tb.id&&!document.querySelector('#info .dyn').textContent.includes('배송·반송 후 노선 변경');`);
     win.setSize(1280,800);
     await js(`tv.cargo.clear();tw.setPlan(tv,[],0,false);tw.setStops(tv,[{id:ta.id,act:'load'},{id:tb.id,act:'unload'}]);
       game.input.selectedId=null;game.input.selectedVehicle=tv.id;ui.update();
+      document.querySelector('[data-transport-section="manage"]').open=true;
       let field=document.querySelector('[data-act="truck-name"]');field.focus();field.value='철판 <1> "운반"';
       field.dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',isComposing:true,bubbles:true}));`);
     await check('composing a truck name does not save it early', `return tv.name==='';`);
@@ -134,18 +146,29 @@ app.whenReady().then(async () => {
     await check('Enter saves the truck name and displays it as text', `return tv.name==='철판 <1> "운반"'&&document.querySelector('#info h3').textContent.includes(tv.name)&&!document.querySelector('#info h3 img');`);
     await check('route station choices display custom station names', `return document.querySelector('[data-act="stop-station"]').textContent.includes('제철소');`);
     await js(`ta.inBuf.set('coal',7);ui.update();`);
-    await check('normal loading shows the actual source stock and amount', `const r=document.querySelector('[data-load-stock="0"]');return r.textContent.includes('석탄')&&r.textContent.includes('7개')&&r.textContent.includes('정류장 적재함');`);
+    await check('normal loading shows the actual source stock and amount', `const r=document.querySelector('[data-load-stock="0"]');return r.textContent.includes('석탄')&&r.textContent.includes('7개')&&r.textContent.includes('정류장 재고');`);
     await js(`ta.inBuf.set('coal',4);ui.update();`);
     await check('source quantities refresh without rebuilding the route fields', `return document.querySelector('[data-load-stock="0"]').textContent.includes('4개');`);
     await js(`window.nameStore=tw.place('storage',1,4,0);tw.setDock(ta,nameStore.id);nameStore.inBuf.set('tin-ore',9);
       tw.setPlan(tv,[{item:'tin-ore',cap:5}],120,false);ui.update();`);
-    await check('planned loading includes the connected warehouse', `const r=document.querySelector('[data-load-stock="0"]');return r.textContent.includes('주석광석')&&r.textContent.includes('9개')&&r.textContent.includes('연결 창고');`);
-    await js(`game.input.selectedVehicle=null;game.input.selectedId=ta.id;ui.update();const f=document.querySelector('[data-act="station-name"]');f.value='주석 출발지';f.dispatchEvent(new Event('change',{bubbles:true}));`);
+    await check('planned loading includes the connected warehouse', `const r=document.querySelector('[data-load-stock="0"]');return r.textContent.includes('주석광석')&&r.textContent.includes('9개')&&r.textContent.includes('정류장·창고 재고');`);
+    await js(`game.input.selectedVehicle=null;game.input.selectedId=ta.id;ui.update();document.querySelector('[data-transport-section="settings"]').open=true;const f=document.querySelector('[data-act="station-name"]');f.value='주석 출발지';f.dispatchEvent(new Event('change',{bubbles:true}));`);
     await check('station name is editable and used by its information header', `return ta.stationName==='주석 출발지'&&document.querySelector('#info h3').textContent.includes('주석 출발지');`);
     await js(`game.input.selectedId=null;game.input.selectedVehicle=tv.id;ui.update();`);
     await shot('named-truck-source-stock');
     win.setSize(400,750);await js(`ui.update();`);
     await check('names and source stocks fit in a narrow information panel', `const p=document.getElementById('info');return p.scrollWidth<=p.clientWidth+1;`);
+    await js(`winUpgradeOriginal={id:tv.id,name:tv.name,stops:JSON.stringify(tv.route),cargo:JSON.stringify([...tv.cargo])};
+      tv.tile=tw.stationStops(ta)[0];tv.path=[];tv.state='loading';ta.inBuf.set('truck-kit',1);ui.update();
+      document.querySelector('[data-transport-section="manage"]').open=true;
+      document.querySelector('[data-act="upgrade-truck"]').click();`);
+    await check('truck upgrade button keeps vehicle identity cargo route and name', `return tv.kind==='advanced'&&tv.id===winUpgradeOriginal.id&&tv.name===winUpgradeOriginal.name&&JSON.stringify(tv.route)===winUpgradeOriginal.stops&&JSON.stringify([...tv.cargo])===winUpgradeOriginal.cargo&&document.querySelector('#info h3').textContent.includes('고급 트럭')&&!document.querySelector('[data-act="upgrade-truck"]');`);
+    for(const [from,to,x] of [['miner','miner-2',32],['belt','fast-belt',36]]){
+      await js(`window.upgradeBuilding=tw.place('${from}',${x},22,3);game.input.selectedVehicle=null;game.input.selectedId=upgradeBuilding.id;ui.update();`);
+      await check(from+' upgrade control is folded initially',`return !document.querySelector('[data-transport-section="upgrade"]').open;`);
+      await js(`document.querySelector('[data-transport-section="upgrade"]').open=true;document.querySelector('[data-act="upgrade-building"]').click();`);
+      await check(from+' upgrade preserves selection and updates the inspector',`return upgradeBuilding.type==='${to}'&&game.input.selectedId===upgradeBuilding.id&&document.querySelector('#info h3').textContent.includes(upgradeBuilding.def.name)&&!document.querySelector('[data-act="upgrade-building"]');`);
+    }
     if (errors.length) throw Error(errors.join('\n'));
     fs.writeFileSync(path.join(out,'results.json'),JSON.stringify({passed:true,results,errors},null,2));
     console.log(JSON.stringify({passed:true,checks:results.length,out}));

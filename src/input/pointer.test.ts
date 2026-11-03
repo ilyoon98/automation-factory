@@ -434,6 +434,18 @@ describe('겹쳐 있는 바닥 회수 더미와 커서', () => {
     expect(constructionCheck(w, 'fast-belt', 10, 10)).toMatchObject({ ok: false, reason: '연구 필요' });
   });
 
+  it('고급 채굴기 도구는 기존 채굴기 선택 대신 같은 자리에서 업그레이드한다', () => {
+    const f = inputFixture();
+    const miner = f.w.place('miner', 16, 14, 3)!;
+    f.input.setTool('miner-2');
+    f.canvas.fire('pointermove', f.event(17.5, 15.5)); f.input.update(0);
+    expect(f.input.pointerFeedback).toMatchObject({kind:'build',target:{x:16,y:14,size:2}});
+    expect(constructionCheck(f.w,'miner-2',17,15).ok).toBe(true);
+    f.click(17.5,15.5);
+    expect(f.w.buildings.get(miner.id)).toBe(miner);expect(miner.type).toBe('miner-2');expect(miner.dir).toBe(3);
+    f.input.undoRedo(false);expect(miner.type).toBe('miner');
+  });
+
   it('건설·철거·영역 철거·화면 이탈·포커스 상실을 커서와 입력 상태에 반영한다', () => {
     const f = inputFixture(); f.input.setTool('belt');
     f.canvas.fire('pointermove', f.event(14.5, 14.5)); f.input.update(0);

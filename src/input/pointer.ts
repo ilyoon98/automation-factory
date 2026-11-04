@@ -56,7 +56,7 @@ export function pointerFeedback(w: World, s: PointerState): PointerFeedback | nu
   }
   if (s.alt) return { kind: 'ping', label: '클릭: 위치 알리기', color: BLUE };
   if (s.gesture === 'copy' || s.ctrl) return { kind: 'copy', label: '드래그: 영역 복사 · 우클릭 드래그: 영역 철거', color: BLUE };
-  if (s.gesture === 'multi' || (s.shift && !s.tool && !s.paste)) return { kind: 'multi', label: '드래그: 설비 단체 선택', color: BLUE };
+  if (s.gesture === 'multi' || (s.shift && !s.tool && !s.paste)) return { kind: 'multi', label: '드래그: 설비·바닥 아이템 선택', color: BLUE };
   if (s.paste) return { kind: 'build', label: '클릭: 청사진 배치 · 우클릭: 취소', color: GREEN };
   if (s.tool) {
     if (s.gesture !== 'place' && b && !isBeltType(b.type) && !(s.tool === 'road' && b.type === 'road') && !(s.tool === 'miner-2' && b.type === 'miner')) {

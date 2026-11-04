@@ -1,5 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { Blueprint } from '../sim/blueprint';
+import { pasteBlueprint } from '../sim/blueprint';
+import { World } from '../sim/world';
 import { blueprintCode, parseBlueprintCode } from './blueprints';
 
 afterEach(()=>vi.unstubAllGlobals());
@@ -25,6 +27,37 @@ it.each([0,-1,null,'2'])('잘못된 청사진 너비 %s는 미리보기·붙여�
   expect(await parseBlueprintCode(await rawCode({n:'손상',w,h:1,e:[['belt',0,0,1]]}))).toBeNull();
 });
 
+it.each([
+  ['belt', 20, 0], ['belt', 0, 20],
+  ['assembler', 1, 0], ['assembler', 0, 1],
+])('공유 청사진 범위를 벗어난 %s (%i, %i)는 가져오지 않는다', async (type, dx, dy) => {
+  expect(await parseBlueprintCode(await rawCode({ n: '범위 밖', w: 2, h: 2, e: [[type, dx, dy, 1]] }))).toBeNull();
+});
+
+it('공유 청사진의 정상 건물은 유지하고 범위 밖 건물은 실제 붙여넣기에서도 제외한다', async () => {
+  const decoded = await parseBlueprintCode(await rawCode({ n: '혼합', w: 1, h: 1,
+    e: [['belt', 0, 0, 1], ['belt', 20, 0, 1]] }));
+  const w = new World(40, 20); w.createHub(0, 0); w.stock.set('iron-plate', 100);
+  expect(pasteBlueprint(w, decoded!.bp, 5, 5)).toEqual({ placed: 1, skipped: 0 });
+  expect(w.buildingAt(5, 5)?.type).toBe('belt');
+  expect(w.buildingAt(25, 5)).toBeNull();
+});
+
+it('청사진 경계에 정확히 맞는 큰 건물은 온전히 가져온다', async () => {
+  const bp: Blueprint = { w: 3, h: 3, entries: [{ type: 'assembler', dx: 1, dy: 1, dir: 1, recipe: 'gear', filter: null }] };
+  expect((await parseBlueprintCode(await blueprintCode('경계', bp)))?.bp).toEqual(bp);
+});
+
+it('저장된 청사진도 건물 전체의 범위를 검사하고 원본 저장은 덮어쓰지 않는다', async () => {
+  vi.resetModules();
+  const good = { type: 'assembler', dx: 0, dy: 0, dir: 1, recipe: 'gear', filter: null };
+  const setItem = vi.fn();
+  vi.stubGlobal('localStorage', { getItem: () => JSON.stringify([{ name: '혼합', bp: { w: 2, h: 2,
+    entries: [good, { ...good, dx: 1 }, { ...good, dy: 1 }, { ...good, dx: 20 }] } }]), setItem });
+  expect((await import('./blueprints')).blueprints()[0].bp.entries).toEqual([good]);
+  expect(setItem).not.toHaveBeenCalled();
+});
+
 it('손상된 청사진 한 개 때문에 뒤에 저장한 정상 청사진을 잃지 않는다', async()=>{
   vi.resetModules();
   const bp={w:1,h:1,entries:[{type:'belt',dx:0,dy:0,dir:1,recipe:null,filter:null}]};
@@ -44,7 +77,7 @@ it('혼합 저장의 잘못된 건물·좌표는 건너뛰고 유효한 건물�
 describe('청사진 공유 코드', () => {
   const bp: Blueprint = {
     w: 6,
-    h: 4,
+    h: 5,
     entries: [
       { type: 'assembler', dx: 0, dy: 0, dir: 1, recipe: 'gear', filter: null },
       { type: 'sorter', dx: 3, dy: 0, dir: 2, recipe: null, filter: 'coal' },
@@ -65,7 +98,7 @@ describe('청사진 공유 코드', () => {
     expect(await parseBlueprintCode('안녕')).toBeNull();
     const code = await blueprintCode('x', bp);
     expect(await parseBlueprintCode(code.slice(0, 20))).toBeNull();
-    const odd = await blueprintCode('x', { w: 2, h: 2, entries: [{ ...bp.entries[0], type: 'rocket' as never }, bp.entries[3]] });
+    const odd = await blueprintCode('x', { w: 2, h: 4, entries: [{ ...bp.entries[0], type: 'rocket' as never }, bp.entries[3]] });
     expect((await parseBlueprintCode(odd))!.bp.entries.map((e) => e.type)).toEqual(['belt']);
   });
 });

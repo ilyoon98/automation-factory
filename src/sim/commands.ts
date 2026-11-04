@@ -50,6 +50,7 @@ export type Command =
   | { t: 'module-detach'; rid: string; id: number; mode: 'normal' | 'cancel-request' | 'force' }
   /** 회수 더미(칸)를 줍기 (가까운 창고·정류장, 없으면 허브) · 버리기 */
   | { t: 'pile-collect'; rid: string; tile: number }
+  | { t: 'piles-collect'; rid: string; tiles: number[] }
   | { t: 'pile-discard'; rid: string; tile: number }
   /** 컨베이어 줄에서 잘못 들어간 아이템만 빼기 */
   | { t: 'line-take'; rid: string; id: number; item: ItemId }
@@ -114,6 +115,7 @@ export interface CommandResults {
   'module-install': UseResult;
   'module-detach': UseResult;
   'pile-collect': UseResult;
+  'piles-collect': UseResult;
   'pile-discard': UseResult;
   'line-take': UseResult;
   'build-adv-truck': UseResult;
@@ -245,6 +247,8 @@ function run(w: World, c: Command): CommandResults[Command['t']] {
       });
     case 'pile-collect':
       return applyOnce(w, c.rid, () => w.collectPile(Number(c.tile)));
+    case 'piles-collect':
+      return applyOnce(w, c.rid, () => w.collectPiles(c.tiles));
     case 'pile-discard':
       return applyOnce(w, c.rid, () => w.discardPile(Number(c.tile)));
     case 'line-take':

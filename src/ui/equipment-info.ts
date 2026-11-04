@@ -3,6 +3,18 @@ import type { Building } from '../sim/building';
 import { DX, DY } from '../sim/dir';
 import { type World } from '../sim/world';
 
+/** 막대는 충족률이 아니라 공급 용량 중 작업에 요청한 몫이다. 실제 미공급량은 따로 표시한다. */
+export function powerUsage(demand: number, capacity: number, satisfaction: number) {
+  const ratio = capacity > 0 ? demand / capacity : demand > 0 ? Infinity : 0;
+  const shortfall = Math.max(0, demand * (1 - satisfaction));
+  return {
+    percent: Number.isFinite(ratio) ? Math.round(ratio * 100) : null,
+    fill: Math.min(100, ratio * 100),
+    shortfall,
+    color: shortfall > 0.5 || ratio > 1 ? '#c0392b' : ratio >= 0.9 ? '#b7791f' : '#3f8a3a',
+  };
+}
+
 /** 허브·창고를 우선하고 다른 설비와 겹친 더미도 실제 하역기와 같은 순서로 읽는다. */
 export function unloaderInfo(w: World, b: Building) {
   const x = b.x - DX[b.dir], y = b.y - DY[b.dir];

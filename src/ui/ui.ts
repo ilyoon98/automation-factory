@@ -64,7 +64,7 @@ import { topbar } from './topbar';
 import { reducedEffects, setReducedEffects } from '../render/effects';
 import { ResearchObserver, NoticeQueue, completionSummary, type NoticeKind } from './completion';
 import { focusRouteStation, reachableStations, refreshTransportItemSelect, replaceTransportInfo, sourceStock, stationMapButton, transportItemOptions, transportSection } from './transport';
-import { equipmentHelp, unloaderInfo } from './equipment-info';
+import { equipmentHelp, powerUsage, unloaderInfo } from './equipment-info';
 import { planRoad, type RoadPlanResult } from '../sim/road-plan';
 import { replaceRoadBuilder, roadBuilderHtml, roadPlanKey } from './road-builder';
 import { replacePanel } from './panel';
@@ -1329,8 +1329,7 @@ export class UI {
     this.powerSound(w);
     if (w.regional) return this.updateZones(w);
     const p = w.power;
-    const pct = Math.round(p.satisfaction * 100);
-    const color = p.satisfaction >= 1 ? '#3f8a3a' : p.satisfaction >= 0.6 ? '#b7791f' : '#c0392b';
+    const usage = powerUsage(p.demand, p.capacity, p.satisfaction);
     // 어디서 오는 전력인지: 허브 · 태양광 · 풍력 (지금 내는 만큼) · 수력 · 석탄 (돌 수 있는 최대치)
     const src = { solar: 0, wind: 0, hydro: 0, coal: 0 };
     for (const b of w.buildings.values()) {
@@ -1346,9 +1345,10 @@ export class UI {
     if (src.coal) parts.push(`석탄 ${src.coal}`);
     $('power').innerHTML = `
       <h3>전력</h3>
-      <div class="bar" title="전력 충족률"><div style="width:${Math.min(100, pct)}%;background:${color}"></div></div>
-      <div class="row"><span>수요 / 용량</span><b>${Math.round(p.demand)} / ${Math.round(p.capacity)} kW</b></div>
-      <div class="row"><span>전력 충족</span><b style="color:${color}">${pct}%</b></div>
+      <div class="row"><span>전력 사용률</span><b style="color:${usage.color}">${usage.percent === null ? '공급 없음' : `${usage.percent}%`}</b></div>
+      <div class="bar" title="수요 ÷ 공급 용량. 빈 부분은 여유 용량이며, 100%를 넘으면 용량이 부족해요."><div style="width:${usage.fill}%;background:${usage.color}"></div></div>
+      <div class="row" title="사용은 기계가 요청한 작업 전력이며, 공급은 발전·축전의 공급 용량이에요."><span>사용 / 공급</span><b>${Math.round(p.demand)} / ${Math.round(p.capacity)} kW</b></div>
+      ${usage.shortfall > 0.5 ? `<p class="power-src" style="color:${usage.color}">전력 부족 ${Math.round(usage.shortfall)} kW</p>` : ''}
       ${parts.length > 1 ? `<p class="muted power-src">${parts.join(' · ')} kW</p>` : ''}
       ${p.charge > 0 ? `<p class="muted power-src">충전 수요 ${Math.round(p.charge)} kW</p>` : ''}`;
   }
@@ -1431,18 +1431,19 @@ export class UI {
     const shown = nets.slice(0, 6);
     const rows = shown
       .map(([id, s]) => {
-        const sat = s.satisfaction;
-        const color = !s.source ? '#7a7a7a' : sat >= 1 ? '#3f8a3a' : sat >= 0.6 ? '#b7791f' : '#c0392b';
         const need = s.demand + s.charge;
+        const usage = powerUsage(need, s.capacity, s.satisfaction);
+        const color = !s.source ? '#7a7a7a' : usage.color;
         const extra = [
           s.storeMax ? `축전 ${(s.stored / 1000).toFixed(1)}/${s.storeMax / 1000}MJ` : '',
           s.charge ? `충전 수요 ${kw(s.charge)} kW` : '',
           s.sites.length > 1 ? `거점 ${s.sites.length}곳 공유` : s.sites.length ? `거점 ${s.sites[0]}` : '',
         ].filter(Boolean);
         return `<div class="zone-row" data-net="${id}" title="누르면 이 망으로">
-          <div class="row"><span>전력망 ${id} <span class="muted">${id === hubNet ? '허브' : s.source ? '' : '공급원 없음'}</span></span><b style="color:${color}" title="전력 충족률">충족 ${Math.round(sat * 100)}%</b></div>
-          <div class="bar" title="전력 충족률"><div style="width:${Math.min(100, sat * 100)}%;background:${color}"></div></div>
-          <p class="muted power-src">수요 ${kw(need)} / 용량 ${kw(s.capacity)} kW${extra.length ? ` · ${extra.join(' · ')}` : ''}</p></div>`;
+          <div class="row"><span>전력망 ${id} <span class="muted">${id === hubNet ? '허브' : s.source ? '' : '공급원 없음'}</span></span><b style="color:${color}">${usage.percent === null ? '공급 없음' : `사용 ${usage.percent}%`}</b></div>
+          <div class="bar" title="수요 ÷ 공급 용량. 빈 부분은 여유 용량이며, 100%를 넘으면 용량이 부족해요."><div style="width:${usage.fill}%;background:${color}"></div></div>
+          <p class="muted power-src" title="사용은 기계가 요청한 작업 전력이며, 공급은 발전·축전의 공급 용량이에요.">사용 ${kw(need)} / 공급 ${kw(s.capacity)} kW${extra.length ? ` · ${extra.join(' · ')}` : ''}</p>
+          ${usage.shortfall > 0.5 ? `<p class="power-src" style="color:#c0392b">전력 부족 ${kw(usage.shortfall)} kW</p>` : ''}</div>`;
       })
       .join('');
     $('power').innerHTML = `<h3>전력 <span class="muted">일하는 망 ${nets.length}개 · 거점 ${w.zones.length}곳</span></h3>${rows}
@@ -1828,12 +1829,18 @@ export class UI {
       delete el.dataset.transportPlanVersion;
     }
     const v = this.selectedVehicle();
+    const input = this.game.input;
+    // 지도/목록에서 단일 대상을 새로 열었으면 이전 영역 선택의 아이템을 붙이지 않는다.
+    if (v || input.selectedId !== null) input.multiPiles = [];
     if (v) {
       this.updateVehicleInfo(w, v);
       return;
     }
     const group = this.multiSelected(w);
-    if (group.length > 1) {
+    const livePiles = w.pileTiles();
+    const piles = input.multiPiles.filter(tile => livePiles.has(tile));
+    if (piles.length !== input.multiPiles.length) input.multiPiles = piles;
+    if (group.length > 1 || piles.length) {
       this.updateMultiInfo(w, group);
       return;
     }
@@ -1936,15 +1943,25 @@ export class UI {
   private updateMultiInfo(w: World, group: Building[]): void {
     const el = $('info');
     el.hidden = false;
-    const type = group[0].type;
+    const type = group[0]?.type;
     const recipes = group.map((b) => b.recipe ?? '');
-    const key = `multi|${group.map((b) => b.id).join(',')}|${recipes.join(',')}|${w.unlockedRecipes.size}`;
+    const tiles = new Set(this.game.input.multiPiles);
+    const items = new Map<ItemId, number>();
+    for (const p of w.piles) if (tiles.has(p.tile)) items.set(p.item, (items.get(p.item) ?? 0) + p.n);
+    const total = [...items.values()].reduce((a, b) => a + b, 0);
+    const busy = this.useBusy.has('piles:selection');
+    const key = `multi|${group.map((b) => b.id).join(',')}|${recipes.join(',')}|${w.unlockedRecipes.size}|${[...tiles]}|${JSON.stringify([...items])}|${busy}`;
     if (key === this.infoKey) return;
     this.infoKey = key;
-    const def = BUILDINGS[type];
-    let html = `<header><img class="swatch" src="${buildingIconUrl(type)}" alt=""><h3>${def.name} ${group.length}대</h3>
+    let html = `<header>${type ? `<img class="swatch" src="${buildingIconUrl(type)}" alt="">` : '📦'}<h3>영역 선택</h3>
       <button class="x" data-act="close">×</button></header>`;
-    if (isRecipeMachine(type)) {
+    if (tiles.size) {
+      html += `<div class="prod-sub">회수 더미 ${tiles.size}곳 · 아이템 ${total}개</div>`;
+      for (const [item, n] of items) html += `<div class="row"><span>${itemIcon(item)} ${ITEMS[item].name}</span><b>${n}개</b></div>`;
+      html += `<div class="actions"><button data-act="multi-pile-collect" ${busy ? 'disabled' : ''}>${busy ? '줍는 중…' : '선택한 아이템 모두 줍기'}</button></div>`;
+    }
+    if (type) html += `<div class="prod-sub">${BUILDINGS[type].name} ${group.length}대</div>`;
+    if (type && isRecipeMachine(type)) {
       const same = recipes.every((r) => r === recipes[0]) ? recipes[0] : null;
       const none = type === 'assembler' ? '선택 안 함' : '자동 (들어온 재료로)';
       const options = recipesFor(type as MachineKind)
@@ -1962,8 +1979,8 @@ export class UI {
         .join('');
       html += rows;
     }
-    html += `<div class="actions"><button data-act="multi-remove" class="danger">모두 철거 (${group.length}대)</button></div>
-      <p class="muted">Shift + 드래그로 다시 고르기 · Esc로 풀기</p>`;
+    if (group.length) html += `<div class="actions"><button data-act="multi-remove" class="danger">선택한 설비 철거 (${group.length}대)</button></div>`;
+    html += `<p class="muted">Shift + 드래그로 다시 고르기 · Esc로 풀기</p>`;
     el.innerHTML = html;
   }
 
@@ -2339,10 +2356,8 @@ export class UI {
     const recipe = isRecipeMachine(b.type) ? w.recipeOf(b) : null;
     if (recipe?.inputs.length) {
       const ready = materialReadiness(b, recipe.inputs);
-      const missing = ready.filter(i => i.missing > 0);
-      lines.push(`<div class="prod-sub">다음 제작 준비 <span class="muted">입력 재고 / 1회 필요</span></div>`);
+      lines.push(`<div class="prod-sub" title="재료는 제작을 시작할 때 사용해요. 제작 중에는 다음 제작분의 준비 상태를 보여요.">다음 제작 준비 <span class="muted">입력 재고 / 1회 필요</span></div>`);
       for (const i of ready) lines.push(`<div class="row"><span>${itemIcon(i.item)} ${ITEMS[i.item].name}</span><b class="${i.missing ? 'bad' : ''}">${i.stored} / ${i.count} · ${i.missing ? `${i.missing}개 부족` : '준비됨'}</b></div>`);
-      lines.push(`<p class="muted">${missing.length ? `${missing.map(i => ITEMS[i.item].name).join(' · ')} 대기${b.crafting ? ' (현재 제작 완료 후)' : ''}` : '다음 제작 재료 준비됨'} · 제작을 시작할 때 재료를 사용해요.</p>`);
     }
     if (isGeneratorType(b.type)) {
       const rated = b.type === 'generator' ? GENERATOR_POWER : b.type === 'hydro' ? HYDRO_POWER : b.type === 'fuel-generator' ? GRID.fuel.power : b.type === 'geothermal' ? GRID.geothermal : null;
@@ -2748,8 +2763,18 @@ export class UI {
       this.update();
       return;
     }
-    if (input.multi.length) {
-      if (act === 'close') input.multi = [];
+    if (input.multi.length || input.multiPiles.length) {
+      if (act === 'close') { input.multi = []; input.multiPiles = []; }
+      if (act === 'multi-pile-collect') {
+        const selection = input.multiPiles;
+        const w = this.game.getWorld();
+        this.sendUse('piles:selection', { t: 'piles-collect', rid: newRid(), tiles: [...selection] }, r => {
+          if (this.game.getWorld() !== w) return;
+          if (input.multiPiles === selection) input.multiPiles = [];
+          this.toast(`회수 더미 ${r.collected ?? 0}곳 · 아이템 ${r.moved ?? 0}개 주웠어요`);
+        });
+        return;
+      }
       if (act === 'multi-remove') input.removeMulti();
       this.update();
       return;
@@ -3360,7 +3385,7 @@ function needBlock(st: MachineStats, u: number | null): string {
         `<div class="row need-row">${itemIcon(i.item)}<span>${ITEMS[i.item].name}</span><b>지금 ${u === null ? '—' : fmtNum(i.count * u)}</b><small>최대 ${fmtNum(i.count)}</small></div>`,
     )
     .join('');
-  return `<div class="prod-sub">소비 속도 <span class="muted">/분 · 가동률 기준</span></div>${rows}<p class="muted">현재 가동률로 계산한 소비량이에요. 낮은 수치가 해당 재료의 부족을 뜻하지는 않아요.</p>`;
+  return `<div class="prod-sub" title="현재 가동률로 계산한 소비량이에요. 재료 부족 여부는 다음 제작 준비에서 확인해요.">소비 속도 <span class="muted">/분</span></div>${rows}`;
 }
 
 /** 정보창 맨 위 생산 현황: 실제 분당 생산(크게)·최대·가동률·멈춘 이유·재료 */

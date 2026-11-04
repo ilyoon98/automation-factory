@@ -326,6 +326,8 @@ export interface UseResult {
   from?: number;
   /** 회수 더미에서 옮긴 개수 */
   moved?: number;
+  /** 일괄 줍기에서 실제로 회수한 더미 칸 수 */
+  collected?: number;
   /** 회수 명령이 실제로 옮긴 품목별 수량 (응답을 기다리는 사이 더미가 달라질 수 있다) */
   items?: [ItemId, number][];
 }
@@ -1747,6 +1749,27 @@ export class World {
     const from = this.stashNear(tile, list.map((p): [ItemId, number] => [p.item, p.n]));
     this.piles = this.piles.filter((p) => p.tile !== tile);
     return { ok: true, moved, from, items: [...items] };
+  }
+
+  /** 선택한 칸만 각각 기존 현지 회수 규칙으로 줍는다. 사라진 더미는 건너뛰고, 중복 칸은 한 번만. */
+  collectPiles(tiles: number[]): UseResult {
+    if (!this.regional) return { ok: false, reason: '이 세계에는 회수 더미가 없어요' };
+    if (!Array.isArray(tiles) || tiles.length > this.width * this.height ||
+        tiles.some(tile => !Number.isSafeInteger(tile) || tile < 0 || tile >= this.width * this.height || !this.isRevealed(tile))) {
+      return { ok: false, reason: '선택한 회수 위치가 올바르지 않아요' };
+    }
+    const items = new Map<ItemId, number>();
+    let moved = 0, collected = 0;
+    // 같은 창고의 남은 공간을 여러 더미가 쓸 때도 명령·저장·멀티플레이의 처리 순서를 고정한다.
+    for (const tile of [...new Set(tiles)].sort((a, b) => a - b)) {
+      const result = this.collectPile(tile);
+      if (!result.ok) continue;
+      moved += result.moved ?? 0;
+      collected++;
+      for (const [item, n] of result.items ?? []) addTo(items, item, n);
+    }
+    return collected ? { ok: true, moved, collected, items: [...items] }
+      : { ok: false, reason: '선택한 회수 더미가 이미 없어졌어요' };
   }
 
   /** 회수 더미를 버린다 (쓸모없는 것). 없어진 개수 */

@@ -1,7 +1,30 @@
 import { describe, expect, it } from 'vitest';
 import { ITEM_IDS } from '../data/items';
 import { DT, World } from '../sim/world';
-import { unloaderInfo } from './equipment-info';
+import { powerUsage, unloaderInfo } from './equipment-info';
+
+describe('전력 막대의 사용률과 실제 부족량', () => {
+  it.each([[1750, 2500, 70], [315, 960, 33], [270, 360, 75]])('수요 %i / 공급 용량 %i는 충족 100%%여도 사용 %i%%로 표시한다', (demand, capacity, percent) => {
+    const usage = powerUsage(demand, capacity, 1);
+    expect(usage.percent).toBe(percent);
+    expect(usage.fill).toBeCloseTo(demand / capacity * 100);
+    expect(usage.shortfall).toBe(0);
+  });
+
+  it('초과 수요는 100%보다 큰 숫자로 남기고 막대는 넘치지 않는다', () => {
+    expect(powerUsage(1200, 1000, 1000 / 1200)).toMatchObject({ percent: 120, fill: 100, color: '#c0392b' });
+    expect(powerUsage(1200, 1000, 1000 / 1200).shortfall).toBeCloseTo(200);
+  });
+
+  it('수요와 용량이 없으면 0%, 수요만 있으면 공급 없음과 부족량으로 구분한다', () => {
+    expect(powerUsage(0, 0, 1)).toMatchObject({ percent: 0, fill: 0, shortfall: 0 });
+    expect(powerUsage(300, 0, 0)).toMatchObject({ percent: null, fill: 100, shortfall: 300 });
+  });
+
+  it('축전 고갈 등으로 용량보다 적게 받아도 실제 부족을 숨기지 않는다', () => {
+    expect(powerUsage(800, 1000, 0.5)).toMatchObject({ percent: 80, fill: 80, shortfall: 400, color: '#c0392b' });
+  });
+});
 
 function setup() {
   const w = new World(40, 30); w.rules = 'regional-v1'; w.createHub(0, 0);

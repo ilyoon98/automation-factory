@@ -8,6 +8,7 @@ import { World } from '../sim/world';
 import { Input } from './input';
 import { constructionCheck, pointerFeedback, type PointerState } from './pointer';
 import { planRoad } from '../sim/road-plan';
+import { areaSelection } from './area-selection';
 
 function factory() {
   const w = new World(40, 30); w.rules = 'regional-v1'; w.createHub(0, 0);
@@ -67,6 +68,51 @@ function inputFixture() {
 }
 
 afterEach(() => vi.unstubAllGlobals());
+
+describe('Shift로 설비와 바닥 아이템 함께 선택', () => {
+  it('드래그 미리보기와 확정은 같은 설비·더미를 세고 벨트 위 화물은 건드리지 않는다', () => {
+    const f = inputFixture(), b = f.w.place('smelter', 13, 10, 0)!;
+    f.w.piles.push({ tile: f.tile, item: 'coal', n: 3, ev: 2, why: 'remove' });
+    f.w.piles.push({ tile: f.w.idx(14, 10), item: 'gear', n: 2, ev: 3, why: 'remove' });
+    const hash = f.w.checksum();
+    f.canvas.fire('pointerdown', f.event(15.5, 12.5, { shiftKey: true }));
+    f.canvas.fire('pointermove', f.event(9.5, 9.5, { shiftKey: true }));
+    const preview = areaSelection(f.w, f.input.multiArea!);
+    expect(preview.label).toBe('설비 1대 · 회수 더미 2곳');
+    expect(f.input.pointerFeedback?.kind).toBe('multi');
+    f.win.fire('pointerup', f.event(9.5, 9.5, { shiftKey: true }));
+    expect(f.input.multi).toEqual([b.id]);
+    expect(f.input.selectedId).toBeNull();
+    expect(f.input.multiPiles).toEqual(preview.piles);
+    expect(f.pickPile).not.toHaveBeenCalled();
+    expect(f.w.checksum()).toBe(hash);
+    expect(f.belt.items).toEqual([{ item: 'copper-plate', pos: .5, n: 1 }]);
+  });
+
+  it('더미만 있는 한 칸도 선택할 수 있고 Esc·도구 선택·세계 교체로 해제한다', () => {
+    const f = inputFixture();
+    const select = () => {
+      f.click(10.5, 10.5, { shiftKey: true });
+      expect(f.input.multi).toEqual([]);
+      expect(f.input.multiPiles).toEqual([f.tile]);
+    };
+    select(); f.win.fire('keydown', { key: 'Escape' }); expect(f.input.multiPiles).toEqual([]);
+    select(); f.input.setTool('road'); expect(f.input.multiPiles).toEqual([]);
+    f.input.setTool(null); select(); f.input.resetWorld(); expect(f.input.multiPiles).toEqual([]);
+  });
+
+  it('미공개 더미는 제외하고 드래그 취소는 이전 선택을 바꾸거나 줍지 않는다', () => {
+    const f = inputFixture();
+    f.input.multiPiles = [f.tile];
+    f.w.revealed = new Uint8Array(f.w.width * f.w.height);
+    expect(areaSelection(f.w, { x0: 9, y0: 9, x1: 12, y1: 12 }).piles).toEqual([]);
+    f.canvas.fire('pointerdown', f.event(9.5, 9.5, { shiftKey: true }));
+    f.canvas.fire('pointermove', f.event(12.5, 12.5, { shiftKey: true }));
+    f.canvas.fire('pointercancel'); f.win.fire('pointerup', f.event(12.5, 12.5));
+    expect(f.input.multiPiles).toEqual([f.tile]);
+    expect(f.input.multiArea).toBeNull(); expect(f.pickPile).not.toHaveBeenCalled();
+  });
+});
 
 describe('창이 열린 동안 입력 보호', () => {
   it.each(['shiftKey','ctrlKey','metaKey','altKey'])('%s 숫자 조합으로 건설 도구를 바꾸지 않는다', modifier => {

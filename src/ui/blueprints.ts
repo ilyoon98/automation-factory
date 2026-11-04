@@ -29,6 +29,9 @@ function readBlueprint(raw: unknown): Blueprint | null {
     if (!e || typeof e !== 'object' || typeof e.type !== 'string' || !Object.hasOwn(BUILDINGS, e.type) || !BUILDINGS[e.type].placeable ||
       !Number.isSafeInteger(e.dx) || !Number.isSafeInteger(e.dy) || e.dx < 0 || e.dy < 0 ||
       !Number.isInteger(e.dir) || e.dir < 0 || e.dir > 3) continue;
+    // 기준 좌표뿐 아니라 건물 전체가 선언한 청사진 크기 안에 들어와야 한다.
+    const size = BUILDINGS[e.type].size;
+    if (e.dx > bp.w! - size || e.dy > bp.h! - size) continue;
     entries.push({ type:e.type, dx:e.dx, dy:e.dy, dir:e.dir,
       recipe:typeof e.recipe === 'string' ? e.recipe : null,
       filter:typeof e.filter === 'string' && Object.hasOwn(ITEMS,e.filter) ? e.filter : null,

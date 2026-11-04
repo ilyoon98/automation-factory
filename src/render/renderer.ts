@@ -27,6 +27,7 @@ import type { Camera } from './camera';
 import { roundRect } from './draw-item';
 import { PILE_MARKER } from './pile-marker';
 import { constructionCheck, type PointerFeedback } from '../input/pointer';
+import { areaSelection } from '../input/area-selection';
 import type { RoadPlan } from '../sim/road-plan';
 import { FOG_COLOR, NUM_ADVANCE, ORE_GROUND, PAL, TILE, TREE_LEAF, hash, loadSpriteOverrides, sprite, spriteHalf, tone } from './pixel';
 import { MACHINE, MACHINE3 } from './pixel-buildings';
@@ -59,6 +60,7 @@ export interface ViewState {
   /** Shift 드래그 중인 단체 선택 영역, 단체 선택한 건물들 */
   multiArea: { x0: number; y0: number; x1: number; y1: number } | null;
   multi: number[];
+  multiPiles?: number[];
   paste: Blueprint | null;
   /** 들고 있는 도구로 지으면 들어갈 설정 (레시피 id 또는 분류기 아이템) */
   toolSetting: string | null;
@@ -473,21 +475,33 @@ export class Renderer {
       const [sx, sy] = cam.worldToScreen(b.x, b.y);
       this.outline(sx, sy, b.size * z, b.size * z, SELECT);
     }
+    const outlinePile = (tile: number) => {
+      const [sx, sy] = cam.worldToScreen(tile % world.width + PILE_MARKER.x / 16, Math.floor(tile / world.width) + PILE_MARKER.y / 16);
+      this.outline(sx, sy, PILE_MARKER.size / 16 * z, PILE_MARKER.size / 16 * z, '#3f8a3a');
+    };
+    if (view.multiPiles?.length) {
+      const pileTiles = world.pileTiles();
+      for (const tile of view.multiPiles) if (pileTiles.has(tile)) outlinePile(tile);
+    }
     if (view.multiArea) {
       const a = view.multiArea;
-      const group = world.groupIn(a.x0, a.y0, a.x1, a.y1);
+      const { group, piles, label } = areaSelection(world, a);
       ctx.fillStyle = 'rgba(255,255,255,0.25)';
       for (const b of group) {
         const [bx, by] = cam.worldToScreen(b.x, b.y);
         ctx.fillRect(bx, by, b.size * z, b.size * z);
         this.outline(bx, by, b.size * z, b.size * z, SELECT);
       }
+      for (const tile of piles) outlinePile(tile);
       const [sx, sy] = cam.worldToScreen(Math.min(a.x0, a.x1), Math.min(a.y0, a.y1));
       const w = (Math.abs(a.x1 - a.x0) + 1) * z;
       const h = (Math.abs(a.y1 - a.y0) + 1) * z;
       this.outline(sx, sy, w, h, SELECT, true);
-      const label = group.length ? `${BUILDINGS[group[0].type].name} ${group.length}대` : '고를 기계 없음';
-      this.text(label, sx + 2, sy - 4, '#fbf3df', 12, PAL.ink, 'left', 'bottom');
+      ctx.font = font(12, this.textZoom);
+      const labelWidth = ctx.measureText(label).width;
+      const labelX = Math.max(4, Math.min(sx + 2, cam.viewW - labelWidth - 4));
+      const labelY = Math.max(16 * this.textZoom, Math.min(sy - 4, cam.viewH - 4));
+      this.text(label, labelX, labelY, '#fbf3df', 12, PAL.ink, 'left', 'bottom');
     }
     // 고른 트럭: 오가는 두 정류장과 가는 길
     if (view.selectedVehicle) {

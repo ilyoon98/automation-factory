@@ -7,6 +7,7 @@ import { dirOf, rotateCW, type Dir } from '../sim/dir';
 import { World, describeEdit } from '../sim/world';
 import { pointerFeedback, type PointerFeedback, type PointerGesture } from './pointer';
 import type { RoadPlan } from '../sim/road-plan';
+import { areaSelection } from './area-selection';
 
 export interface InputCallbacks {
   getWorld(): World;
@@ -90,6 +91,8 @@ export class Input implements ViewState {
   multiArea: { x0: number; y0: number; x1: number; y1: number } | null = null;
   /** 단체 선택한 건물들 (2대 이상. 하나면 selectedId로) */
   multi: number[] = [];
+  /** Shift로 함께 고른 바닥 회수 더미의 칸. 설비 설정·철거와는 별도로 처리한다. */
+  multiPiles: number[] = [];
   /** 붙여넣기 대기 중인 청사진 */
   paste: Blueprint | null = null;
   /** 청사진 저장함에서 꺼낸 것이면 그 이름 (방금 복사한 것이면 null → 정보창에서 저장할 수 있다) */
@@ -171,6 +174,7 @@ export class Input implements ViewState {
     this.selectedId = null;
     this.selectedVehicle = null;
     this.multi = [];
+    this.multiPiles = [];
     this.paste = null;
     this.pasteName = null;
     this.roadPreview = null;
@@ -196,6 +200,7 @@ export class Input implements ViewState {
       this.selectedVehicle = null;
       this.paste = null;
       this.multi = [];
+      this.multiPiles = [];
     }
     this.cb.changed();
   }
@@ -469,13 +474,14 @@ export class Input implements ViewState {
     }
     if (this.mode === 'multi' && this.multiArea) {
       const a = this.multiArea;
-      const group = this.cb.getWorld().groupIn(a.x0, a.y0, a.x1, a.y1);
+      const { group, piles, label } = areaSelection(this.cb.getWorld(), a);
       this.multiArea = null;
       this.tool = null;
       this.selectedVehicle = null;
-      this.multi = group.length > 1 ? group.map((b) => b.id) : [];
-      this.selectedId = group.length === 1 ? group[0].id : null;
-      if (group.length > 1) this.cb.toast(`${BUILDINGS[group[0].type].name} ${group.length}대 고름 — 오른쪽 창에서 한 번에 바꿔요`);
+      this.multiPiles = piles;
+      this.multi = group.length > 1 || piles.length > 0 ? group.map((b) => b.id) : [];
+      this.selectedId = group.length === 1 && !piles.length ? group[0].id : null;
+      if (group.length || piles.length) this.cb.toast(`${label} 선택`);
       this.cb.changed();
     }
     if (this.mode === 'press') {
@@ -488,6 +494,7 @@ export class Input implements ViewState {
         return;
       }
       this.multi = [];
+      this.multiPiles = [];
       // 트럭이 도로·정류장 위에 있으므로 트럭을 먼저 본다
       const w = this.cb.getWorld();
       const [wx, wy] = this.worldAt(e);
@@ -543,6 +550,7 @@ export class Input implements ViewState {
         this.blocked = null;
         this.paste = null;
         this.multi = [];
+        this.multiPiles = [];
         this.selectedId = null;
         this.selectedVehicle = null;
         this.cb.changed();
@@ -591,6 +599,7 @@ export class Input implements ViewState {
     this.selectedId = null;
     this.selectedVehicle = null;
     this.multi = [];
+    this.multiPiles = [];
     if (name) this.cb.toast(`청사진 '${name}' — 클릭해서 붙여넣기 (우클릭·Esc 취소)`);
     this.cb.changed();
   }

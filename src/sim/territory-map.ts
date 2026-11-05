@@ -1,4 +1,5 @@
 import { ITEMS, type ItemId } from '../data/items';
+import { ELEVATOR_SIZE, newElevator } from './elevator';
 import { STARTING_STOCK } from './mapgen';
 import { grove, lake, patch } from './regional-map';
 import { createRng } from './rng';
@@ -89,6 +90,12 @@ export function generateTerritoryWorld(seed: number, owner = 0): World {
       patch(w, c + Math.cos(a) * r, c + Math.sin(a) * r, 4.2, t.item, total, rng, own);
     }
   }
+
+  // 우주 엘리베이터 부지: 허브 옆, 호수·숲과 엇갈린 쪽 (광장 안)
+  const ea = side + Math.PI / 2;
+  const ex = Math.round(c + Math.cos(ea) * 10 - ELEVATOR_SIZE / 2), ey = Math.round(c + Math.sin(ea) * 10 - ELEVATOR_SIZE / 2);
+  for (let j = 0; j < ELEVATOR_SIZE; j++) for (let i = 0; i < ELEVATOR_SIZE; i++) if (w.resItem[w.idx(ex + i, ey + j)]) w.setResource(ex + i, ey + j, null, 0);
+  w.elevator = newElevator(ex, ey);
 
   for (const s of STARTING_STOCK) w.stock.set(s.item, s.count);
   w.sites = { A: [c, c] };

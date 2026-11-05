@@ -33,6 +33,7 @@ import {
   type TruckKind,
 } from '../data/buildings';
 import { ITEMS, ITEM_IDS, type ItemId, type ItemStack } from '../data/items';
+import { ELEVATOR_SIZE, elevatorTake, type Elevator } from './elevator';
 import { RECIPES, type MachineKind, type Recipe } from '../data/recipes';
 import {
   ENDLESS_BY_ID,
@@ -80,6 +81,13 @@ export interface PlaceCheck {
 }
 
 /** 아이템을 내보낼 수 있는 이웃. fromSide = 받는 쪽에서 본 보내는 쪽 방향 */
+/** 산지 협동: 사람 하나의 기여 (자기 땅에서 생산한 개수, 지은 건물 수, 자기 트럭이 다른 정류장에 나른 개수) */
+export interface Contribution {
+  made: number;
+  built: number;
+  hauled: number;
+}
+
 /** 산지 협동 모드의 산지 하나. 땅에서는 item 하나만 나오고, 주인(owner = 플레이어 번호, -1 = 없음)만 그 땅을 고친다 */
 export interface Territory {
   id: number;
@@ -584,6 +592,10 @@ export class World {
   territory: Uint8Array | null = null;
   /** 산지 협동 모드의 산지들 (id 1부터) */
   territories: Territory[] = [];
+  /** 산지 협동: 광장의 우주 엘리베이터 (없는 세계면 null) */
+  elevator: Elevator | null = null;
+  /** 산지 협동: 사람별 기여 (접속 키, 키가 없으면 '#플레이어 번호') — 완공 결과 화면 */
+  contrib = new Map<string, Contribution>();
   /** 현지 회수 더미 (regional-v1). 칸 번호·아이템·회수 사건별 */
   piles: PileEntry[] = [];
   /** 다음 회수 사건 번호 */
@@ -725,6 +737,19 @@ export class World {
       v.owner = owner;
       v.ownerKey = owner === 0 ? '' : key;
     }
+  }
+
+  /** 산지 협동: 기여를 적을 이름 (접속 키, 없으면 '#번호') */
+  contribKey(player: number, key = this.keyOf(player)): string {
+    return key || `#${player}`;
+  }
+
+  /** 산지 협동: 기여 더하기 (생산·건설·운송) */
+  credit(who: string, field: keyof Contribution, n: number): void {
+    if (!this.territory || n <= 0) return;
+    let c = this.contrib.get(who);
+    if (!c) this.contrib.set(who, (c = { made: 0, built: 0, hauled: 0 }));
+    c[field] += n;
   }
 
   /** 칸이 속한 산지 (광장이거나 산지가 없는 세계면 null) */
@@ -1162,6 +1187,8 @@ export class World {
     }
     const foreign = this.foreignTerritory(this.actor, x, y, def.size);
     if (foreign) return { ok: false, reason: territoryReason(foreign) };
+    const e = this.elevator;
+    if (e && x < e.x + ELEVATOR_SIZE && x + def.size > e.x && y < e.y + ELEVATOR_SIZE && y + def.size > e.y) return { ok: false, reason: '우주 엘리베이터 부지예요' };
     if (type !== 'hub' && !this.unlockedBuildings.has(type)) {
       return { ok: false, reason: '잠김 (연구 필요)' };
     }
@@ -3838,12 +3865,17 @@ export class World {
     }
     if (this.terrain) this.ach.addWin(`tm:${this.terrainAt(this.refTile(b))}`, n, this.time);
     if (isMinerType(b.type) && (item === 'iron-ore' || item === 'copper-ore' || item === 'coal')) this.ach.flags.add('ore');
+    if (this.territory) {
+      const t = this.territoryAt(this.refTile(b));
+      if (t && t.owner >= 0) this.credit(this.contribKey(t.owner, t.key), 'made', n);
+    }
   }
 
   /** 트럭이 실은 곳(정류장·구역)과 다른 정류장에 내렸을 때 배송 실적 */
   private recordDelivery(v: Vehicle, st: Building, item: ItemId): void {
     if (!v.fromStation || v.fromStation === st.id) return;
     this.achDelivery(v, st, item);
+    this.credit(this.contribKey(v.owner, v.ownerKey), 'hauled', 1);
     const s = this.stats;
     s.delivered++;
     if (this.planned(v) && v.period > 0) s.scheduledDelivered++;
@@ -4321,6 +4353,8 @@ export class World {
           this.stats.projectDelivered++;
           return true;
         }
+        // 산지 협동: 우주 엘리베이터 지금 단계에 필요한 것은 엘리베이터로
+        if (this.elevator && elevatorTake(this, item)) return true;
         addTo(this.stock, item, 1);
         addTo(this.incomeBuckets[this.incomeSecond % 60], item, 1);
         return true;
@@ -5464,6 +5498,8 @@ export class World {
       ...(this.terrain ? { terrain: runLength(this.terrain), vents: [...this.vents] } : {}),
       ...(this.revealed ? { fog: runLength(this.revealed), sites: { ...this.sites } } : {}),
       ...(this.territory ? { territory: runLength(this.territory), territories: this.territories.map((t) => ({ ...t })) } : {}),
+      ...(this.elevator ? { elevator: { ...this.elevator, delivered: [...this.elevator.delivered] } } : {}),
+      ...(this.contrib.size ? { contrib: [...this.contrib].map(([k, c]) => [k, { ...c }] as [string, Contribution]) } : {}),
       ...(this.zones.length ? { zones: this.zones.map((z) => ({ ...z })), nextZoneId: this.nextZoneId } : {}),
       ...(this.regional ? { grid: 'pole-grid-v1' as const } : {}),
       ...(this.reservations.length ? { resv: this.reservations.map((r) => ({ ...r })) } : {}),
@@ -5507,6 +5543,11 @@ export class World {
       for (let j = 0; j < data.territory.length; j += 2) w.territory.fill(data.territory[j], k, (k += data.territory[j + 1]));
       w.territories = (data.territories ?? []).map((t) => ({ id: t.id, item: t.item, owner: t.owner, key: String(t.key ?? ''), open: t.open !== false }));
     }
+    if (data.elevator) {
+      const e = data.elevator;
+      w.elevator = { stage: e.stage, delivered: new Map(e.delivered), on: e.on !== false, scale: e.scale ?? 1, doneAt: e.doneAt ?? -1, x: e.x, y: e.y };
+    }
+    for (const [k, c] of data.contrib ?? []) w.contrib.set(k, { made: c.made ?? 0, built: c.built ?? 0, hauled: c.hauled ?? 0 });
     for (const [i, itemIdx, a] of data.res) {
       w.resItem[i] = ITEM_IDS[itemIdx];
       w.resAmount[i] = a < 0 ? Infinity : a;
@@ -5744,6 +5785,12 @@ export class World {
     h.str(this.rules).num(this.nextPileEv).num(this.moduleBatches).num(this.advDelivered).num(this.nextZoneId);
     for (const z of this.zones) h.num(z.id).num(z.x).num(z.y).num(z.creator).num(z.budget);
     for (const t of this.territories) h.num(t.id).str(t.item).num(t.owner).str(t.key).num(t.open ? 1 : 0);
+    if (this.elevator) {
+      const e = this.elevator;
+      h.str('elevator').num(e.stage).num(e.on ? 1 : 0).num(e.scale).num(e.doneAt);
+      for (const [item, n] of e.delivered) h.str(item).num(n);
+    }
+    for (const [k, c] of this.contrib) h.str(k).num(c.made).num(c.built).num(c.hauled);
     for (const r of this.reservations) h.num(r.v).num(r.holder).str(r.item).num(r.n).str(r.dir);
     const st = this.stats;
     h.num(this.ach.digest());
@@ -5910,6 +5957,9 @@ export interface SaveData {
   /** 산지 협동 모드: 칸별 산지 번호(run-length)와 산지들 */
   territory?: number[];
   territories?: Territory[];
+  /** 산지 협동: 우주 엘리베이터와 사람별 기여 */
+  elevator?: Omit<Elevator, 'delivered'> & { delivered: [ItemId, number][] };
+  contrib?: [string, Contribution][];
   /** 1: 입출구 방향 규칙 이전, 2: 호수 추가 이전, 3: 현재 */
   v: 1 | 2 | 3;
   width: number;

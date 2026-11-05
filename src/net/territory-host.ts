@@ -1,4 +1,5 @@
 import type { Command } from '../sim/commands';
+import { elevatorScale } from '../sim/elevator';
 import { planOwners } from '../sim/territory-plan';
 import type { World } from '../sim/world';
 
@@ -102,7 +103,13 @@ export class TerritoryHost {
       if (owner !== v.owner || key !== v.ownerKey) trucks.push([v.id, owner, key]);
     }
     this.openSeen = current.map((t) => (t.open ? 1 : 0)).join('');
-    if (!trucks.length && !opened && w.territories.every((t, k) => t.owner === owners[k] && t.key === keys[k])) return;
-    this.exec({ t: 'territories', owners, keys, ...(trucks.length ? { trucks } : {}), ...(opened ? { open: current.map((t) => t.open) } : {}) });
+    // 우주 엘리베이터 납품량은 인원에 맞춘다 (기다리는 사람도 센다)
+    const scale = elevatorScale(players.length);
+    const rescale = !!w.elevator && w.elevator.scale !== scale;
+    if (!trucks.length && !opened && !rescale && w.territories.every((t, k) => t.owner === owners[k] && t.key === keys[k])) return;
+    this.exec({
+      t: 'territories', owners, keys,
+      ...(trucks.length ? { trucks } : {}), ...(opened ? { open: current.map((t) => t.open) } : {}), ...(rescale ? { scale } : {}),
+    });
   }
 }

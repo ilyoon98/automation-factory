@@ -53,6 +53,7 @@ import { copyText } from './clipboard';
 import { GUIDE, findTarget, type GuideFocus } from './guide';
 import { goalFocus } from './goal-focus';
 import { TERRITORY_TASKS, currentTerritoryTask } from '../sim/territory-goals';
+import { ELEVATOR_STAGES, stageNeed, stageProgress } from '../sim/elevator';
 import { MAIN_GOALS, PROJECT_GOAL, REGION_NEED, REGION_STAGES, currentGoal, currentStage, goalNeedsStage, stageCleared, type GoalHint } from '../sim/goals';
 import { ACH_BY_ID, Q60_ITEMS, achProgress, activeAchievements, sustainedSecs, type AchDef, type AchKind } from '../sim/achievements';
 import { Codex, depositName, type DepositId } from './codex';
@@ -252,6 +253,8 @@ export class UI {
   /** 회수 더미를 차례로 보여 줄 때 지금 차례 */
   private pileCycle = -1;
   private finaleShown = false;
+  /** 산지 협동: 이 공장에서 우주 엘리베이터 완공 카드를 이미 보였는지 (불러온 공장이 이미 완공이면 다시 띄우지 않는다) */
+  private elevatorShown = false;
   /** 위쪽 바: 줄 배치·팝오버 */
   private topbar = topbar;
   /** 목표판(O)을 마지막으로 그린 상태 */
@@ -547,6 +550,11 @@ export class UI {
     // 선택 도전 고르기 (개인 설정)
     // 선택 도전 줄을 누르면 그 도전의 세부를 펼친다 (다시 누르면 접기, 개인 설정)
     $('guide').addEventListener('pointerdown', (e) => {
+      if ((e.target as HTMLElement).closest('[data-elevator]')) {
+        const w = game.getWorld();
+        if (w.elevator) game.exec({ t: 'elevator', on: !w.elevator.on }, () => this.update());
+        return;
+      }
       const id = (e.target as HTMLElement).closest<HTMLElement>('[data-chal]')?.dataset.chal;
       if (!id) return;
       try {
@@ -1630,6 +1638,11 @@ export class UI {
   private updateMainGoals(w: World): void {
     const done = MAIN_GOALS.filter((g) => w.goals.has(g.id)).length;
     if (w !== this.guideWorld) this.finaleShown = w.goals.has('MG36');
+    if (w !== this.guideWorld) this.elevatorShown = (w.elevator?.doneAt ?? -1) >= 0;
+    else if (w.elevator && w.elevator.doneAt >= 0 && !this.elevatorShown) {
+      this.elevatorShown = true;
+      this.notice('우주 엘리베이터 완공!', this.elevatorResults(w), 20000, 'finale');
+    }
     // 새로 이룬 목표만 알린다 (불러오거나 방에 들어가 한꺼번에 채워질 때는 조용히)
     if (w === this.guideWorld && done > this.goalCount) {
       const last = MAIN_GOALS.filter((g) => w.goals.has(g.id)).at(-1);
@@ -1667,7 +1680,7 @@ export class UI {
       <div class="now"><small class="muted">${g.chapter} · ${g.id}</small><b>${g.title}</b><p>${withBuildingIcons(g.hint)}</p></div>
       <ul class="steps">${checks}</ul>
       ${need ? `<p class="reward">${mapIcon()} 다음 지역이 필요해요: 아래 "${need.name}" 지역 과제 ${need.tasks.filter((t) => w.challenges.has(t.id)).length}/${REGION_NEED}</p>` : ''}
-      ${this.regionHtml(w)}${this.territoryTaskHtml(w)}${this.trackedAchHtml(w)}`;
+      ${this.regionHtml(w)}${this.territoryTaskHtml(w)}${this.elevatorHtml(w)}${this.trackedAchHtml(w)}`;
     // 선택 도전 목록을 펼친 동안 다시 그리면 목록이 바로 닫힌다: 고르는 중이면 그대로 둔다
     if (html === this.guideHtml || $('guide').contains(document.activeElement) && document.activeElement instanceof HTMLSelectElement) return;
     this.guideHtml = html;
@@ -1704,6 +1717,49 @@ export class UI {
     return `<div class="row"><span>지역 과제 · ${s.name} <small class="muted">셋 중 ${REGION_NEED}개</small></span><b>${got}/${REGION_NEED}</b></div>
       <ul class="steps chals">${rows}</ul>
       <p class="reward">보상: ${mapIcon()} ${siteLabels(s.opens).join(', ')}</p>`;
+  }
+
+  /** 산지 협동: 우주 엘리베이터 단계·납품 진행과 납품 켜기/끄기 */
+  private elevatorHtml(w: World): string {
+    const e = w.elevator;
+    if (!e) return '';
+    const s = ELEVATOR_STAGES[e.stage];
+    if (!s) return `<div class="row"><span>🚀 우주 엘리베이터</span><b>완공</b></div>`;
+    const pct = Math.floor(stageProgress(e) * 100);
+    const rows = s.items
+      .map(([item]) => {
+        const need = stageNeed(e, item), have = Math.min(e.delivered.get(item) ?? 0, need);
+        return `<li class="sub ${have >= need ? 'done' : ''}"><span class="mark">${have >= need ? '✓' : '·'}</span>${itemIcon(item)}${ITEMS[item].name} <b>${have.toLocaleString()}/${need.toLocaleString()}</b></li>`;
+      })
+      .join('');
+    return `<div class="row"><span>🚀 우주 엘리베이터 <small class="muted">${e.stage + 1}/${ELEVATOR_STAGES.length} ${s.name}</small></span><b>${pct}%</b></div>
+      <div class="gbar"><i style="width:${pct}%"></i></div>
+      <ul class="steps chals">${rows}</ul>
+      <div class="actions"><button data-elevator title="허브에 들어온 물건 중 지금 단계에 필요한 것을 엘리베이터로 보내요. 건설 재료가 모자라면 잠시 꺼 두세요">${e.on ? '허브 납품 켜짐' : '허브 납품 꺼짐'}</button></div>`;
+  }
+
+  /** 우주 엘리베이터 완공 결과: 사람마다 생산·건설·운송과 칭호 */
+  private elevatorResults(w: World): string {
+    const net = this.game.net;
+    const nameOf = (key: string) => {
+      if (key.startsWith('#')) return net.nameOf(Number(key.slice(1)));
+      const t = w.territories.find((x) => x.key === key);
+      if (t) return net.nameOf(t.owner);
+      const v = [...w.vehicles.values()].find((x) => x.ownerKey === key);
+      return v ? net.nameOf(v.owner) : '떠난 사람';
+    };
+    const rows = [...w.contrib].sort((a, b) => b[1].made - a[1].made);
+    const best = (f: 'made' | 'built' | 'hauled') => rows.reduce<string | null>((a, [k, c]) => (c[f] > 0 && (!a || c[f] > w.contrib.get(a)![f]) ? k : a), null);
+    const titles = new Map<string, string[]>();
+    for (const [f, title] of [['made', '생산왕'], ['built', '건축가'], ['hauled', '트럭 기사']] as const) {
+      const k = best(f);
+      if (k) titles.set(k, [...(titles.get(k) ?? []), title]);
+    }
+    const days = dayNumber(w.elevator?.doneAt ?? 0);
+    const table = rows
+      .map(([k, c]) => `<div class="row"><span>${escapeHtml(nameOf(k))} ${(titles.get(k) ?? []).map((t) => `<span class="tag">${t}</span>`).join(' ')}</span><b>생산 ${c.made.toLocaleString()} · 건설 ${c.built.toLocaleString()} · 운송 ${c.hauled.toLocaleString()}</b></div>`)
+      .join('');
+    return `<p>${days}일차에 다 함께 우주 엘리베이터를 세웠어요.</p>${table || '<p class="muted">기록된 기여가 없어요.</p>'}<div class="completion-actions"><button data-continue>계속 건설</button></div>`;
   }
 
   /** 산지 협동: 지금 할 산지 과제와 진행 (이루면 닫힌 산지가 하나 열린다) */

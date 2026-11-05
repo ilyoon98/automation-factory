@@ -74,7 +74,9 @@ export type Command =
   /** 전력 구역의 차량 충전 예산 (kW, 0~800) */
   | { t: 'zone-budget'; zone: number; kw: number }
   /** 산지 협동: 산지 주인 나누기 (방장만). 산지 순서대로 플레이어 번호(-1 = 없음)와 접속 키 */
-  | { t: 'territories'; owners: number[]; keys: string[]; trucks?: [number, number, string][]; open?: boolean[] }
+  | { t: 'territories'; owners: number[]; keys: string[]; trucks?: [number, number, string][]; open?: boolean[]; scale?: number }
+  /** 산지 협동: 허브에 들어온 물건을 우주 엘리베이터로 돌릴지 (누구나) */
+  | { t: 'elevator'; on: boolean }
   | { t: 'undo' }
   | { t: 'redo' };
 
@@ -124,6 +126,7 @@ export interface CommandResults {
   'power-node': UseResult;
   'zone-budget': boolean;
   territories: boolean;
+  elevator: boolean;
   project: boolean;
   'truck-plan': boolean;
   'truck-dispatch': boolean;
@@ -172,8 +175,11 @@ function run(w: World, c: Command): CommandResults[Command['t']] {
       return w.beginEdit();
     case 'end':
       return w.endEdit();
-    case 'place':
-      return place(w, c);
+    case 'place': {
+      const r = place(w, c);
+      if (r.ok && !r.swap) w.credit(w.contribKey(w.actor), 'built', 1);
+      return r;
+    }
     case 'road-build':
       return buildRoad(w, c.from, c.to, c.path, c.newTiles);
     case 'orient': {
@@ -199,8 +205,11 @@ function run(w: World, c: Command): CommandResults[Command['t']] {
       if (mine(w, b)) w.edit(() => w.rotate(b, c.dir));
       return;
     }
-    case 'paste':
-      return w.edit(() => pasteBlueprint(w, c.bp, c.x, c.y));
+    case 'paste': {
+      const r = w.edit(() => pasteBlueprint(w, c.bp, c.x, c.y));
+      w.credit(w.contribKey(w.actor), 'built', r.placed);
+      return r;
+    }
     case 'config': {
       const b = w.buildings.get(c.id);
       if (!mine(w, b)) return false;
@@ -343,6 +352,12 @@ function run(w: World, c: Command): CommandResults[Command['t']] {
       // 나누기는 방장 한 곳에서 정한다 (손님이 보낸 명령이면 무시)
       if (w.actor !== 0 || !w.setTerritoryOwners(c.owners, c.keys, c.open)) return false;
       w.setTruckOwners(c.trucks ?? []);
+      // 인원에 맞춘 우주 엘리베이터 납품 배율 (방장이 정한다)
+      if (w.elevator && typeof c.scale === 'number' && c.scale >= 0.25 && c.scale <= 2) w.elevator.scale = c.scale;
+      return true;
+    case 'elevator':
+      if (!w.elevator) return false;
+      w.elevator.on = !!c.on;
       return true;
     case 'undo':
       return w.undo();

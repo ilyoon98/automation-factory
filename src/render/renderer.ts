@@ -28,6 +28,7 @@ import { roundRect } from './draw-item';
 import { PILE_MARKER } from './pile-marker';
 import { constructionCheck, type PointerFeedback } from '../input/pointer';
 import { areaSelection } from '../input/area-selection';
+import { ELEVATOR_SIZE, ELEVATOR_STAGES, stageProgress } from '../sim/elevator';
 import type { RoadPlan } from '../sim/road-plan';
 import { FOG_COLOR, NUM_ADVANCE, ORE_GROUND, PAL, TILE, TREE_LEAF, hash, loadSpriteOverrides, sprite, spriteHalf, tone } from './pixel';
 import { MACHINE, MACHINE3 } from './pixel-buildings';
@@ -409,6 +410,7 @@ export class Renderer {
     for (const b of visible) if (!isLine(b) && b.type !== 'road') this.drawBuilding(world, b);
     if (world.regional && z >= 6) this.drawWires(world, view, x0, y0, x1, y1);
     if (world.territory) this.drawTerritoryLabels(world);
+    if (world.elevator) this.drawElevator(world);
     // 창고는 묶음마다 한 번 (묶음 일부만 화면에 보여도)
     if (!this.lod) {
       const storages = new Set(visible.filter((b) => b.type === 'storage').map((b) => world.storageGroup(b)[0]));
@@ -1113,6 +1115,48 @@ export class Renderer {
         }
       }
     }
+  }
+
+  /**
+   * 우주 엘리베이터: 부지의 기초 위로 기둥이 단계 진행만큼 올라가고, 단계마다 금색 고리.
+   * 완공하면 하늘까지 이어진 줄을 따라 승강기가 오르내린다
+   */
+  private drawElevator(world: World): void {
+    const e = world.elevator!;
+    const ctx = this.ctx;
+    const z = this.cam.zoom;
+    const [sx, sy] = this.cam.worldToScreen(e.x, e.y);
+    const s = ELEVATOR_SIZE * z;
+    const maxH = s * 3;
+    if (sx > this.cam.viewW || sx + s < 0 || sy - maxH > this.cam.viewH || sy + s < 0) return;
+    const done = e.doneAt >= 0;
+    const progress = done ? 1 : Math.min(1, (e.stage + stageProgress(e)) / ELEVATOR_STAGES.length);
+    // 기초
+    ctx.fillStyle = '#8a8478';
+    ctx.fillRect(sx, sy, s, s);
+    ctx.fillStyle = '#6f685d';
+    ctx.fillRect(sx + s * 0.1, sy + s * 0.1, s * 0.8, s * 0.8);
+    // 기둥과 단계 고리
+    const base = sy + s * 0.55;
+    const w = s * 0.34;
+    const h = maxH * progress;
+    ctx.fillStyle = '#5f6b78';
+    ctx.fillRect(sx + (s - w) / 2, base - h, w, h);
+    ctx.fillStyle = '#d9a441';
+    const ring = Math.max(2, z * 0.18);
+    const finished = done ? ELEVATOR_STAGES.length : e.stage;
+    for (let k = 1; k <= finished; k++) ctx.fillRect(sx + s * 0.18, base - maxH * (k / ELEVATOR_STAGES.length), s * 0.64, ring);
+    if (done) {
+      const cx = sx + s / 2;
+      ctx.fillStyle = 'rgba(217, 164, 65, 0.8)';
+      ctx.fillRect(cx - 1, 0, 2, Math.max(0, base - maxH));
+      const top = Math.max(0, base - maxH);
+      const t = reducedEffects() ? 0.5 : (Math.sin(performance.now() / 1600) + 1) / 2;
+      ctx.fillStyle = '#fbf3df';
+      ctx.fillRect(cx - z * 0.4, top * t, z * 0.8, z * 0.6);
+    }
+    const label = done ? '🚀 우주 엘리베이터 완공' : `🚀 우주 엘리베이터 ${e.stage + 1}/${ELEVATOR_STAGES.length} ${ELEVATOR_STAGES[e.stage].name} ${Math.floor(stageProgress(e) * 100)}%`;
+    this.text(label, sx + s / 2, base - h - 10, '#fbf3df', z < 12 ? 12 : 11);
   }
 
   /** 산지 이름표 (멀리서 볼 때 크게): "철 산지 · 내 땅" */

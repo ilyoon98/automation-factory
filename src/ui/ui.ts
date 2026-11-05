@@ -1368,6 +1368,22 @@ export class UI {
     this.sendUse(`pile:${tile}`, { t: 'pile-collect', rid: newRid(), tile }, (r) => this.floatGain(sx, sy, r.items ?? []));
   }
 
+  /** Shift 드래그로 고른 영역의 회수 더미를 바로 줍고, 무엇을 얼마나 주웠는지 알린다 */
+  pickPiles(tiles: number[], kept: number): void {
+    const left = kept ? `하역기가 쓰는 더미 ${kept}곳은 남겨 뒀어요` : '';
+    if (!tiles.length) {
+      this.toast(left, 3000);
+      return;
+    }
+    // 드래그마다 다른 영역이라 처리 중이어도 다음 줍기를 막지 않는다
+    const rid = newRid();
+    this.sendUse(`piles:${rid}`, { t: 'piles-collect', rid, tiles }, (r) => {
+      const items = (r.items ?? []).map(([i, n]) => `${ITEMS[i].name} ${n}개`);
+      const shown = items.length > 3 ? [...items.slice(0, 3), `외 ${items.length - 3}종`] : items;
+      this.toast([`회수 더미 ${r.collected ?? 0}곳에서 ${shown.join(' · ')} 주웠어요`, left].filter(Boolean).join(' · '), 4000);
+    });
+  }
+
   /** 얻은 것을 그 자리에서 위로 떠오르며 사라지게 (화면 좌표) */
   private floatGain(sx: number, sy: number, items: [ItemId, number][]): void {
     if (!items.length) return;
@@ -1829,18 +1845,12 @@ export class UI {
       delete el.dataset.transportPlanVersion;
     }
     const v = this.selectedVehicle();
-    const input = this.game.input;
-    // 지도/목록에서 단일 대상을 새로 열었으면 이전 영역 선택의 아이템을 붙이지 않는다.
-    if (v || input.selectedId !== null) input.multiPiles = [];
     if (v) {
       this.updateVehicleInfo(w, v);
       return;
     }
     const group = this.multiSelected(w);
-    const livePiles = w.pileTiles();
-    const piles = input.multiPiles.filter(tile => livePiles.has(tile));
-    if (piles.length !== input.multiPiles.length) input.multiPiles = piles;
-    if (group.length > 1 || piles.length) {
+    if (group.length > 1) {
       this.updateMultiInfo(w, group);
       return;
     }
@@ -1943,25 +1953,14 @@ export class UI {
   private updateMultiInfo(w: World, group: Building[]): void {
     const el = $('info');
     el.hidden = false;
-    const type = group[0]?.type;
+    const type = group[0].type;
     const recipes = group.map((b) => b.recipe ?? '');
-    const tiles = new Set(this.game.input.multiPiles);
-    const items = new Map<ItemId, number>();
-    for (const p of w.piles) if (tiles.has(p.tile)) items.set(p.item, (items.get(p.item) ?? 0) + p.n);
-    const total = [...items.values()].reduce((a, b) => a + b, 0);
-    const busy = this.useBusy.has('piles:selection');
-    const key = `multi|${group.map((b) => b.id).join(',')}|${recipes.join(',')}|${w.unlockedRecipes.size}|${[...tiles]}|${JSON.stringify([...items])}|${busy}`;
+    const key = `multi|${group.map((b) => b.id).join(',')}|${recipes.join(',')}|${w.unlockedRecipes.size}`;
     if (key === this.infoKey) return;
     this.infoKey = key;
-    let html = `<header>${type ? `<img class="swatch" src="${buildingIconUrl(type)}" alt="">` : '📦'}<h3>영역 선택</h3>
+    let html = `<header><img class="swatch" src="${buildingIconUrl(type)}" alt=""><h3>${BUILDINGS[type].name} ${group.length}대</h3>
       <button class="x" data-act="close">×</button></header>`;
-    if (tiles.size) {
-      html += `<div class="prod-sub">회수 더미 ${tiles.size}곳 · 아이템 ${total}개</div>`;
-      for (const [item, n] of items) html += `<div class="row"><span>${itemIcon(item)} ${ITEMS[item].name}</span><b>${n}개</b></div>`;
-      html += `<div class="actions"><button data-act="multi-pile-collect" ${busy ? 'disabled' : ''}>${busy ? '줍는 중…' : '선택한 아이템 모두 줍기'}</button></div>`;
-    }
-    if (type) html += `<div class="prod-sub">${BUILDINGS[type].name} ${group.length}대</div>`;
-    if (type && isRecipeMachine(type)) {
+    if (isRecipeMachine(type)) {
       const same = recipes.every((r) => r === recipes[0]) ? recipes[0] : null;
       const none = type === 'assembler' ? '선택 안 함' : '자동 (들어온 재료로)';
       const options = recipesFor(type as MachineKind)
@@ -1979,8 +1978,8 @@ export class UI {
         .join('');
       html += rows;
     }
-    if (group.length) html += `<div class="actions"><button data-act="multi-remove" class="danger">선택한 설비 철거 (${group.length}대)</button></div>`;
-    html += `<p class="muted">Shift + 드래그로 다시 고르기 · Esc로 풀기</p>`;
+    html += `<div class="actions"><button data-act="multi-remove" class="danger">모두 철거 (${group.length}대)</button></div>
+      <p class="muted">Shift + 드래그로 다시 고르기 · Esc로 풀기</p>`;
     el.innerHTML = html;
   }
 
@@ -2763,18 +2762,8 @@ export class UI {
       this.update();
       return;
     }
-    if (input.multi.length || input.multiPiles.length) {
-      if (act === 'close') { input.multi = []; input.multiPiles = []; }
-      if (act === 'multi-pile-collect') {
-        const selection = input.multiPiles;
-        const w = this.game.getWorld();
-        this.sendUse('piles:selection', { t: 'piles-collect', rid: newRid(), tiles: [...selection] }, r => {
-          if (this.game.getWorld() !== w) return;
-          if (input.multiPiles === selection) input.multiPiles = [];
-          this.toast(`회수 더미 ${r.collected ?? 0}곳 · 아이템 ${r.moved ?? 0}개 주웠어요`);
-        });
-        return;
-      }
+    if (input.multi.length) {
+      if (act === 'close') input.multi = [];
       if (act === 'multi-remove') input.removeMulti();
       this.update();
       return;

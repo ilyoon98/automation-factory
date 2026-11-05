@@ -60,7 +60,6 @@ export interface ViewState {
   /** Shift 드래그 중인 단체 선택 영역, 단체 선택한 건물들 */
   multiArea: { x0: number; y0: number; x1: number; y1: number } | null;
   multi: number[];
-  multiPiles?: number[];
   paste: Blueprint | null;
   /** 들고 있는 도구로 지으면 들어갈 설정 (레시피 id 또는 분류기 아이템) */
   toolSetting: string | null;
@@ -479,10 +478,6 @@ export class Renderer {
       const [sx, sy] = cam.worldToScreen(tile % world.width + PILE_MARKER.x / 16, Math.floor(tile / world.width) + PILE_MARKER.y / 16);
       this.outline(sx, sy, PILE_MARKER.size / 16 * z, PILE_MARKER.size / 16 * z, '#3f8a3a');
     };
-    if (view.multiPiles?.length) {
-      const pileTiles = world.pileTiles();
-      for (const tile of view.multiPiles) if (pileTiles.has(tile)) outlinePile(tile);
-    }
     if (view.multiArea) {
       const a = view.multiArea;
       const { group, piles, label } = areaSelection(world, a);

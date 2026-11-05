@@ -322,6 +322,7 @@ game.input = new Input(canvas, camera, {
     const [sx, sy] = camera.worldToScreen((tile % world.width) + 0.5, Math.floor(tile / world.width));
     ui.pickPile(tile, sx, sy);
   },
+  pickPiles: (tiles, kept) => ui.pickPiles(tiles, kept),
 });
 const ui = new UI(game);
 // exe: 새 버전 알림 (같이 하는 중이면 업데이트 전에 한 번 묻는다)

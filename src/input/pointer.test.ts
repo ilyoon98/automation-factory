@@ -52,10 +52,13 @@ function inputFixture() {
     done?.(result);
   };
   const pickPile = vi.fn((target: number) => applyCommand(w, 0, { t: 'pile-collect', rid: `input-${++rid}`, tile: target }));
+  const pickPiles = vi.fn((tiles: number[], _kept: number) => {
+    if (tiles.length) applyCommand(currentWorld, 0, { t: 'piles-collect', rid: `input-${++rid}`, tiles });
+  });
   const togglePause = vi.fn();
   const paletteSlot = vi.fn((_: number): BuildingType | null => null);
   const input = new Input(canvas as unknown as HTMLCanvasElement, cam, {
-    getWorld: () => currentWorld, exec, pickPile, changed: vi.fn(), toast: vi.fn(), togglePause, paletteSlot, ping: vi.fn(),
+    getWorld: () => currentWorld, exec, pickPile, pickPiles, changed: vi.fn(), toast: vi.fn(), togglePause, paletteSlot, ping: vi.fn(),
   });
   const event = (wx: number, wy: number, values = {}) => {
     const [clientX, clientY] = cam.worldToScreen(wx, wy);
@@ -64,53 +67,62 @@ function inputFixture() {
   const click = (wx: number, wy: number, values = {}) => {
     canvas.fire('pointerdown', event(wx, wy, values)); win.fire('pointerup', event(wx, wy, values));
   };
-  return { w, belt, tile, cam, input, canvas, win, pickPile, togglePause, paletteSlot, event, click, setWorld: (next: World) => { currentWorld = next; } };
+  return { w, belt, tile, cam, input, canvas, win, pickPile, pickPiles, togglePause, paletteSlot, event, click, setWorld: (next: World) => { currentWorld = next; } };
 }
 
 afterEach(() => vi.unstubAllGlobals());
 
-describe('Shift로 설비와 바닥 아이템 함께 선택', () => {
-  it('드래그 미리보기와 확정은 같은 설비·더미를 세고 벨트 위 화물은 건드리지 않는다', () => {
+describe('Shift 드래그를 놓으면 바닥 아이템을 바로 줍기', () => {
+  it('미리보기와 같은 더미를 놓는 순간 줍고, 설비 선택과 벨트 위 화물은 그대로 둔다', () => {
     const f = inputFixture(), b = f.w.place('smelter', 13, 10, 0)!;
     f.w.piles.push({ tile: f.tile, item: 'coal', n: 3, ev: 2, why: 'remove' });
     f.w.piles.push({ tile: f.w.idx(14, 10), item: 'gear', n: 2, ev: 3, why: 'remove' });
-    const hash = f.w.checksum();
+    const ids = [...f.w.buildings.keys()];
     f.canvas.fire('pointerdown', f.event(15.5, 12.5, { shiftKey: true }));
     f.canvas.fire('pointermove', f.event(9.5, 9.5, { shiftKey: true }));
     const preview = areaSelection(f.w, f.input.multiArea!);
-    expect(preview.label).toBe('설비 1대 · 회수 더미 2곳');
+    expect(preview.label).toBe('설비 1대 · 회수 더미 2곳 줍기');
     expect(f.input.pointerFeedback?.kind).toBe('multi');
+    expect(f.pickPiles).not.toHaveBeenCalled();
     f.win.fire('pointerup', f.event(9.5, 9.5, { shiftKey: true }));
-    expect(f.input.multi).toEqual([b.id]);
-    expect(f.input.selectedId).toBeNull();
-    expect(f.input.multiPiles).toEqual(preview.piles);
-    expect(f.pickPile).not.toHaveBeenCalled();
-    expect(f.w.checksum()).toBe(hash);
+    expect(f.pickPiles).toHaveBeenCalledWith(preview.piles, 0);
+    expect(f.w.pileTiles().size).toBe(0);
+    expect(f.input.selectedId).toBe(b.id);
+    expect(f.input.multi).toEqual([]);
+    expect([...f.w.buildings.keys()]).toEqual(ids);
     expect(f.belt.items).toEqual([{ item: 'copper-plate', pos: .5, n: 1 }]);
+    expect(f.pickPile).not.toHaveBeenCalled();
   });
 
-  it('더미만 있는 한 칸도 선택할 수 있고 Esc·도구 선택·세계 교체로 해제한다', () => {
+  it('하역기가 빼내는 더미는 줍지 않고 남긴 곳 수만 알린다', () => {
     const f = inputFixture();
-    const select = () => {
-      f.click(10.5, 10.5, { shiftKey: true });
-      expect(f.input.multi).toEqual([]);
-      expect(f.input.multiPiles).toEqual([f.tile]);
-    };
-    select(); f.win.fire('keydown', { key: 'Escape' }); expect(f.input.multiPiles).toEqual([]);
-    select(); f.input.setTool('road'); expect(f.input.multiPiles).toEqual([]);
-    f.input.setTool(null); select(); f.input.resetWorld(); expect(f.input.multiPiles).toEqual([]);
+    f.w.place('unloader', 10, 9, 0)!; // 북쪽을 봄: 뒤 (10,10)이 더미 칸
+    const other = f.w.idx(12, 12);
+    f.w.piles.push({ tile: other, item: 'coal', n: 4, ev: 2, why: 'remove' });
+    const a = { x0: 9, y0: 9, x1: 12, y1: 12 };
+    expect(areaSelection(f.w, a)).toMatchObject({ piles: [other], kept: 1, label: '설비 1대 · 회수 더미 1곳 줍기 · 하역기 더미 1곳 남김' });
+    f.canvas.fire('pointerdown', f.event(9.5, 9.5, { shiftKey: true }));
+    f.canvas.fire('pointermove', f.event(12.5, 12.5, { shiftKey: true }));
+    f.win.fire('pointerup', f.event(12.5, 12.5, { shiftKey: true }));
+    expect(f.pickPiles).toHaveBeenCalledWith([other], 1);
+    expect(f.w.pileCount(f.tile, 'iron-plate')).toBe(7);
+    expect(f.w.pileCount(other, 'coal')).toBe(0);
   });
 
-  it('미공개 더미는 제외하고 드래그 취소는 이전 선택을 바꾸거나 줍지 않는다', () => {
+  it('더미 한 칸도 Shift 클릭으로 줍고, 미공개 더미와 취소한 드래그는 줍지 않는다', () => {
     const f = inputFixture();
-    f.input.multiPiles = [f.tile];
+    f.click(10.5, 10.5, { shiftKey: true });
+    expect(f.pickPiles).toHaveBeenLastCalledWith([f.tile], 0);
+    expect(f.w.pileTiles().size).toBe(0);
+    f.w.piles.push({ tile: f.tile, item: 'coal', n: 1, ev: 9, why: 'remove' });
     f.w.revealed = new Uint8Array(f.w.width * f.w.height);
     expect(areaSelection(f.w, { x0: 9, y0: 9, x1: 12, y1: 12 }).piles).toEqual([]);
+    f.pickPiles.mockClear();
     f.canvas.fire('pointerdown', f.event(9.5, 9.5, { shiftKey: true }));
     f.canvas.fire('pointermove', f.event(12.5, 12.5, { shiftKey: true }));
     f.canvas.fire('pointercancel'); f.win.fire('pointerup', f.event(12.5, 12.5));
-    expect(f.input.multiPiles).toEqual([f.tile]);
-    expect(f.input.multiArea).toBeNull(); expect(f.pickPile).not.toHaveBeenCalled();
+    expect(f.input.multiArea).toBeNull(); expect(f.pickPiles).not.toHaveBeenCalled();
+    expect(f.w.pileCount(f.tile, 'coal')).toBe(1);
   });
 });
 

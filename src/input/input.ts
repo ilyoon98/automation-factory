@@ -24,6 +24,8 @@ export interface InputCallbacks {
   ping(x: number, y: number): void;
   /** 회수 더미를 눌렀을 때: 설비와 겹쳐 있어도 바로 줍는다 */
   pickPile(tile: number): void;
+  /** Shift 드래그 영역의 회수 더미를 한꺼번에 줍는다 (kept: 하역기가 쓰는 더미라 남긴 곳 수) */
+  pickPiles(tiles: number[], kept: number): void;
 }
 
 type Mode = 'none' | 'place' | 'remove' | 'remove-area' | 'pan' | 'press' | 'select' | 'multi';
@@ -91,8 +93,6 @@ export class Input implements ViewState {
   multiArea: { x0: number; y0: number; x1: number; y1: number } | null = null;
   /** 단체 선택한 건물들 (2대 이상. 하나면 selectedId로) */
   multi: number[] = [];
-  /** Shift로 함께 고른 바닥 회수 더미의 칸. 설비 설정·철거와는 별도로 처리한다. */
-  multiPiles: number[] = [];
   /** 붙여넣기 대기 중인 청사진 */
   paste: Blueprint | null = null;
   /** 청사진 저장함에서 꺼낸 것이면 그 이름 (방금 복사한 것이면 null → 정보창에서 저장할 수 있다) */
@@ -174,7 +174,6 @@ export class Input implements ViewState {
     this.selectedId = null;
     this.selectedVehicle = null;
     this.multi = [];
-    this.multiPiles = [];
     this.paste = null;
     this.pasteName = null;
     this.roadPreview = null;
@@ -200,8 +199,7 @@ export class Input implements ViewState {
       this.selectedVehicle = null;
       this.paste = null;
       this.multi = [];
-      this.multiPiles = [];
-    }
+      }
     this.cb.changed();
   }
 
@@ -474,14 +472,15 @@ export class Input implements ViewState {
     }
     if (this.mode === 'multi' && this.multiArea) {
       const a = this.multiArea;
-      const { group, piles, label } = areaSelection(this.cb.getWorld(), a);
+      const { group, piles, kept } = areaSelection(this.cb.getWorld(), a);
       this.multiArea = null;
       this.tool = null;
       this.selectedVehicle = null;
-      this.multiPiles = piles;
-      this.multi = group.length > 1 || piles.length > 0 ? group.map((b) => b.id) : [];
-      this.selectedId = group.length === 1 && !piles.length ? group[0].id : null;
-      if (group.length || piles.length) this.cb.toast(`${label} 선택`);
+      this.multi = group.length > 1 ? group.map((b) => b.id) : [];
+      this.selectedId = group.length === 1 ? group[0].id : null;
+      // 바닥 아이템은 선택해 둘 이유가 없어 놓는 순간 줍는다. 설비 선택은 그대로 정보창에서 다룬다.
+      if (piles.length || kept) this.cb.pickPiles(piles, kept);
+      else if (group.length > 1) this.cb.toast(`${BUILDINGS[group[0].type].name} ${group.length}대 고름 — 오른쪽 창에서 한 번에 바꿔요`);
       this.cb.changed();
     }
     if (this.mode === 'press') {
@@ -494,8 +493,7 @@ export class Input implements ViewState {
         return;
       }
       this.multi = [];
-      this.multiPiles = [];
-      // 트럭이 도로·정류장 위에 있으므로 트럭을 먼저 본다
+        // 트럭이 도로·정류장 위에 있으므로 트럭을 먼저 본다
       const w = this.cb.getWorld();
       const [wx, wy] = this.worldAt(e);
       const v = w.vehicleAt(wx, wy);
@@ -550,8 +548,7 @@ export class Input implements ViewState {
         this.blocked = null;
         this.paste = null;
         this.multi = [];
-        this.multiPiles = [];
-        this.selectedId = null;
+            this.selectedId = null;
         this.selectedVehicle = null;
         this.cb.changed();
         break;
@@ -599,7 +596,6 @@ export class Input implements ViewState {
     this.selectedId = null;
     this.selectedVehicle = null;
     this.multi = [];
-    this.multiPiles = [];
     if (name) this.cb.toast(`청사진 '${name}' — 클릭해서 붙여넣기 (우클릭·Esc 취소)`);
     this.cb.changed();
   }

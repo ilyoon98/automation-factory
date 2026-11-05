@@ -32,7 +32,7 @@ import {
   type Ports,
   type TruckKind,
 } from '../data/buildings';
-import { ITEM_IDS, type ItemId, type ItemStack } from '../data/items';
+import { ITEMS, ITEM_IDS, type ItemId, type ItemStack } from '../data/items';
 import { RECIPES, type MachineKind, type Recipe } from '../data/recipes';
 import {
   ENDLESS_BY_ID,
@@ -80,6 +80,13 @@ export interface PlaceCheck {
 }
 
 /** 아이템을 내보낼 수 있는 이웃. fromSide = 받는 쪽에서 본 보내는 쪽 방향 */
+/** 산지 협동 모드의 산지 하나. 땅에서는 item 하나만 나오고, 주인(owner = 플레이어 번호, -1 = 없음)만 그 땅을 고친다 */
+export interface Territory {
+  id: number;
+  item: ItemId;
+  owner: number;
+}
+
 interface OutTarget {
   b: Building;
   fromSide: Dir;
@@ -569,6 +576,10 @@ export class World {
   revealedCount = 0;
   /** 지도 생성의 거점 자리 (A 시작 ~ H 조립 부지, 두 번째 자원지들). 목표를 이루면 여기를 연다 */
   sites: Record<string, [number, number]> = {};
+  /** 산지 협동 모드: 칸마다 산지 번호 (0 = 가운데 광장, 누구나 짓는다). null이면 산지가 없는 세계 */
+  territory: Uint8Array | null = null;
+  /** 산지 협동 모드의 산지들 (id 1부터) */
+  territories: Territory[] = [];
   /** 현지 회수 더미 (regional-v1). 칸 번호·아이템·회수 사건별 */
   piles: PileEntry[] = [];
   /** 다음 회수 사건 번호 */
@@ -642,6 +653,28 @@ export class World {
   /** 이 칸을 확인했는지 (예전 지도는 늘 true) */
   isRevealed(i: number): boolean {
     return !this.revealed || this.revealed[i] === 1;
+  }
+
+  /** 칸이 속한 산지 (광장이거나 산지가 없는 세계면 null) */
+  territoryAt(i: number): Territory | null {
+    const id = this.territory?.[i] ?? 0;
+    return id ? (this.territories[id - 1] ?? null) : null;
+  }
+
+  /**
+   * 산지 협동: player가 (x, y)부터 size×size를 고칠 수 없게 막는 산지. 내 산지·광장·산지 없는 세계면 null.
+   * 짓기·철거·설정 명령이 모두 이 검사를 거친다 (화면에서만 막으면 같이 하는 사람끼리 어긋난다)
+   */
+  foreignTerritory(player: number, x: number, y: number, size = 1): Territory | null {
+    if (!this.territory) return null;
+    for (let dy = 0; dy < size; dy++) {
+      for (let dx = 0; dx < size; dx++) {
+        if (!this.inBounds(x + dx, y + dy)) continue;
+        const t = this.territoryAt(this.idx(x + dx, y + dy));
+        if (t && t.owner !== player) return t;
+      }
+    }
+    return null;
   }
 
   /** (cx, cy)에서 반지름 r 안을 확인한 땅으로 */
@@ -1055,6 +1088,8 @@ export class World {
         if (occupant && !(replacing && isBeltType(occupant.type))) return { ok: false, reason: '이미 건물이 있음' };
       }
     }
+    const foreign = this.foreignTerritory(this.actor, x, y, def.size);
+    if (foreign) return { ok: false, reason: territoryReason(foreign) };
     if (type !== 'hub' && !this.unlockedBuildings.has(type)) {
       return { ok: false, reason: '잠김 (연구 필요)' };
     }
@@ -5345,6 +5380,7 @@ export class World {
       ...(this.rules !== 'legacy-v042' ? { rules: this.rules } : {}),
       ...(this.terrain ? { terrain: runLength(this.terrain), vents: [...this.vents] } : {}),
       ...(this.revealed ? { fog: runLength(this.revealed), sites: { ...this.sites } } : {}),
+      ...(this.territory ? { territory: runLength(this.territory), territories: this.territories.map((t) => ({ ...t })) } : {}),
       ...(this.zones.length ? { zones: this.zones.map((z) => ({ ...z })), nextZoneId: this.nextZoneId } : {}),
       ...(this.regional ? { grid: 'pole-grid-v1' as const } : {}),
       ...(this.reservations.length ? { resv: this.reservations.map((r) => ({ ...r })) } : {}),
@@ -5381,6 +5417,12 @@ export class World {
       for (let j = 0; j < data.fog.length; j += 2) w.revealed.fill(data.fog[j], k, (k += data.fog[j + 1]));
       w.revealedCount = w.revealed.reduce((a, b) => a + b, 0);
       w.sites = { ...(data.sites ?? {}) };
+    }
+    if (data.territory) {
+      w.territory = new Uint8Array(w.width * w.height);
+      let k = 0;
+      for (let j = 0; j < data.territory.length; j += 2) w.territory.fill(data.territory[j], k, (k += data.territory[j + 1]));
+      w.territories = (data.territories ?? []).map((t) => ({ id: t.id, item: t.item, owner: t.owner }));
     }
     for (const [i, itemIdx, a] of data.res) {
       w.resItem[i] = ITEM_IDS[itemIdx];
@@ -5616,6 +5658,7 @@ export class World {
     h.num(this.revealedCount);
     h.str(this.rules).num(this.nextPileEv).num(this.moduleBatches).num(this.advDelivered).num(this.nextZoneId);
     for (const z of this.zones) h.num(z.id).num(z.x).num(z.y).num(z.creator).num(z.budget);
+    for (const t of this.territories) h.num(t.id).str(t.item).num(t.owner);
     for (const r of this.reservations) h.num(r.v).num(r.holder).str(r.item).num(r.n).str(r.dir);
     const st = this.stats;
     h.num(this.ach.digest());
@@ -5775,6 +5818,9 @@ export interface SavedVehicle {
 }
 
 export interface SaveData {
+  /** 산지 협동 모드: 칸별 산지 번호(run-length)와 산지들 */
+  territory?: number[];
+  territories?: Territory[];
   /** 1: 입출구 방향 규칙 이전, 2: 호수 추가 이전, 3: 현재 */
   v: 1 | 2 | 3;
   width: number;
@@ -6043,6 +6089,11 @@ function loadStats(d: Partial<ReturnType<typeof saveStats>>): FactoryStats {
 }
 
 /** [값, 이어진 개수] 쌍으로 줄인 배열 (지형 저장용) */
+/** 남의 산지에서 막혔을 때 안내 (주인 이름은 화면에서 덧붙인다) */
+export function territoryReason(t: Territory): string {
+  return t.owner < 0 ? `주인이 없는 ${ITEMS[t.item].name} 산지예요` : `다른 사람의 ${ITEMS[t.item].name} 산지예요`;
+}
+
 function runLength(a: Uint8Array): number[] {
   const out: number[] = [];
   for (let i = 0; i < a.length; ) {

@@ -5,7 +5,7 @@ import type { Building, StationMode } from './building';
 import type { Dir } from './dir';
 import type { JunctionPorts } from './junction';
 import { ROUTE_MAX, ROUTE_MIN, type RouteStop, type Vehicle } from './vehicle';
-import { World, applyOnce, type EditOp, type UseResult } from './world';
+import { World, applyOnce, territoryReason, type EditOp, type UseResult } from './world';
 import { buildRoad, type RoadBuildResult } from './road-plan';
 
 /**
@@ -154,6 +154,12 @@ export function applyCommand<C extends Command>(w: World, player: number, cmd: C
   }
 }
 
+/** 산지 협동: 명령을 낸 사람이 이 건물의 땅(내 산지·광장)을 고칠 수 있는지. 산지 없는 세계면 늘 된다 */
+const mine = (w: World, b: Building | undefined | null): b is Building => !!b && !w.foreignTerritory(w.actor, b.x, b.y, b.size);
+/** 산지 협동: 칸(번호)을 고칠 수 있는지 */
+const mineTile = (w: World, tile: number) => Number.isSafeInteger(tile) && !w.foreignTerritory(w.actor, tile % w.width, Math.floor(tile / w.width));
+const NOT_MINE = { ok: false, reason: '내 산지가 아니에요' } as const;
+
 function run(w: World, c: Command): CommandResults[Command['t']] {
   switch (c.t) {
     case 'begin':
@@ -166,32 +172,32 @@ function run(w: World, c: Command): CommandResults[Command['t']] {
       return buildRoad(w, c.from, c.to, c.path, c.newTiles);
     case 'orient': {
       const b = w.buildingAt(c.x, c.y);
-      if (b && isBeltType(b.type)) w.rotate(b, c.dir);
+      if (mine(w, b) && isBeltType(b.type)) w.rotate(b, c.dir);
       return;
     }
     case 'remove-at': {
       const b = w.buildingAt(c.x, c.y);
-      return !!b && b.type !== 'hub' && w.remove(b);
+      return mine(w, b) && b.type !== 'hub' && w.remove(b);
     }
     case 'remove-area': {
-      const list = w.buildingsIn(c.x0, c.y0, c.x1, c.y1);
+      const list = w.buildingsIn(c.x0, c.y0, c.x1, c.y1).filter((b) => mine(w, b));
       if (list.length) w.edit(() => list.forEach((b) => w.remove(b)));
       return list.length;
     }
     case 'remove': {
       const b = w.buildings.get(c.id);
-      return !!b && w.edit(() => w.remove(b));
+      return mine(w, b) && w.edit(() => w.remove(b));
     }
     case 'rotate': {
       const b = w.buildings.get(c.id);
-      if (b) w.edit(() => w.rotate(b, c.dir));
+      if (mine(w, b)) w.edit(() => w.rotate(b, c.dir));
       return;
     }
     case 'paste':
       return w.edit(() => pasteBlueprint(w, c.bp, c.x, c.y));
     case 'config': {
       const b = w.buildings.get(c.id);
-      if (!b) return false;
+      if (!mine(w, b)) return false;
       return w.edit(() =>
         c.key === 'recipe'
           ? w.setRecipe(b, c.value)
@@ -202,13 +208,13 @@ function run(w: World, c: Command): CommandResults[Command['t']] {
     }
     case 'junction': {
       const b = w.buildings.get(c.id);
-      return !!b && w.edit(() => w.setJunction(b, c.ports));
+      return mine(w, b) && w.edit(() => w.setJunction(b, c.ports));
     }
     case 'research':
       return w.research(c.id);
     case 'build-truck': {
       const st = w.buildings.get(c.station);
-      return st ? w.edit(() => w.buildTruck(st)) : null;
+      return mine(w, st) ? w.edit(() => w.buildTruck(st)) : null;
     }
     case 'clone-truck': {
       const v = w.vehicles.get(c.id);
@@ -228,7 +234,7 @@ function run(w: World, c: Command): CommandResults[Command['t']] {
     }
     case 'station-name': {
       const b = w.buildings.get(c.id);
-      return !!b && w.edit(() => w.renameStation(b, c.name));
+      return mine(w, b) && w.edit(() => w.renameStation(b, c.name));
     }
     case 'truck-name': {
       const v = w.vehicles.get(c.id);
@@ -243,38 +249,47 @@ function run(w: World, c: Command): CommandResults[Command['t']] {
       return applyOnce(w, c.rid, () => {
         const b = w.buildings.get(c.id);
         if (!b) return { ok: false, reason: '기계가 없어요' };
+        if (!mine(w, b)) return NOT_MINE;
         return w.installModule(b, Number(c.storage), String(c.key ?? ''));
       });
     case 'pile-collect':
-      return applyOnce(w, c.rid, () => w.collectPile(Number(c.tile)));
+      return applyOnce(w, c.rid, () => (mineTile(w, Number(c.tile)) ? w.collectPile(Number(c.tile)) : NOT_MINE));
     case 'piles-collect':
-      return applyOnce(w, c.rid, () => w.collectPiles(c.tiles));
+      // 남의 산지에 있는 더미는 건너뛴다 (그 땅 주인이 줍는다)
+      return applyOnce(w, c.rid, () => w.collectPiles(Array.isArray(c.tiles) ? c.tiles.filter((t) => mineTile(w, Number(t))) : c.tiles));
     case 'pile-discard':
-      return applyOnce(w, c.rid, () => w.discardPile(Number(c.tile)));
+      return applyOnce(w, c.rid, () => (mineTile(w, Number(c.tile)) ? w.discardPile(Number(c.tile)) : NOT_MINE));
     case 'line-take':
       return applyOnce(w, c.rid, () => {
         const b = w.buildings.get(c.id);
         if (!b || !Object.hasOwn(ITEMS, c.item)) return { ok: false, reason: '컨베이어가 없어요' };
+        if (!mine(w, b)) return NOT_MINE;
         return w.takeFromLine(b, c.item);
       });
     case 'module-detach':
       return applyOnce(w, c.rid, () => {
         const b = w.buildings.get(c.id);
         if (!b) return { ok: false, reason: '기계가 없어요' };
+        if (!mine(w, b)) return NOT_MINE;
         if (c.mode !== 'normal' && c.mode !== 'cancel-request' && c.mode !== 'force') return { ok: false, reason: '잘못된 명령이에요' };
         return w.detachModule(b, c.mode);
       });
     case 'build-adv-truck':
       return applyOnce(w, c.rid, () => {
         const copy = c.copy ? w.vehicles.get(c.copy) : undefined;
-        return w.buildAdvancedTruck(w.buildings.get(c.station), String(c.key ?? ''), copy);
+        const st = w.buildings.get(c.station);
+        if (st && !mine(w, st)) return NOT_MINE;
+        return w.buildAdvancedTruck(st, String(c.key ?? ''), copy);
       });
-    case 'upgrade-building':
-      return w.upgradeBuilding(w.buildings.get(c.id));
+    case 'upgrade-building': {
+      const b = w.buildings.get(c.id);
+      return b && !mine(w, b) ? NOT_MINE : w.upgradeBuilding(b);
+    }
     case 'upgrade-truck':
       return applyOnce(w, c.rid, () => w.upgradeTruck(w.vehicles.get(c.id), w.buildings.get(c.station), String(c.key ?? '')));
     case 'power-node': {
       const b = w.buildings.get(c.id);
+      if (b && !mine(w, b)) return NOT_MINE;
       return b ? w.setPowerNode(b, Number(c.node) || 0) : { ok: false, reason: '건물이 없어요' };
     }
     case 'truck-plan': {
@@ -298,11 +313,11 @@ function run(w: World, c: Command): CommandResults[Command['t']] {
     }
     case 'station-dock': {
       const b = w.buildings.get(c.id);
-      return !!b && w.setDock(b, Number(c.storage) || 0);
+      return mine(w, b) && w.setDock(b, Number(c.storage) || 0);
     }
     case 'station-target': {
       const b = w.buildings.get(c.id);
-      return !!b && Object.hasOwn(ITEMS, c.item) && w.setTarget(b, c.item, Number(c.n));
+      return mine(w, b) && Object.hasOwn(ITEMS, c.item) && w.setTarget(b, c.item, Number(c.n));
     }
     case 'project':
       if (!w.regional || !w.researched.has('integrated-automation')) return false;
@@ -336,6 +351,9 @@ function place(w: World, c: Extract<Command, { t: 'place' }>): PlaceResult {
   // 지하 컨베이어는 입구·출구를 하나씩 정확히 놓아야 해서 드래그로 깔지 않는다
   if (tool === 'underground' && !initial) return { ok: false };
   const existing = w.buildingAt(x, y);
+  // 컨베이어 바꿔 끼우기·채굴기 업그레이드는 canPlace를 거치지 않으므로 여기서 땅을 확인한다
+  const foreign = existing && (tool === 'miner-2' || isBeltType(tool)) ? w.foreignTerritory(w.actor, existing.x, existing.y, existing.size) : null;
+  if (foreign) return { ok: false, reason: territoryReason(foreign) };
   if (tool === 'miner-2' && existing?.type === 'miner') {
     const result = w.upgradeBuilding(existing);
     return { ...result, ...(result.ok ? { building: existing } : {}) };

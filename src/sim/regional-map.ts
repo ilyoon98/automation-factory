@@ -259,7 +259,7 @@ function valueNoise(seed: number, x: number, y: number): number {
 }
 
 /** 광맥 하나: 둥근 칸들에 total을 나눠 담는다 (가운데가 진하게). 무한(Infinity)이면 칸마다 무한 */
-function patch(w: World, cx: number, cy: number, r: number, item: ItemId, total: number, rng: () => number, ok: (x: number, y: number) => boolean): number {
+export function patch(w: World, cx: number, cy: number, r: number, item: ItemId, total: number, rng: () => number, ok: (x: number, y: number) => boolean): number {
   const tiles: [number, number, number][] = [];
   const R = Math.ceil(r + 1);
   for (let dy = -R; dy <= R; dy++) {
@@ -353,7 +353,7 @@ function rubberGrove(w: World, cx: number, cy: number, rng: () => number, ok: (x
   }
 }
 
-function lake(w: World, cx: number, cy: number, r: number, rng: () => number, ok: (x: number, y: number) => boolean): void {
+export function lake(w: World, cx: number, cy: number, r: number, rng: () => number, ok: (x: number, y: number) => boolean): void {
   const R = Math.ceil(r + 1);
   for (let dy = -R; dy <= R; dy++) {
     for (let dx = -R; dx <= R; dx++) {
@@ -366,7 +366,7 @@ function lake(w: World, cx: number, cy: number, r: number, rng: () => number, ok
 }
 
 /** 일반 나무 군락. 심은 그루 수 */
-function grove(w: World, cx: number, cy: number, r: number, rng: () => number, ok: (x: number, y: number) => boolean): number {
+export function grove(w: World, cx: number, cy: number, r: number, rng: () => number, ok: (x: number, y: number) => boolean): number {
   let n = 0;
   const R = Math.ceil(r + 1);
   for (let dy = -R; dy <= R; dy++) {

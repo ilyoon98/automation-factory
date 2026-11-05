@@ -225,6 +225,8 @@ export class Renderer {
   private activity = new ActivityPhases();
   private generatorPhase = new Map<number, number>();
   private lastGameTime = 0;
+  /** 산지 협동: 산지 이름표 자리 (지도마다 한 번 계산) */
+  private territoryCenters = new WeakMap<World, Map<number, [number, number]>>();
   private wires: readonly Wire[] | null = null;
   private representatives = new Set<string>();
   private wireBorn = new Map<string, number>();
@@ -357,6 +359,7 @@ export class Renderer {
     const y1 = Math.min(world.height - 1, Math.ceil(wy1));
 
     this.drawGround(world, x0, y0, x1, y1);
+    if (world.territory) this.drawTerritories(world, x0, y0, x1, y1);
     if (view.tool || view.paste) this.drawGrid(x0, y0, x1, y1);
     this.trackBuildings(world);
     const dt = Math.max(0, world.time - this.lastGameTime);
@@ -403,6 +406,7 @@ export class Renderer {
     }
     for (const b of visible) if (!isLine(b) && b.type !== 'road') this.drawBuilding(world, b);
     if (world.regional && z >= 6) this.drawWires(world, view, x0, y0, x1, y1);
+    if (world.territory) this.drawTerritoryLabels(world);
     // 창고는 묶음마다 한 번 (묶음 일부만 화면에 보여도)
     if (!this.lod) {
       const storages = new Set(visible.filter((b) => b.type === 'storage').map((b) => world.storageGroup(b)[0]));
@@ -1060,6 +1064,76 @@ export class Renderer {
     }
     cache.set(id, { canvas, key });
     return canvas;
+  }
+
+  /**
+   * 산지 협동: 내가 짓지 못하는 땅은 조금 어둡게, 산지 경계는 선으로 (광장 둘레는 금색).
+   * 같은 줄에서 이어진 칸은 한 번에 칠한다
+   */
+  private drawTerritories(world: World, x0: number, y0: number, x1: number, y1: number): void {
+    const ctx = this.ctx;
+    const z = this.cam.zoom;
+    const map = world.territory!;
+    const me = world.actor;
+    const foreign = (i: number) => {
+      const id = map[i];
+      return id !== 0 && world.territories[id - 1]?.owner !== me;
+    };
+    ctx.fillStyle = 'rgba(30, 18, 8, 0.22)';
+    for (let y = y0; y <= y1; y++) {
+      let run = -1;
+      for (let x = x0; x <= x1 + 1; x++) {
+        const dark = x <= x1 && foreign(world.idx(x, y));
+        if (dark && run < 0) run = x;
+        if (!dark && run >= 0) {
+          const [sx, sy] = this.cam.worldToScreen(run, y);
+          ctx.fillRect(sx, sy, (x - run) * z, z);
+          run = -1;
+        }
+      }
+    }
+    const w = Math.max(1, Math.round(z / 10));
+    for (let y = y0; y <= y1; y++) {
+      for (let x = x0; x <= x1; x++) {
+        const id = map[world.idx(x, y)];
+        const [sx, sy] = this.cam.worldToScreen(x, y);
+        for (const [nx, ny] of [[x + 1, y], [x, y + 1]]) {
+          if (!world.inBounds(nx, ny)) continue;
+          const other = map[world.idx(nx, ny)];
+          if (other === id) continue;
+          ctx.fillStyle = id === 0 || other === 0 ? '#d9a441' : 'rgba(59, 39, 22, 0.75)';
+          if (nx > x) ctx.fillRect(sx + z - w / 2, sy, w, z);
+          else ctx.fillRect(sx, sy + z - w / 2, z, w);
+        }
+      }
+    }
+  }
+
+  /** 산지 이름표 (멀리서 볼 때 크게): "철 산지 · 내 땅" */
+  private drawTerritoryLabels(world: World): void {
+    let centers = this.territoryCenters.get(world);
+    if (!centers) {
+      const sum = new Map<number, [number, number, number]>();
+      const map = world.territory!;
+      for (let i = 0; i < map.length; i++) {
+        if (!map[i]) continue;
+        const s = sum.get(map[i]) ?? [0, 0, 0];
+        s[0] += i % world.width; s[1] += Math.floor(i / world.width); s[2]++;
+        sum.set(map[i], s);
+      }
+      centers = new Map([...sum].map(([id, [x, y, n]]) => [id, [x / n, y / n]]));
+      this.territoryCenters.set(world, centers);
+    }
+    const me = world.actor;
+    const size = this.cam.zoom < 12 ? 14 : 11;
+    for (const t of world.territories) {
+      const c = centers.get(t.id);
+      if (!c) continue;
+      const [sx, sy] = this.cam.worldToScreen(c[0], c[1]);
+      if (sx < -80 || sy < -20 || sx > this.cam.viewW + 80 || sy > this.cam.viewH + 20) continue;
+      const whose = t.owner === me ? ' · 내 땅' : t.owner < 0 ? ' · 주인 없음' : '';
+      this.text(`${ITEMS[t.item].name.replace(/광석$/, '')} 산지${whose}`, sx, sy, t.owner === me ? '#fbf3df' : '#e9d9b4', size);
+    }
   }
 
   private drawGrid(x0: number, y0: number, x1: number, y1: number): void {

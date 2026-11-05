@@ -9,6 +9,7 @@ import { ITEM_IDS } from './data/items';
 import { CURRENT_SAVE_KEY, PREVIOUS_SAVE_KEY } from './sim/current-save';
 import { SaveSlots } from './sim/save-slots';
 import { generateRegionalWorld } from './sim/regional-map';
+import { generateTerritoryWorld } from './sim/territory-map';
 import { Chat } from './ui/chat';
 import { uiZoom } from './ui/crisp';
 import { Minimap } from './ui/minimap';
@@ -31,9 +32,9 @@ const SAVE_KEY = REGIONAL_DEV ? 'automation-game/save-regional-dev' : CURRENT_SA
  * 새 세계와 자동 이어하기는 지역 생산망 확장 지도만 사용한다.
  * 개발용 regional-dev면 연구 완료·재고
  */
-function newWorld(): World {
+function newWorld(kind: 'regional' | 'territory' = 'regional'): World {
   const seed = (Math.random() * 2 ** 31) | 0;
-  const w = generateRegionalWorld(seed);
+  const w = kind === 'territory' ? generateTerritoryWorld(seed) : generateRegionalWorld(seed);
   if (REGIONAL_DEV) {
     w.revealSites(['*']);
     for (const t of w.techs) w.applyTech(t.id);
@@ -225,7 +226,7 @@ const game: GameApi = {
     camera.y = y;
     camera.zoom = Math.max(camera.zoom, 28);
   },
-  newGame() {
+  newGame(kind = 'regional') {
     if (session.role === 'guest') {
       ui.toast('새 게임은 호스트만 시작할 수 있어요');
       return;
@@ -237,7 +238,7 @@ const game: GameApi = {
     }
     slots.create();
     game.input.resetWorld();
-    world = newWorld();
+    world = newWorld(kind);
     centerOnHub();
     game.save();
     session.worldReplaced();
@@ -409,6 +410,8 @@ function frame(now: number): void {
 
   if (document.hidden) { requestAnimationFrame(frame); return; }
 
+  // 미리보기·짓기 가능 표시가 내 산지 기준이 되도록 (명령은 적용할 때 낸 사람으로 바꿨다가 되돌린다)
+  world.actor = session.me;
   game.input.update(dt);
   // 맵 글씨도 "글자 또렷하게" 배율을 따른다
   renderer.textZoom = uiZoom();
@@ -525,9 +528,8 @@ const start = new StartScreen(document.getElementById('start') as HTMLElement, {
     else if (world.loadNote) ui.toast(world.loadNote, 9000);
   },
   newFactory() {
-    game.newGame();
     leaveStart();
-    ui.showHelp();
+    ui.openNewGame();
   },
   together() {
     leaveStart();

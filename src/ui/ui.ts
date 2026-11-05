@@ -85,7 +85,8 @@ export interface GameApi {
   save(): boolean;
   /** 마지막 저장이 됐는지(ok), 그 뒤로 내가 공장을 바꿨는지(dirty) */
   readonly saveState: { ok: boolean; dirty: boolean };
-  newGame(): void;
+  /** 새 공장. territory = 산지 협동 지도 (같이 하기 전용) */
+  newGame(kind?: 'regional' | 'territory'): void;
   /** 저장하고 시작화면으로 (혼자 할 때는 공장을 멈춘다) */
   home(): void;
   /** 지금 공장을 파일로 내려받는다 (다른 PC로 옮기거나 백업) */
@@ -451,9 +452,10 @@ export class UI {
     });
     $('newgame').addEventListener('click', (e) => {
       const rules = (e.target as HTMLElement).closest<HTMLElement>('[data-rules]')?.dataset.rules;
-      if (!rules || !confirm('지금 공장을 버리고 새 게임을 시작할까요?')) return;
+      // 새 공장은 새 칸에 만들고 지금 공장은 목록에 남으므로 다시 묻지 않는다
+      if (!rules) return;
       $('newgame').hidden = true;
-      game.newGame();
+      game.newGame(rules === 'territory' ? 'territory' : 'regional');
     });
 
     // Esc는 위에 떠 있는 것부터 하나씩: 알림 카드 → 팝오버 → 창 → (input.ts) 선택·건설 도구.
@@ -788,6 +790,13 @@ export class UI {
     const input = $('players').querySelector<HTMLInputElement>('[data-act="join-addr-input"]');
     const err = this.game.net.joinAddress(input?.value ?? '');
     this.toast(err ?? '방장 PC에 붙는 중이에요. 붙으면 참가를 신청해요', 3500);
+    this.update();
+  }
+
+  /** 시작화면의 새 공장: 어떤 지도로 만들지 고르는 창 */
+  openNewGame(): void {
+    this.closeWindows();
+    $('newgame').hidden = false;
     this.update();
   }
 

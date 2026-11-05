@@ -809,7 +809,7 @@ describe('회수 더미 옮기기', () => {
 });
 
 describe('컨베이어 줄에서 잘못 들어간 아이템 빼기', () => {
-  it('철판 줄에 섞인 구리선만 이어진 줄 전체(옆에서 합류한 줄 포함)에서 빼고, 철판은 그대로', () => {
+  it('철판 줄에 섞인 구리선만 이 칸으로 흘러드는 갈래(옆 합류 포함)와 이어지는 길에서 빼고, 철판은 그대로', () => {
     const w = makeRegional();
     // (10..14, 15) 오른쪽으로 가는 줄 + (12, 13..14) 아래로 내려와 옆에서 합류
     const line = [10, 11, 12, 13, 14].map((x) => w.place('belt', x, 15, 1)!);
@@ -821,11 +821,27 @@ describe('컨베이어 줄에서 잘못 들어간 아이템 빼기', () => {
     const other = w.place('belt', 20, 20, 1)!;
     other.items.push({ item: 'copper-wire', pos: 0.1, n: 1 });
     expect(w.beltLine(line[4]).length).toBe(7);
-    expect([...w.lineItems(line[1])]).toEqual([['iron-plate', 1], ['copper-wire', 2]]);
+    // 합류 지점(12,15) 위쪽 칸에서는 아래에서 따로 합류하는 갈래를 세지 않는다
+    expect([...w.lineItems(line[1])]).toEqual([['iron-plate', 1], ['copper-wire', 1]]);
+    expect([...w.lineItems(line[3])]).toEqual([['iron-plate', 1], ['copper-wire', 2]]);
     const hub = w.stockOf('copper-wire');
     expect(applyCommand(w, 0, { t: 'line-take', rid: 'l1', id: line[3].id, item: 'copper-wire' })).toMatchObject({ ok: true, moved: 2 });
     expect(w.stockOf('copper-wire')).toBe(hub + 2);
     expect([...w.lineItems(line[1])]).toEqual([['iron-plate', 1]]);
     expect(other.items).toHaveLength(1); // 이어지지 않은 줄은 그대로
+  });
+
+  it('옆으로 합류해 들어가는 본줄의 다른 물건(물 등)은 이 줄로 세지 않는다', () => {
+    const w = makeRegional();
+    // (10..12, 20) 오른쪽으로 가다가 (13, 18..22) 아래로 가는 본줄에 옆으로 합류
+    const branch = [10, 11, 12].map((x) => w.place('belt', x, 20, 1)!);
+    const trunk = [18, 19, 20, 21, 22].map((y) => w.place('belt', 13, y, 2)!);
+    expect(branch.every(Boolean) && trunk.every(Boolean)).toBe(true);
+    branch[0].items.push({ item: 'copper-wire', pos: 0.1, n: 1 });
+    trunk[0].items.push({ item: 'water', pos: 0.1, n: 1 });
+    trunk[4].items.push({ item: 'sand', pos: 0.1, n: 1 });
+    expect([...w.lineItems(branch[1])]).toEqual([['copper-wire', 1]]);
+    // 본줄 아래쪽에서 보면 합류하는 갈래까지 모두 흘러든다
+    expect(new Set(w.lineItems(trunk[4]).keys())).toEqual(new Set(['copper-wire', 'water', 'sand']));
   });
 });

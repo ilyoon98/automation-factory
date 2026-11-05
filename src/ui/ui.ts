@@ -733,6 +733,11 @@ export class UI {
         this.update();
         return;
       }
+      if (sel.dataset.act === 'storage-export-item' && b.type === 'storage') {
+        const lead = game.getWorld().storageGroup(b)[0];
+        game.exec({ t: 'storage-export', id: b.id, on: lead.exportOn, item: (sel.value || null) as ItemId | null }, () => this.update());
+        return;
+      }
       const value = sel.value || null;
       const key = ({ recipe: 'recipe', 'station-mode': 'mode', filter: 'filter' } as const)[sel.dataset.act ?? ''];
       if (!key) return;
@@ -1447,6 +1452,16 @@ export class UI {
       ${p.charge > 0 ? `<p class="muted power-src">충전 수요 ${Math.round(p.charge)} kW</p>` : ''}`;
   }
 
+  /** 창고: 바깥쪽 컨베이어로 내보내기 스위치와 품목 (합쳐진 창고는 묶음 전체에 같이 적용) */
+  private storageExportBlock(w: World, b: Building): string {
+    const lead = w.storageGroup(b)[0];
+    const items = [...new Set([...w.storageContents(b).keys(), ...(lead.filter ? [lead.filter] : [])])];
+    const options = items.map((i) => `<option value="${i}" ${lead.filter === i ? 'selected' : ''}>${ITEMS[i].name}</option>`).join('');
+    return `<div class="row" title="켜면 창고를 등지고 바깥으로 향하는 컨베이어로 0.5초마다 내보내요. 꺼 두면 우연히 닿은 줄에 섞이지 않아요">
+        <span>벨트로 내보내기</span><button data-act="storage-export">${lead.exportOn ? '켜짐' : '꺼짐'}</button></div>
+      <label class="recipe">내보낼 것 <select data-act="storage-export-item"><option value="" ${lead.filter ? '' : 'selected'}>전부 (종류별로 번갈아)</option>${options}</select></label>`;
+  }
+
   /** 컨베이어: 이 줄에 올라 있는 아이템과, 잘못 들어간 것만 빼는 버튼 (기계가 막혔을 때) */
   private lineBlock(w: World, b: Building): string {
     const items = w.lineItems(b);
@@ -2052,7 +2067,9 @@ export class UI {
         .map((t) => `${t.id}${t.name}${t.stops.map((st) => st.id + st.act).join('-')}`)
         .join(',')}:${w.canBuildTruck(b).reason ?? ''}`;
     }
-    const key = `${b.id}|${b.type}|${b.recipe}|${b.filter}|${b.dir}|${JSON.stringify(b.junction)}|${w.unlockedRecipes.size}|${w.unlockedBuildings.size}|${srcKey}|${this.useSig(w, b)}|${b.type === 'hub' ? `${w.stats.projectOn}${w.stats.projectDelivered}${w.researched.size}` : ''}`;
+    const lead = b.type === 'storage' ? w.storageGroup(b)[0] : null;
+    const storeKey = lead ? `${lead.exportOn}${lead.filter}${[...w.storageContents(b).keys()].join(',')}` : '';
+    const key = `${b.id}|${b.type}|${b.recipe}|${b.filter}|${storeKey}|${b.dir}|${JSON.stringify(b.junction)}|${w.unlockedRecipes.size}|${w.unlockedBuildings.size}|${srcKey}|${this.useSig(w, b)}|${b.type === 'hub' ? `${w.stats.projectOn}${w.stats.projectDelivered}${w.researched.size}` : ''}`;
     if (key !== this.infoKey) {
       this.infoKey = key;
       replaceTransportInfo(el, this.infoStatic(w, b), `building:${b.id}`);
@@ -2182,6 +2199,7 @@ export class UI {
       if (node) html += transportSection('power-node', '전력 연결 선택', node);
     }
     if (isLineType(b.type)) html += this.lineBlock(w, b);
+    if (b.type === 'storage') html += this.storageExportBlock(w, b);
     if (isRecipeMachine(b.type)) {
       // 들어오는 재료로 만들 수 있는 레시피를 위로, 일부만 들어오는 것, 나머지 순 (아무것도 안 이어졌으면 그대로)
       const incoming = new Set(incomingItems(w, b));
@@ -2662,7 +2680,8 @@ export class UI {
         }
         lines.push(`<div class="row"><span>보관 중</span><b>${w.storageTotal(b).toLocaleString()} / ${w.storageCapacity(b).toLocaleString()}</b></div>`);
         const exits = w.storageExits(b).length;
-        lines.push(`<div class="row" title="창고를 등지고 바깥으로 향하는 컨베이어가 출구예요. 0.5초마다 든 것을 종류별로 번갈아 내보내요."><span>출구 컨베이어</span><b>${exits ? `${exits}곳 · 종류별로 번갈아` : '<span class="muted">없음</span>'}</b></div>`);
+        const on = w.storageGroup(b)[0].exportOn;
+        lines.push(`<div class="row" title="창고를 등지고 바깥으로 향하는 컨베이어가 출구예요. 위 스위치를 켜야 내보내요."><span>출구 컨베이어</span><b>${exits ? `${exits}곳 · ${on ? '내보내는 중' : '꺼짐'}` : '<span class="muted">없음</span>'}</b></div>`);
         // 많은 순으로 이름과 개수 (이름을 누르면 도감)
         const rows = [...contents]
           .sort((a, c) => c[1] - a[1])
@@ -2871,6 +2890,14 @@ export class UI {
     // 컨베이어 줄에서 잘못 들어간 아이템만 빼기
     const take = (e.target as HTMLElement).closest<HTMLElement>('[data-line-take]')?.dataset.lineTake as ItemId | undefined;
     const sel = this.selected();
+    if (act === 'storage-export' && sel?.type === 'storage') {
+      const lead = this.game.getWorld().storageGroup(sel)[0];
+      this.game.exec({ t: 'storage-export', id: sel.id, on: !lead.exportOn, item: lead.filter }, (ok) => {
+        if (!ok) this.toast('이 창고를 바꿀 수 없어요');
+        this.update();
+      });
+      return;
+    }
     if (act?.startsWith('road-')) {
       if (act === 'road-start' && sel?.type === 'station') {
         input.setTool(null);

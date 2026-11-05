@@ -75,6 +75,8 @@ export type Command =
   | { t: 'zone-budget'; zone: number; kw: number }
   /** 산지 협동: 산지 주인 나누기 (방장만). 산지 순서대로 플레이어 번호(-1 = 없음)와 접속 키 */
   | { t: 'territories'; owners: number[]; keys: string[]; trucks?: [number, number, string][]; open?: boolean[]; scale?: number }
+  /** 창고(합쳐진 창고 묶음 전체): 바깥을 향한 컨베이어로 내보내기 스위치와 품목 (null = 전부) */
+  | { t: 'storage-export'; id: number; on: boolean; item: ItemId | null }
   /** 산지 협동: 허브에 들어온 물건을 우주 엘리베이터로 돌릴지 (누구나) */
   | { t: 'elevator'; on: boolean }
   | { t: 'undo' }
@@ -127,6 +129,7 @@ export interface CommandResults {
   'zone-budget': boolean;
   territories: boolean;
   elevator: boolean;
+  'storage-export': boolean;
   project: boolean;
   'truck-plan': boolean;
   'truck-dispatch': boolean;
@@ -355,6 +358,11 @@ function run(w: World, c: Command): CommandResults[Command['t']] {
       // 인원에 맞춘 우주 엘리베이터 납품 배율 (방장이 정한다)
       if (w.elevator && typeof c.scale === 'number' && c.scale >= 0.25 && c.scale <= 2) w.elevator.scale = c.scale;
       return true;
+    case 'storage-export': {
+      const b = w.buildings.get(c.id);
+      if (!mine(w, b) || (c.item !== null && !Object.hasOwn(ITEMS, c.item))) return false;
+      return w.setStorageExport(b, !!c.on, c.item);
+    }
     case 'elevator':
       if (!w.elevator) return false;
       w.elevator.on = !!c.on;

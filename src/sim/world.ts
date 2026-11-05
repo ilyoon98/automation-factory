@@ -1916,26 +1916,27 @@ export class World {
     return { ok: true, moved: n };
   }
 
-  /** 이 컨베이어와 이어진 한 줄 (컨베이어·지하 컨베이어만. 분배기·기계에서 끊긴다) */
+  /**
+   * 이 컨베이어의 줄 (컨베이어·지하 컨베이어만. 분배기·기계에서 끊긴다):
+   * - 이 칸으로 흘러 들어오는 모든 갈래 (옆에서 합류하는 줄 포함) — 그 아이템은 결국 이 칸을 지난다
+   * - 이 칸의 아이템이 곧게 이어 가는 길. 다른 줄에 옆으로 합류하면 거기서 멈추고, 아래쪽에서 따로 합류하는 남의 갈래는 넣지 않는다
+   */
   beltLine(start: Building): Building[] {
     if (!isLineType(start.type)) return [];
     const seen = new Set<number>([start.id]);
+    const out: Building[] = [start];
     const queue = [start];
-    const out: Building[] = [];
     while (queue.length && out.length < 5000) {
-      const b = queue.shift()!;
-      out.push(b);
-      const near: (Building | null)[] = [this.buildingAt(b.x + DX[b.dir], b.y + DY[b.dir]), b.type === 'underground' ? this.partnerOf(b) : null];
-      // 이 칸으로 흘려 넣는 컨베이어
-      for (const d of [0, 1, 2, 3] as Dir[]) {
-        const n = this.buildingAt(b.x + DX[d], b.y + DY[d]);
-        if (n && isLineType(n.type) && n.x + DX[n.dir] === b.x && n.y + DY[n.dir] === b.y) near.push(n);
-      }
-      for (const n of near) {
-        if (!n || !isLineType(n.type) || seen.has(n.id)) continue;
+      for (const n of this.lineFeeders(queue.shift()!)) {
+        if (seen.has(n.id)) continue;
         seen.add(n.id);
+        out.push(n);
         queue.push(n);
       }
+    }
+    for (let b = this.lineNext(start); b && !seen.has(b.id) && out.length < 5000; b = this.lineNext(b)) {
+      seen.add(b.id);
+      out.push(b);
     }
     return out;
   }
@@ -4285,18 +4286,23 @@ export class World {
    * 트럭이 예약한 몫은 남긴다. 합쳐진 창고는 묶음 전체의 내용물을 쓴다.
    */
   private pushStorage(b: Building): void {
+    const group = this.storageGroup(b);
+    const lead = group[0];
+    if (!lead.exportOn) return;
     const exits = this.targetsOf(b);
     if (!exits.length) return;
     b.progress = Math.min(UNLOADER_INTERVAL, b.progress + DT);
     if (b.progress < UNLOADER_INTERVAL) return;
-    const group = this.storageGroup(b);
     const free = (item: ItemId) => this.storageCount(b, item) - group.reduce((a, s) => a + this.reservedAt(s, item), 0);
     for (const t of exits) {
-      // 다음 차례(b.cycle)부터 남은 첫 품목. 컨베이어가 받는지는 품목과 무관해 한 번만 시도한다
+      // 고른 품목만, 아니면 다음 차례(b.cycle)부터 남은 첫 품목. 컨베이어가 받는지는 품목과 무관해 한 번만 시도한다
       for (let k = 0; k < ITEM_IDS.length; k++) {
-        const item = ITEM_IDS[(b.cycle + k) % ITEM_IDS.length];
+        const item = lead.filter ?? ITEM_IDS[(b.cycle + k) % ITEM_IDS.length];
         const have = free(item);
-        if (have <= 0) continue;
+        if (have <= 0) {
+          if (lead.filter) break;
+          continue;
+        }
         const sent = this.insert(t, item, b, have);
         if (sent > 0) {
           this.storageTake(b, item, sent, true);
@@ -4306,6 +4312,38 @@ export class World {
         break;
       }
     }
+  }
+
+  /** 창고(합쳐진 창고는 묶음 전체)의 벨트 내보내기 스위치와 품목 (null = 전부) */
+  setStorageExport(b: Building, on: boolean, item: ItemId | null): boolean {
+    if (b.type !== 'storage') return false;
+    for (const s of this.storageGroup(b)) {
+      s.exportOn = on;
+      s.filter = item;
+    }
+    return true;
+  }
+
+  /** 이 칸으로 흘려 넣는 컨베이어 (뒤·꺾임·옆 합류 모두. 지하 출구는 짝인 입구) */
+  private lineFeeders(b: Building): Building[] {
+    const out: Building[] = [];
+    if (b.type === 'underground' && b.ugMode === 'out') {
+      const p = this.partnerOf(b);
+      if (p) out.push(p);
+      return out;
+    }
+    for (const d of [0, 1, 2, 3] as Dir[]) {
+      const n = this.buildingAt(b.x + DX[d], b.y + DY[d]);
+      if (n && isLineType(n.type) && n.x + DX[n.dir] === b.x && n.y + DY[n.dir] === b.y && entryPos(b, d) >= 0) out.push(n);
+    }
+    return out;
+  }
+
+  /** 이 칸의 아이템이 곧게 이어 가는 다음 칸 (다른 줄에 옆으로 합류하거나 기계로 들어가면 없음) */
+  private lineNext(b: Building): Building | null {
+    if (b.type === 'underground' && b.ugMode === 'in') return this.partnerOf(b);
+    const n = this.buildingAt(b.x + DX[b.dir], b.y + DY[b.dir]);
+    return n && isLineType(n.type) && entryPos(n, opposite(b.dir)) === 0 ? n : null;
   }
 
   /** 창고에 붙은 출구 컨베이어 (합쳐진 창고는 묶음 전체) */
@@ -5450,6 +5488,7 @@ export class World {
         ...(b.mineDirt ? { mineDirt: true } : {}),
         ...(b.cycle ? { cycle: b.cycle } : {}),
         ...(b.filter ? { filter: b.filter } : {}),
+        ...(b.exportOn ? { exportOn: true } : {}),
         ...(b.junction ? { junction: { ...b.junction } } : {}),
         ...(b.stationName ? { stationName: b.stationName } : {}),
         ...(b.ugMode ? { ug: b.ugMode, partner: b.partner } : {}),
@@ -5511,6 +5550,8 @@ export class World {
         ? { piles: this.piles.map((p): [number, number, number, number, PileReason] => [p.tile, ITEM_IDS.indexOf(p.item), p.n, p.ev, p.why]), pileEv: this.nextPileEv }
         : {}),
       ...(this.doneCmds.size ? { cmds: [...this.doneCmds] } : {}),
+      // 창고 내보내기가 스위치로 바뀐 뒤의 저장 (예전 저장이면 출구가 붙은 창고를 알린다)
+      storageSwitch: 1,
       ...(this.moduleBatches || this.advDelivered ? { counters: { moduleBatches: this.moduleBatches, advDelivered: this.advDelivered } } : {}),
     };
   }
@@ -5603,6 +5644,7 @@ export class World {
       b.mineDirt = s.mineDirt ?? false;
       b.cycle = s.cycle ?? 0;
       b.filter = s.filter ?? null;
+      b.exportOn = s.exportOn === true;
       b.junction = validJunctionPorts(b.type, s.junction) ? { ...s.junction } : null;
       if (typeof s.stationName === 'string') w.renameStation(b, s.stationName);
       b.ugMode = s.ug ?? null;
@@ -5700,6 +5742,13 @@ export class World {
     // v1은 입출구 방향이 없던 시절이라, 이어진 컨베이어를 보고 방향을 맞춰 준다.
     if (data.v === 1) for (const b of w.buildings.values()) w.orientLegacy(b);
     if (retiredChargers) w.loadNote = [w.loadNote, '충전기를 제거하고 건설 재료를 돌려드렸어요.'].filter(Boolean).join(' ');
+    // 0.6.11~0.8.0은 창고에 바깥쪽 컨베이어만 닿아도 내보냈다. 이제는 창고마다 스위치를 켜야 한다
+    if (!data.storageSwitch) {
+      const leaders = new Set([...w.buildings.values()].filter((b) => b.type === 'storage' && w.storageExits(b).length).map((b) => w.storageGroup(b)[0].id));
+      if (leaders.size) {
+        w.loadNote = [w.loadNote, `창고 출구가 바뀌었어요: 바깥쪽 컨베이어가 붙은 창고 ${leaders.size}곳은 창고 정보창에서 "벨트로 내보내기"를 켜야 내보내요.`].filter(Boolean).join(' ');
+      }
+    }
     return w;
   }
 
@@ -5806,6 +5855,7 @@ export class World {
     for (let i = 0; i < this.tree.length; i++) if (this.tree[i] > 0) h.num(i).num(this.tree[i]);
     for (const b of this.buildings.values()) {
       h.num(b.id).str(b.type).num(b.x).num(b.y).num(b.dir).str(b.recipe ?? '').str(b.filter ?? '');
+      if (b.exportOn) h.str('export');
       if (b.stationName) h.str('station-name').str(b.stationName);
       if (b.junction) h.str('junction').num(b.junction.inputs).num(b.junction.outputs);
       h.num(b.progress).num(b.crafting ? 1 : 0).num(b.outRR).num(b.mineIdx).num(b.fuel).num(b.energy);
@@ -5884,6 +5934,8 @@ export interface SavedBuilding {
   cycle?: number;
   /** 스마트 분류기만 */
   filter?: ItemId;
+  /** 창고: 벨트로 내보내기 스위치 */
+  exportOn?: boolean;
   junction?: JunctionPorts;
   stationName?: string;
   /** 지하 컨베이어만 */
@@ -5957,6 +6009,8 @@ export interface SaveData {
   /** 산지 협동 모드: 칸별 산지 번호(run-length)와 산지들 */
   territory?: number[];
   territories?: Territory[];
+  /** 창고 내보내기 스위치가 생긴 뒤의 저장인지 */
+  storageSwitch?: 1;
   /** 산지 협동: 우주 엘리베이터와 사람별 기여 */
   elevator?: Omit<Elevator, 'delivered'> & { delivered: [ItemId, number][] };
   contrib?: [string, Contribution][];

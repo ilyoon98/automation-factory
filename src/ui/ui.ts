@@ -2503,6 +2503,8 @@ export class UI {
           lines.push(`<div class="row"><span>합쳐짐</span><b>${(box.x1 - box.x0) / 2}×${(box.y1 - box.y0) / 2} · ${group.length}개</b></div>`);
         }
         lines.push(`<div class="row"><span>보관 중</span><b>${w.storageTotal(b).toLocaleString()} / ${w.storageCapacity(b).toLocaleString()}</b></div>`);
+        const exits = w.storageExits(b).length;
+        lines.push(`<div class="row" title="창고를 등지고 바깥으로 향하는 컨베이어가 출구예요. 0.5초마다 든 것을 종류별로 번갈아 내보내요."><span>출구 컨베이어</span><b>${exits ? `${exits}곳 · 종류별로 번갈아` : '<span class="muted">없음</span>'}</b></div>`);
         // 많은 순으로 이름과 개수 (이름을 누르면 도감)
         const rows = [...contents]
           .sort((a, c) => c[1] - a[1])

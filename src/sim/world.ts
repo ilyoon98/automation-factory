@@ -2390,6 +2390,7 @@ export class World {
       if (isCrafter(b)) this.pushOutputs(b);
       else if (isSplitterType(b.type)) this.pushSplitter(b);
       else if (b.type === 'unloader') this.updateUnloader(b);
+      else if (b.type === 'storage') this.pushStorage(b);
       else if (b.type === 'merger') this.pushMerger(b);
       else if (b.type === 'station' && b.stationMode === 'unload') this.pushOutputs(b);
     }
@@ -4135,6 +4136,39 @@ export class World {
     b.status = 'output-full';
   }
 
+  /**
+   * 창고: 바깥을 향해 붙은 컨베이어로 하역기와 같은 간격마다 든 것을 종류별로 번갈아 내보낸다.
+   * 트럭이 예약한 몫은 남긴다. 합쳐진 창고는 묶음 전체의 내용물을 쓴다.
+   */
+  private pushStorage(b: Building): void {
+    const exits = this.targetsOf(b);
+    if (!exits.length) return;
+    b.progress = Math.min(UNLOADER_INTERVAL, b.progress + DT);
+    if (b.progress < UNLOADER_INTERVAL) return;
+    const group = this.storageGroup(b);
+    const free = (item: ItemId) => this.storageCount(b, item) - group.reduce((a, s) => a + this.reservedAt(s, item), 0);
+    for (const t of exits) {
+      // 다음 차례(b.cycle)부터 남은 첫 품목. 컨베이어가 받는지는 품목과 무관해 한 번만 시도한다
+      for (let k = 0; k < ITEM_IDS.length; k++) {
+        const item = ITEM_IDS[(b.cycle + k) % ITEM_IDS.length];
+        const have = free(item);
+        if (have <= 0) continue;
+        const sent = this.insert(t, item, b, have);
+        if (sent > 0) {
+          this.storageTake(b, item, sent, true);
+          b.cycle = (ITEM_IDS.indexOf(item) + 1) % ITEM_IDS.length;
+          b.progress = 0;
+        }
+        break;
+      }
+    }
+  }
+
+  /** 창고에 붙은 출구 컨베이어 (합쳐진 창고는 묶음 전체) */
+  storageExits(b: Building): Building[] {
+    return this.storageGroup(b).flatMap((s) => this.targetsOf(s).map((t) => t.b));
+  }
+
   /** t에 item을 최대 n개 넣는다. 넣은 개수를 돌려준다 (0 = 못 넣음) */
   private insert(t: OutTarget, item: ItemId, src: Building, n = 1): number {
     const sent = isLineType(t.b.type) ? this.beltAccept(t.b, item, t.fromSide, n) : this.acceptStack(t.b, item, n, src, t.fromSide);
@@ -5137,6 +5171,14 @@ export class World {
   private computeTargets(b: Building): OutTarget[] {
     const res: OutTarget[] = [];
     const seen = new Set<number>();
+    if (b.type === 'storage') {
+      // 창고는 바깥을 향해 붙은 컨베이어(뒤가 창고)로만 내보낸다. 옆을 스쳐 가는 줄에는 끼워 넣지 않는다.
+      for (const [nx, ny, out] of edgeNeighbors(b)) {
+        const n = this.buildingAt(nx, ny);
+        if (n && isLineType(n.type) && n.dir === out && entryPos(n, opposite(out)) === 0) res.push({ b: n, fromSide: opposite(out), out });
+      }
+      return res;
+    }
     const outs = b.def.ports ? portTiles(b, 'out') : null;
     for (const [nx, ny, out] of edgeNeighbors(b)) {
       // 기계는 앞면(화살표)으로만, 분배기는 입구(뒤)를 뺀 세 면으로, 새 설비는 지정 출구 칸으로만 내보낸다.

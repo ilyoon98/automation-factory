@@ -115,6 +115,7 @@ function portText(b: BuildingType): string {
     case 'unloader':
       return '흰 화살표(뒤)에 붙은 허브·창고에서 꺼내 노란 화살표(앞)로 내보내요.';
     case 'storage':
+      return '아무 면으로나 받아요. 창고를 등지고 바깥으로 향하는 컨베이어를 붙이면 그쪽으로 든 것을 번갈아 내보내요.';
     case 'hub':
     case 'generator':
     case 'hydro':

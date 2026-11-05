@@ -4,8 +4,9 @@
 //   --publish        만든 다음 깃허브 릴리스에 올린다 (GH_TOKEN 필요). 깔려 있는 게임들이 이걸 보고 업데이트한다
 //   --out <폴더>    실행 중인 기존 빌드와 겹치지 않는 별도 출력 폴더
 //   --feed <주소>    시험용: 깃허브 대신 이 주소에서 업데이트를 찾는 exe를 만든다 (예: http://127.0.0.1:8765/)
+//   --stable-only    빌드하지 않고, 이미 올린 이 버전 릴리스에 고정 이름 설치 파일(STABLE_EXE)만 더한다 (GH_TOKEN 필요)
 // 시험용 환경 변수 GH_API · GH_UPLOADS: --publish가 깃허브 대신 이 주소로 올린다 (가짜 깃허브 서버로 올리기 흐름을 시험할 때)
-import { readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -15,8 +16,16 @@ const root = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 const require = createRequire(import.meta.url);
 const builder = require('electron-builder');
 
+/**
+ * 버전 없는 이름으로도 올리는 설치 파일. 친구에게 보내는 링크가 늘 최신을 바로 내려받는다:
+ * https://github.com/<owner>/<repo>/releases/latest/download/AutomationFactory-Setup.exe
+ * (자동 업데이트는 latest.yml이 가리키는 버전 붙은 파일을 쓴다)
+ */
+const STABLE_EXE = 'AutomationFactory-Setup.exe';
+
 const args = process.argv.slice(2);
-const publish = args.includes('--publish');
+const stableOnly = args.includes('--stable-only');
+const publish = args.includes('--publish') || stableOnly;
 const feedAt = args.indexOf('--feed');
 const feed = feedAt >= 0 ? args[feedAt + 1] : null;
 const outAt = args.indexOf('--out');
@@ -46,6 +55,24 @@ if (feed || outAt >= 0) {
     ...(feed ? { publish: [{ provider: 'generic', url: feed }] } : {}),
   }));
 }
+if (stableOnly) {
+  // 이미 공개한 릴리스에 고정 이름 파일만 더한다. 다시 빌드하지 않는다 (올린 설치 파일·latest.yml과 내용이 달라지지 않게)
+  const exe = path.join(out, `AutomationFactory-Setup-${version}.exe`);
+  if (!existsSync(exe)) {
+    console.error(`${exe}가 없어요. 올린 그 빌드 폴더에서 해 주세요.`);
+    process.exit(1);
+  }
+  const gh = githubRelease(pkg.build.publish[0], `v${version}`);
+  const release = await gh.find();
+  if (!release || release.draft) {
+    console.error(`v${version} 공개 릴리스가 없어요. 먼저 npm run release로 올려 주세요.`);
+    process.exit(1);
+  }
+  copyFileSync(exe, path.join(out, STABLE_EXE));
+  await gh.upload(release, [path.join(out, STABLE_EXE)]);
+  console.log(`v${version}에 ${STABLE_EXE}를 더했어요.`);
+  process.exit(0);
+}
 // 올릴 릴리스를 먼저 준비한다 (이미 올린 버전이면 빌드하기 전에 멈춘다)
 const gh = publish ? githubRelease(pkg.build.publish[0], `v${version}`) : null;
 const release = gh ? await gh.prepare() : null;
@@ -59,9 +86,11 @@ const exe = `AutomationFactory-Setup-${version}.exe`;
 console.log(`\n완성: ${path.join(out, exe)}`);
 if (gh && release) {
   // 설치 파일 → 조각 지도 → latest.yml 차례로: latest.yml이 가리키는 설치 파일이 늘 먼저 올라가 있게
-  await gh.upload(release, [exe, `${exe}.blockmap`, 'latest.yml'].map((n) => path.join(out, n)));
+  // 친구에게 보내는 고정 링크용으로 같은 설치 파일을 버전 없는 이름으로도 (업데이트에는 쓰지 않으므로 맨 뒤)
+  copyFileSync(path.join(out, exe), path.join(out, STABLE_EXE));
+  await gh.upload(release, [exe, `${exe}.blockmap`, 'latest.yml', STABLE_EXE].map((n) => path.join(out, n)));
   await gh.publish(release, releaseNotes(version));
-  await gh.check([exe, `${exe}.blockmap`, 'latest.yml']);
+  await gh.check([exe, `${exe}.blockmap`, 'latest.yml', STABLE_EXE]);
   console.log(`깃허브 릴리스 v${version}에 올렸어요. 깔려 있는 게임은 다음에 켤 때 업데이트 알림이 떠요.`);
 }
 
@@ -110,6 +139,7 @@ function githubRelease({ owner, repo }, tag) {
     return all.find((/** @type {{ draft: boolean }} */ r) => !r.draft) ?? all[0];
   };
   return {
+    find,
     /** 숨김 릴리스를 만든다 (지난번에 올리다 만 숨김 릴리스가 있으면 그것). 이미 공개한 버전이면 멈춘다 (같은 버전을 두 번 올리면 이미 받은 사람에게 업데이트가 안 뜬다) */
     async prepare() {
       const found = await find();

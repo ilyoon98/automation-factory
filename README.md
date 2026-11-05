@@ -1,6 +1,6 @@
 # 자동화 공장
 
-탑다운 2D 생산 체인 자동화 게임. 여러 지역의 자원과 중간재를 생산·운송해 복합 제품을 만들고 허브에 납품합니다. 기준 배포 버전은 **0.8.0**이며, 이후 소스 수정은 [바뀐 점](docs/바뀐점.md)의 ‘미배포’에 기록합니다. [최신 설치 파일](https://github.com/ilyoon98/automation-factory/releases/latest) · [구현 이력](docs/계획서.md).
+탑다운 2D 생산 체인 자동화 게임. 여러 지역의 자원과 중간재를 생산·운송해 복합 제품을 만들고 허브에 납품합니다. 기준 배포 버전은 **0.8.0**이며, 이후 소스 수정은 [바뀐 점](docs/바뀐점.md)의 ‘미배포’에 기록합니다. [최신 설치 파일 바로 받기](https://github.com/ilyoon98/automation-factory/releases/latest/download/AutomationFactory-Setup.exe) · [구현 이력](docs/계획서.md).
 
 ## 현재 게임
 
@@ -67,6 +67,19 @@ npm run release    # 설치 파일을 만들어 깃허브 릴리스에 올리기
 
 Electron으로 게임 화면을 창에 담고, 같이 하기 서버와 방 찾기를 프로그램 안에 넣었다. 친구는 **처음 한 번만 설치**하고, 그다음부터는 게임 안 **[업데이트]** 버튼으로 새 버전을 받는다.
 
+**친구에게 보내는 고정 링크** (누르면 늘 최신 설치 파일이 바로 내려받아진다. 배포할 때마다 같은 파일을 버전 없는 이름 `AutomationFactory-Setup.exe`로도 올린다):
+https://github.com/ilyoon98/automation-factory/releases/latest/download/AutomationFactory-Setup.exe
+
+메신저로 보낼 문구:
+
+```
+자동화 공장 같이 하자!
+① 이거 눌러서 설치: https://github.com/ilyoon98/automation-factory/releases/latest/download/AutomationFactory-Setup.exe
+② 파란 "Windows의 PC 보호" 창이 뜨면 → 추가 정보 → 실행
+③ 방화벽 창 뜨면 → 개인, 공용 둘 다 체크하고 허용
+④ 게임 켜서 위쪽 "함께 하기" → 내 방 참가 누르고 기다려 (내가 허락할게)
+```
+
 - 결과: **`release/AutomationFactory-Setup-<버전>.exe`** (약 96MB). 같은 폴더의 다른 파일(`win-unpacked/`, `latest.yml`, `.blockmap`)은 릴리스용이라 친구에게 보낼 필요 없다.
 - 파일 이름이 영어인 이유: 깃허브가 한글 파일 이름을 바꿔 버려서 자동 업데이트가 파일을 못 찾는다. 설치하면 바탕화면·시작 메뉴 바로가기 이름은 "자동화 공장".
 - 설치: 더블클릭하면 묻지 않고 설치하고(약 20~40초) 게임을 켠다. 관리자 권한은 필요 없다. 설치 위치 `%LOCALAPPDATA%\Programs\automation-game`.
@@ -104,6 +117,8 @@ Electron으로 게임 화면을 창에 담고, 같이 하기 서버와 방 찾�
    ```
 
 ### 새 버전 올리기
+
+`npm run release`가 설치 파일·조각 지도·`latest.yml`과 고정 링크용 `AutomationFactory-Setup.exe`를 함께 올린다. 이미 올린 버전에 고정 이름 파일만 빠졌으면 `npm run release:stable`(다시 빌드하지 않고 그 빌드 폴더의 파일을 더한다).
 
 1. 버전 올리기 (아래 중 하나):
    ```bash

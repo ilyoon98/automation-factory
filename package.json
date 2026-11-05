@@ -15,6 +15,7 @@
     "app": "npm run build && electron .",
     "exe": "npm run build && node scripts/build-exe.mjs",
     "release": "npm run build && node scripts/build-exe.mjs --publish",
+    "release:stable": "node scripts/build-exe.mjs --stable-only",
     "test:ui": "npm run build && node scripts/ui-smoke.cjs"
   },
   "build": {

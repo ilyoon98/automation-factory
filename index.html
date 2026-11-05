@@ -110,7 +110,7 @@
     <div id="newgame" class="modal" hidden>
       <div class="panel">
         <header><h2>새 게임</h2><button class="x" data-act="close-modal">×</button></header>
-        <p class="muted">지금 공장은 "바로 전 공장으로"로 한 번 되돌릴 수 있어요.</p>
+        <p class="muted">새 공장은 새 칸에 만들어요. 지금 공장은 공장 목록(메뉴 → 🏠 시작화면)에 남아요.</p>
         <div class="actions" style="flex-direction: column; align-items: stretch">
           <button data-rules="regional-v1">새 공장 시작 <span class="muted">256×256 · 지형 7종 · 특화 자원 · 전봇대 전력망 · 목표로 넓어지는 지도</span></button>
         </div>
@@ -191,7 +191,7 @@
         <div class="save-file">
           <button id="btn-export" title="지금 공장을 .json 파일로 내려받아요">📤 공장 파일로 내보내기</button>
           <button id="btn-import" title="내보낸 공장 파일을 불러와요 (지금 공장 대신)">📥 공장 파일 불러오기</button>
-          <button id="btn-restore" title="새 게임·공장 파일 불러오기 바로 전의 공장으로 (한 번 더 누르면 다시 돌아와요)">↩ 바로 전 공장으로</button>
+          <button id="btn-restore" title="보관해 둔 바로 전 공장과 지금 공장을 맞바꿔요 (한 번 더 누르면 다시 돌아와요). 새 공장·불러오기는 이제 공장 목록에 따로 남아요">↩ 바로 전 공장으로</button>
           <input id="import-file" type="file" accept=".json,application/json" hidden />
         </div>
       </div>

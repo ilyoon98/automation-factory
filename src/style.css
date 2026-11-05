@@ -2167,10 +2167,21 @@ body.one-panel #left {
 
 /* 시작화면: 위쪽 바까지 덮고 멈춘 공장을 흐리게 비춘다. 업데이트 알림(50)은 위에 남긴다 */
 #start.modal { inset: 0; z-index: 45; align-items: center; padding: 16px; background: rgba(43, 33, 25, 0.62); }
-#start .start-card { width: min(360px, calc(100vw / var(--uiz) - 32px)); background: var(--paper); border: 3px solid var(--ink); box-shadow: var(--bevel), 6px 6px 0 rgba(20, 12, 6, 0.45); padding: 20px 18px 12px; text-align: center; }
+#start .start-card { width: min(420px, calc(100vw / var(--uiz) - 32px)); background: var(--paper); border: 3px solid var(--ink); box-shadow: var(--bevel), 6px 6px 0 rgba(20, 12, 6, 0.45); padding: 20px 18px 12px; text-align: center; }
 #start h1 { margin: 0 0 16px; font-size: 24px; color: var(--ink); }
 #start .start-actions { display: flex; flex-direction: column; gap: 8px; }
 #start .start-actions button { display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 8px 10px; font-size: 15px; }
 #start .start-actions button small { font-size: 11px; opacity: 0.75; }
 #start .start-actions button.primary { background: #8fd18a; box-shadow: inset 2px 2px 0 #c6ecc2, inset -2px -2px 0 #5fae5a; font-weight: 700; }
 #start .start-card > p { margin: 12px 0 0; font-size: 11px; }
+#start .start-slots { margin-top: 16px; text-align: left; }
+#start .start-slots h2 { margin: 0 0 6px; font-size: 13px; color: var(--ink); }
+#start .start-slots { max-height: max(120px, calc(100vh / var(--uiz) - 420px)); overflow-y: auto; }
+#start .start-slot { display: flex; align-items: center; gap: 8px; padding: 6px 4px; border-top: 1px solid var(--paper-3); }
+#start .start-slot.now { background: var(--paper-2); }
+#start .start-slot-name { flex: 1; min-width: 0; display: flex; flex-direction: column; overflow-wrap: anywhere; }
+#start .start-slot-name small { font-size: 11px; opacity: 0.75; }
+#start .start-slot-name input { width: 100%; }
+#start .start-slot .tag { margin-left: 6px; font-size: 10px; padding: 0 4px; border: 1px solid var(--ink); }
+#start .start-slot-btns { display: flex; gap: 4px; flex-shrink: 0; }
+#start .start-slot-btns button { padding: 2px 6px; font-size: 12px; }

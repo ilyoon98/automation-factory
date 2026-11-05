@@ -6,7 +6,8 @@ import { Renderer, type OtherPlayer, type PingMark } from './render/renderer';
 import type { Command, PlaceResult, ResultOf } from './sim/commands';
 import { DT, World } from './sim/world';
 import { ITEM_IDS } from './data/items';
-import { CURRENT_SAVE_KEY, loadCurrentSave } from './sim/current-save';
+import { CURRENT_SAVE_KEY, PREVIOUS_SAVE_KEY } from './sim/current-save';
+import { SaveSlots } from './sim/save-slots';
 import { generateRegionalWorld } from './sim/regional-map';
 import { Chat } from './ui/chat';
 import { uiZoom } from './ui/crisp';
@@ -42,8 +43,16 @@ function newWorld(): World {
 }
 const AUTOSAVE_SEC = 30;
 
+/** 여러 공장 저장. 예전 한 칸 저장(SAVE_KEY)은 1번 공장이 된다 */
+const slots = new SaveSlots(localStorage, SAVE_KEY, REGIONAL_DEV ? [] : [PREVIOUS_SAVE_KEY]);
+
+/** 켤 때(그리고 손님에서 돌아올 때) 이어 할 공장: 마지막으로 한 공장 */
 function loadWorld(): World | null {
-  return REGIONAL_DEV ? loadCurrentSave(localStorage, [SAVE_KEY]) : loadCurrentSave(localStorage);
+  try {
+    return slots.loadActive();
+  } catch {
+    return null;
+  }
 }
 
 const canvas = document.getElementById('game') as HTMLCanvasElement;
@@ -188,7 +197,7 @@ const game: GameApi = {
       pendingSave = null;
     }
     try {
-      localStorage.setItem(SAVE_KEY, JSON.stringify(world.serialize()));
+      slots.save(world);
       saveState.ok = true;
       saveState.dirty = false;
       savedWorld = world;
@@ -221,10 +230,12 @@ const game: GameApi = {
       ui.toast('새 게임은 호스트만 시작할 수 있어요');
       return;
     }
-    if (!backupWorld()) {
-      ui.toast(BACKUP_FAILURE, 9000);
+    // 지금 공장은 제 칸에 저장해 두고, 새 공장은 새 칸에 만든다 (덮어쓰지 않는다)
+    if (!game.save()) {
+      ui.toast('지금 공장을 저장하지 못해 새 공장을 만들지 않았어요. 저장 공간을 확인해 주세요.', 9000);
       return;
     }
+    slots.create();
     game.input.resetWorld();
     world = newWorld();
     centerOnHub();
@@ -252,7 +263,9 @@ const game: GameApi = {
       return '공장 파일이 아니에요';
     }
     if (!w.regional) return '구맵 저장은 지원하지 않아요. 지역 생산망 확장 지도 공장 파일을 선택해 주세요.';
-    if (!backupWorld()) return BACKUP_FAILURE;
+    // 불러온 공장은 새 칸으로 (지금 공장은 목록에 남는다)
+    if (!game.save()) return '지금 공장을 저장하지 못해 불러오지 않았어요. 저장 공간을 확인해 주세요.';
+    slots.create();
     replaceWorld(w);
     return null;
   },
@@ -448,6 +461,22 @@ document.addEventListener('visibilitychange', () => {
   if (!document.hidden) ui.update();
 });
 
+/** 목록의 다른 공장으로 바꾼다. 지금 공장을 먼저 저장하고, 못 읽는 공장이면 그대로 둔다 */
+function openSlot(id: number): void {
+  if (!session.canSave) return;
+  const w = slots.load(id);
+  if (!w) {
+    ui.toast('그 공장을 읽지 못했어요');
+    return;
+  }
+  if (!game.save()) {
+    ui.toast('지금 공장을 저장하지 못해 공장을 바꾸지 않았어요. 저장 공간을 확인해 주세요.', 9000);
+    return;
+  }
+  slots.setActive(id);
+  replaceWorld(w);
+}
+
 /** 처음 켤 때의 시작화면을 지났는지. 지난 뒤에 다시 열면 지금 공장을 이어 하는 것이다 */
 let started = false;
 /** 시작화면이 멈춘 공장인지 (원래 멈춰 있던 공장은 닫을 때 그대로 둔다) */
@@ -459,6 +488,9 @@ function startState(): StartState {
     hasSave: started || loaded !== null,
     day: Math.floor(world.time / DAY_SEC) + 1,
     sites: world.zones.length,
+    slots: slots.list(),
+    active: slots.activeId,
+    canSwitch: session.canSave,
     netReady: ui.togetherReady,
     rooms: session.lanRooms.filter((r) => lanRoomCheck(r) === 'ok').length,
     version: VERSION,
@@ -500,6 +532,18 @@ const start = new StartScreen(document.getElementById('start') as HTMLElement, {
   together() {
     leaveStart();
     ui.openTogether();
+  },
+  open(id) {
+    leaveStart();
+    openSlot(id);
+  },
+  rename(id, name) {
+    slots.rename(id, name);
+    start.update(startState());
+  },
+  remove(id) {
+    if (slots.remove(id)) ui.toast('공장을 지웠어요');
+    start.update(startState());
   },
 });
 

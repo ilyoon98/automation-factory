@@ -24,12 +24,16 @@ app.whenReady().then(async()=>{
    localStorage.setItem(backupKey,saved);window.beforeWorld=game.getWorld();
    window.originalSet=Storage.prototype.setItem;
    Storage.prototype.setItem=function(k,v){if(k===backupKey)throw new DOMException('test','QuotaExceededError');return originalSet.call(this,k,v);};`);
-  for(const [name,action] of [['new game','game.newGame()'],['import','game.importSave(saved)'],['restore','game.restoreBackup()']]){
-   await js(`window.result=${action};`);
-   await check(name+' aborts on backup failure without replacing saves',`return game.getWorld()===beforeWorld&&localStorage.getItem(saveKey)===saved&&localStorage.getItem(backupKey)===saved;`);
-   if(name!=='new game')await check(name+' explains backup failure',`return typeof result==='string'&&result.includes('전환을 중단');`);
-  }
-  await js(`Storage.prototype.setItem=originalSet;game.newGame();game.setSpeed(0);window.requestAnimationFrame=()=>0;
+  await js(`window.result=game.restoreBackup();`);
+  await check('restore aborts on backup failure without replacing saves',`return game.getWorld()===beforeWorld&&localStorage.getItem(saveKey)===saved&&localStorage.getItem(backupKey)===saved;`);
+  await check('restore explains backup failure',`return typeof result==='string'&&result.includes('전환을 중단');`);
+  // 새 공장·불러오기는 새 칸에 만들어 지금 공장을 덮어쓰지 않는다
+  await js(`Storage.prototype.setItem=originalSet;window.slotsKey=saveKey+'/slots';window.firstSaved=localStorage.getItem(saveKey);game.newGame();`);
+  await check('new game keeps the previous factory in its own slot',`const idx=JSON.parse(localStorage.getItem(slotsKey));return idx.slots.length===2&&idx.active===2&&localStorage.getItem(saveKey)===firstSaved&&game.getWorld()!==beforeWorld;`);
+  await js(`window.result=game.importSave(saved);`);
+  await check('import opens a new slot and keeps both factories',`const idx=JSON.parse(localStorage.getItem(slotsKey));return result===null&&idx.slots.length===3&&idx.active===3&&localStorage.getItem(saveKey)===firstSaved;`);
+  await js(`game.setSpeed(0);window.requestAnimationFrame=()=>0;
+   window.saveKey=JSON.parse(localStorage.getItem(slotsKey)).slots.find(x=>x.id===3).key;
    window.writes=0;Storage.prototype.setItem=function(k,v){if(k===saveKey)writes++;return originalSet.call(this,k,v);};
    Object.defineProperty(document,'hidden',{configurable:true,get:()=>true});
    game.getWorld().tick();testAutosave();`);

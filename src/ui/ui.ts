@@ -399,7 +399,7 @@ export class UI {
       const file = input.files?.[0];
       input.value = '';
       if (!file) return;
-      if (!confirm('지금 공장 대신 이 파일의 공장을 불러올까요? 지금 공장은 사라져요 (먼저 내보내 두세요).')) return;
+      if (!confirm('이 파일의 공장을 새 칸으로 불러올까요? 지금 공장은 공장 목록(메뉴 → 🏠 시작화면)에 남아요.')) return;
       const err = game.importSave(await file.text());
       this.toast(err ?? '공장을 불러왔어요');
       if (!err) $('help').hidden = true;

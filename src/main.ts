@@ -13,6 +13,10 @@ import { uiZoom } from './ui/crisp';
 import { Minimap } from './ui/minimap';
 import { sound } from './ui/sound';
 import { UI, type GameApi } from './ui/ui';
+import { StartScreen, type StartState } from './ui/start-screen';
+import { lanRoomCheck } from './net/session';
+import { DAY_SEC } from './sim/sky';
+import { VERSION } from './version';
 import { setupUpdateBanner } from './ui/update';
 
 /**
@@ -440,8 +444,50 @@ document.addEventListener('visibilitychange', () => {
   if (!document.hidden) ui.update();
 });
 
-if (!loaded) ui.showHelp();
-else if (world.loadNote) ui.toast(world.loadNote, 9000);
+/** 시작화면에 보일 지금 상태. 저장 여부는 켤 때 불러온 공장 기준 (새 공장을 고르면 그때부터 저장된다) */
+function startState(): StartState {
+  return {
+    hasSave: loaded !== null,
+    day: Math.floor(world.time / DAY_SEC) + 1,
+    sites: world.zones.length,
+    netReady: ui.togetherReady,
+    rooms: session.lanRooms.filter((r) => lanRoomCheck(r) === 'ok').length,
+    version: VERSION,
+  };
+}
+
+/** 시작화면을 닫으면 멈춰 둔 공장을 원래 속도로 돌린다 */
+function leaveStart(): void {
+  if (session.role === 'solo' && game.speed === 0) applySpeed(lastSpeed);
+}
+
+const start = new StartScreen(document.getElementById('start') as HTMLElement, {
+  play() {
+    leaveStart();
+    if (!loaded) ui.showHelp();
+    else if (world.loadNote) ui.toast(world.loadNote, 9000);
+  },
+  newFactory() {
+    game.newGame();
+    leaveStart();
+    ui.showHelp();
+  },
+  together() {
+    leaveStart();
+    ui.openTogether();
+  },
+});
+
+// 새로고침 전에 같이 하던 중이면 저절로 방에 돌아가므로 시작화면을 건너뛴다
+if (session.rejoining) {
+  if (!loaded) ui.showHelp();
+  else if (world.loadNote) ui.toast(world.loadNote, 9000);
+} else {
+  game.speed = 0;
+  start.open(startState());
+  // 연결·방 목록이 늦게 오므로 열려 있는 동안 가끔 다시 그린다
+  const refresh = setInterval(() => (start.isOpen ? start.update(startState()) : clearInterval(refresh)), 500);
+}
 ui.update();
 
 // 개발 중 콘솔에서 상태를 살펴볼 수 있게

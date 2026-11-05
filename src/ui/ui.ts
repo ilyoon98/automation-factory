@@ -766,6 +766,17 @@ export class UI {
     });
   }
 
+  /** 시작화면의 같이 하기: 위쪽 함께 하기 창을 연다 */
+  openTogether(): void {
+    this.topbar.open('players');
+    this.update();
+  }
+
+  /** 시작화면에서 쓸 수 있는지: 서버 없이 연 게임이면 같이 하기를 막는다 */
+  get togetherReady(): boolean {
+    return !offline(this.game.net);
+  }
+
   showHelp(): void {
     $('help').hidden = false;
   }

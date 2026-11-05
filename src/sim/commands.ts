@@ -74,7 +74,7 @@ export type Command =
   /** 전력 구역의 차량 충전 예산 (kW, 0~800) */
   | { t: 'zone-budget'; zone: number; kw: number }
   /** 산지 협동: 산지 주인 나누기 (방장만). 산지 순서대로 플레이어 번호(-1 = 없음)와 접속 키 */
-  | { t: 'territories'; owners: number[]; keys: string[] }
+  | { t: 'territories'; owners: number[]; keys: string[]; trucks?: [number, number, string][] }
   | { t: 'undo' }
   | { t: 'redo' };
 
@@ -162,6 +162,9 @@ const mine = (w: World, b: Building | undefined | null): b is Building => !!b &&
 /** 산지 협동: 칸(번호)을 고칠 수 있는지 */
 const mineTile = (w: World, tile: number) => Number.isSafeInteger(tile) && !w.foreignTerritory(w.actor, tile % w.width, Math.floor(tile / w.width));
 const NOT_MINE = { ok: false, reason: '내 산지가 아니에요' } as const;
+/** 산지 협동: 만든 사람만 트럭을 고친다 (노선의 정류장은 남의 땅에 있어도 된다) */
+const myTruck = (w: World, v: Vehicle | undefined): v is Vehicle => !!v && (!w.territory || v.owner === w.actor);
+const NOT_MY_TRUCK = { ok: false, reason: '내 트럭이 아니에요' } as const;
 
 function run(w: World, c: Command): CommandResults[Command['t']] {
   switch (c.t) {
@@ -221,18 +224,19 @@ function run(w: World, c: Command): CommandResults[Command['t']] {
     }
     case 'clone-truck': {
       const v = w.vehicles.get(c.id);
-      return v ? w.edit(() => w.cloneTruck(v)) : null;
+      return myTruck(w, v) ? w.edit(() => w.cloneTruck(v)) : null;
     }
     case 'remove-truck': {
       const v = w.vehicles.get(c.id);
-      if (v) w.edit(() => w.removeVehicle(v));
-      return !!v;
+      if (!myTruck(w, v)) return false;
+      w.edit(() => w.removeVehicle(v));
+      return true;
     }
     case 'route': {
       const v = w.vehicles.get(c.id);
       const stops = routeStops(c.stops);
       // 노선 바꾸기 한 번이 되돌리기 한 단계
-      if (v && stops) w.edit(() => w.setStops(v, stops));
+      if (myTruck(w, v) && stops) w.edit(() => w.setStops(v, stops));
       return;
     }
     case 'station-name': {
@@ -241,11 +245,11 @@ function run(w: World, c: Command): CommandResults[Command['t']] {
     }
     case 'truck-name': {
       const v = w.vehicles.get(c.id);
-      return !!v && w.edit(() => w.renameTruck(v, c.name));
+      return myTruck(w, v) && w.edit(() => w.renameTruck(v, c.name));
     }
     case 'truck-filter': {
       const v = w.vehicles.get(c.id);
-      if (v) w.setTruckFilter(v, c.item);
+      if (myTruck(w, v)) w.setTruckFilter(v, c.item);
       return;
     }
     case 'module-install':
@@ -289,7 +293,14 @@ function run(w: World, c: Command): CommandResults[Command['t']] {
       return b && !mine(w, b) ? NOT_MINE : w.upgradeBuilding(b);
     }
     case 'upgrade-truck':
-      return applyOnce(w, c.rid, () => w.upgradeTruck(w.vehicles.get(c.id), w.buildings.get(c.station), String(c.key ?? '')));
+      return applyOnce(w, c.rid, () => {
+        const v = w.vehicles.get(c.id);
+        if (v && !myTruck(w, v)) return NOT_MY_TRUCK;
+        // 조립품은 내 정류장(또는 광장)에 둔 것만 쓴다
+        const st = w.buildings.get(c.station);
+        if (st && !mine(w, st)) return NOT_MINE;
+        return w.upgradeTruck(v, st, String(c.key ?? ''));
+      });
     case 'power-node': {
       const b = w.buildings.get(c.id);
       if (b && !mine(w, b)) return NOT_MINE;
@@ -297,22 +308,22 @@ function run(w: World, c: Command): CommandResults[Command['t']] {
     }
     case 'truck-plan': {
       const v = w.vehicles.get(c.id);
-      if (!v) return false;
+      if (!myTruck(w, v)) return false;
       return w.setPlan(v, c.plan, c.period, !!c.early);
     }
     case 'truck-dispatch': {
       const v = w.vehicles.get(c.id);
-      return !!v && w.setDispatch(v, c.items, c.wait);
+      return myTruck(w, v) && w.setDispatch(v, c.items, c.wait);
     }
     case 'truck-pause': {
       const v = w.vehicles.get(c.id);
-      if (!v) return false;
+      if (!myTruck(w, v)) return false;
       v.paused = !!c.on;
       return true;
     }
     case 'truck-dump': {
       const v = w.vehicles.get(c.id);
-      return !!v && w.dumpCargo(v);
+      return myTruck(w, v) && w.dumpCargo(v);
     }
     case 'station-dock': {
       const b = w.buildings.get(c.id);
@@ -330,7 +341,9 @@ function run(w: World, c: Command): CommandResults[Command['t']] {
       return w.setZoneBudget(Number(c.zone), Number(c.kw));
     case 'territories':
       // 나누기는 방장 한 곳에서 정한다 (손님이 보낸 명령이면 무시)
-      return w.actor === 0 && w.setTerritoryOwners(c.owners, c.keys);
+      if (w.actor !== 0 || !w.setTerritoryOwners(c.owners, c.keys)) return false;
+      w.setTruckOwners(c.trucks ?? []);
+      return true;
     case 'undo':
       return w.undo();
     case 'redo':

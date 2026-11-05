@@ -669,7 +669,50 @@ export class World {
       t.owner = owners[k] as number;
       t.key = owners[k] === -1 ? '' : (keys[k] as string);
     });
+    // 기계가 붙을 수 있는 전봇대(내 땅·광장)가 달라진다
+    this.gridDirty = true;
     return true;
+  }
+
+  /** 산지 협동: 두 칸이 같은 사람 땅이거나 한쪽이 광장인지 (경계를 넘는 연결은 양쪽 주인이 각자 놓아야 한다) */
+  sameLand(a: number, b: number): boolean {
+    if (!this.territory) return true;
+    const ta = this.territoryAt(a), tb = this.territoryAt(b);
+    return !ta || !tb || ta.owner === tb.owner;
+  }
+
+  /** 산지 협동: (x0, y0)~(x1, y1) 직선 위 칸들에 광장 말고는 한 사람 땅만 있는지 (지하 컨베이어가 남의 땅을 건너뛰지 않게) */
+  oneLandAlong(x0: number, y0: number, x1: number, y1: number): boolean {
+    if (!this.territory) return true;
+    let owner: number | null = null;
+    const n = Math.max(Math.abs(x1 - x0), Math.abs(y1 - y0));
+    for (let k = 0; k <= n; k++) {
+      const x = x0 + Math.sign(x1 - x0) * k, y = y0 + Math.sign(y1 - y0) * k;
+      if (!this.inBounds(x, y)) continue;
+      const t = this.territoryAt(this.idx(x, y));
+      if (!t) continue;
+      if (owner !== null && owner !== t.owner) return false;
+      owner = t.owner;
+    }
+    return true;
+  }
+
+  /** 산지 협동: 플레이어의 접속 키 (그 사람이 가진 산지에 적힌 것. 방장·혼자·산지 없는 사람은 빈 값) */
+  keyOf(player: number): string {
+    return player > 0 ? (this.territories.find((t) => t.owner === player)?.key ?? '') : '';
+  }
+
+  /** 산지 협동: 트럭 주인을 바꾼다 ([트럭 id, 플레이어 번호, 접속 키]). 모양이 틀린 줄은 건너뛴다 */
+  setTruckOwners(list: unknown): void {
+    if (!Array.isArray(list)) return;
+    for (const e of list) {
+      if (!Array.isArray(e) || e.length !== 3) continue;
+      const [id, owner, key] = e;
+      const v = this.vehicles.get(Number(id));
+      if (!v || !Number.isSafeInteger(owner) || owner < 0 || typeof key !== 'string' || key.length > 64) continue;
+      v.owner = owner;
+      v.ownerKey = owner === 0 ? '' : key;
+    }
   }
 
   /** 칸이 속한 산지 (광장이거나 산지가 없는 세계면 null) */
@@ -1327,10 +1370,12 @@ export class World {
       }
       return null;
     };
+    // 산지 협동: 남의 땅을 끼고는 짝을 짓지 않는다 (경계는 양쪽이 각자 벨트를 맞대서 넘는다)
+    const along = (n: Building) => this.oneLandAlong(x, y, n.x, n.y);
     const back = nearest(-1);
-    if (back?.ugMode === 'in' && !back.partner) return { mode: 'out', partner: back };
+    if (back?.ugMode === 'in' && !back.partner && along(back)) return { mode: 'out', partner: back };
     const front = nearest(1);
-    if (front?.ugMode === 'out' && !front.partner) return { mode: 'in', partner: front };
+    if (front?.ugMode === 'out' && !front.partner && along(front)) return { mode: 'in', partner: front };
     return { mode: 'in', partner: null };
   }
 
@@ -2691,7 +2736,7 @@ export class World {
   }
 
   /** (x, y)를 직접 공급 범위에 둔 노드들 */
-  private coveringNodes(topo: GridTopo, x: number, y: number): Building[] {
+  private coveringNodes(topo: GridTopo, x: number, y: number, user?: Building): Building[] {
     const L = GRID.pole.link;
     const reach = Math.ceil(GRID.hub.radius / L);
     const cx = Math.floor(x / L);
@@ -2701,7 +2746,10 @@ export class World {
       for (let dx = -reach; dx <= reach; dx++) {
         for (const n of topo.cells.get(cellKey(cx + dx, cy + dy)) ?? []) {
           const [nx, ny] = topo.at.get(n.id)!;
-          if (Math.max(Math.abs(nx - x), Math.abs(ny - y)) <= this.nodeRadius(n)) out.push(n);
+          if (Math.max(Math.abs(nx - x), Math.abs(ny - y)) > this.nodeRadius(n)) continue;
+          // 산지 협동: 남의 땅 전봇대에서 몰래 끌어 쓰지 않는다 (전봇대끼리 이으면 한 망이 된다)
+          if (user && !this.sameLand(this.refTile(user), this.refTile(n))) continue;
+          out.push(n);
         }
       }
     }
@@ -2711,7 +2759,7 @@ export class World {
   /** 접속할 노드: 지금 노드가 여전히 닿으면 그대로, 아니면 가장 가까운 것 (같으면 id가 작은 것) */
   private pickNode(topo: GridTopo, b: Building, keep = b.node): Building | null {
     const [x, y] = this.xy(b);
-    const cand = this.coveringNodes(topo, x, y);
+    const cand = this.coveringNodes(topo, x, y, b);
     const kept = keep ? cand.find((n) => n.id === keep) : undefined;
     if (kept) return kept;
     let best: Building | null = null;
@@ -2871,7 +2919,7 @@ export class World {
     if (!this.regional || !this.isPowerUser(b)) return { ok: false, reason: '전기를 받는 건물이 아니에요' };
     if (this.gridDirty) this.rebuildGrid();
     const [x, y] = this.xy(b);
-    if (!this.coveringNodes(this.topo, x, y).some((n) => n.id === nodeId)) return { ok: false, reason: '공급 범위 안의 노드가 아니에요' };
+    if (!this.coveringNodes(this.topo, x, y, b).some((n) => n.id === nodeId)) return { ok: false, reason: '공급 범위 안의 노드가 아니에요' };
     b.node = nodeId;
     this.gridDirty = true;
     return { ok: true };
@@ -2882,7 +2930,7 @@ export class World {
     if (!this.regional || !this.isPowerUser(b)) return [];
     if (this.gridDirty) this.rebuildGrid();
     const [x, y] = this.xy(b);
-    return this.coveringNodes(this.topo, x, y)
+    return this.coveringNodes(this.topo, x, y, b)
       .map((n) => {
         const [nx, ny] = this.topo.at.get(n.id)!;
         return { id: n.id, net: this.topo.net.get(n.id)!, type: n.type, dist: Math.max(Math.abs(nx - x), Math.abs(ny - y)) };
@@ -4701,6 +4749,8 @@ export class World {
   private spawnTruck(tile: number, stops: RouteStop[], stop = 0, settings?: TruckSettings): Vehicle {
     for (const c of TRUCK.cost) addTo(this.stock, c.item, -c.count);
     const v = new Vehicle(this.nextVehicleId++, tile, this.width);
+    v.owner = this.actor;
+    v.ownerKey = this.keyOf(this.actor);
     v.battery = this.truckBattery();
     v.stops = stops.map((s) => ({ ...s }));
     this.goTo(v, stop);
@@ -4763,6 +4813,8 @@ export class World {
     if (holder === station) addTo(countOf(station.inBuf, kit) > 0 ? station.inBuf : station.outBuf, kit, -1);
     else addTo(holder.inBuf, kit, -1);
     const v = new Vehicle(this.nextVehicleId++, tile, this.width);
+    v.owner = this.actor;
+    v.ownerKey = this.keyOf(this.actor);
     v.kind = 'advanced';
     v.kit = { item: kit, from: holder.id };
     v.home = station.id;
@@ -5369,6 +5421,8 @@ export class World {
       vehicles: [...this.vehicles.values()].map((v) => ({
         id: v.id,
         ...(v.name ? { name: v.name } : {}),
+        ...(v.owner ? { owner: v.owner } : {}),
+        ...(v.ownerKey ? { ownerKey: v.ownerKey } : {}),
         x: v.x,
         y: v.y,
         tile: v.tile,
@@ -5516,6 +5570,8 @@ export class World {
     for (const s of data.vehicles ?? []) {
       const v = new Vehicle(s.id, s.tile, w.width);
       if (typeof s.name === 'string') w.renameTruck(v, s.name);
+      v.owner = Number.isSafeInteger(s.owner) && s.owner! >= 0 ? s.owner! : 0;
+      v.ownerKey = typeof s.ownerKey === 'string' ? s.ownerKey.slice(0, 64) : '';
       v.x = s.x;
       v.y = s.y;
       v.angle = s.angle;
@@ -5704,6 +5760,7 @@ export class World {
     for (const v of this.vehicles.values()) {
       h.num(v.id).num(v.x).num(v.y).num(v.tile).str(v.state).num(v.timer).num(v.idle).num(v.battery).num(v.charger ? 1 : 0);
       if (v.name) h.str('truck-name').str(v.name);
+      if (v.owner || v.ownerKey) h.str('truck-owner').num(v.owner).str(v.ownerKey);
       h.num(v.stop).str(v.kind).num(v.home).str(v.kit?.item ?? '').num(v.kit?.from ?? 0);
       h.num(v.fromStation).num(v.fromZone).num(v.paused ? 1 : 0);
       h.num(v.period).num(v.nextDue).num(v.loadTimer).num(v.stuck).num(v.returning ? 1 : 0).num(v.planTurn).num(v.early ? 1 : 0);
@@ -5792,6 +5849,9 @@ export interface SavedBuilding {
 }
 
 export interface SavedVehicle {
+  /** 산지 협동: 만든 사람과 접속 키 */
+  owner?: number;
+  ownerKey?: string;
   id: number;
   name?: string;
   x: number;

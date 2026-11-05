@@ -2655,7 +2655,7 @@ export class UI {
       const station = w.buildings.get(stop.id);
       return station?.type === 'station' ? `${stop.id}:${reachable.has(stop.id) ? 1 : 0}` : `${stop.id}:deleted`;
     }).join(',');
-    const key = `v${v.id}|${v.kind}|${v.departureWait}|${w.researched.has(TECH_ADVANCED_TRUCK)}|${v.name}|${stops.map((st) => `${st.id}${st.act}${st.item ?? ''}${w.buildings.get(st.id)?.stationName ?? ''}`).join(',')}|${!!v.pendingStops}|${w.endlessLevel('endless-truck')}|${stations.map((s) => `${s.id}${s.stationMode}${s.stationName}`).join(',')}|${roadState}|${clone.reason ?? ''}|${JSON.stringify(v.plan)}${v.period}${v.early}${v.paused}|${this.planRows.get(v.id) ?? ''}`;
+    const key = `v${v.id}|${v.kind}|${v.departureWait}|${w.researched.has(TECH_ADVANCED_TRUCK)}|${v.name}|${stops.map((st) => `${st.id}${st.act}${st.item ?? ''}${w.buildings.get(st.id)?.stationName ?? ''}`).join(',')}|${!!v.pendingStops}|${w.endlessLevel('endless-truck')}|${stations.map((s) => `${s.id}${s.stationMode}${s.stationName}`).join(',')}|${roadState}|${clone.reason ?? ''}|${JSON.stringify(v.plan)}${v.period}${v.early}${v.paused}|${this.planRows.get(v.id) ?? ''}|${v.owner}`;
     if (key !== this.infoKey) {
       this.infoKey = key;
       const opt = (sel: number) =>
@@ -2666,8 +2666,11 @@ export class UI {
         stations
           .map((s) => `<option value="${s.id}" ${s.id === sel ? 'selected' : ''}>${escapeHtml(s.stationLabel)} · ${STATION_MODE_NAME[s.stationMode]}</option>`)
           .join('');
+      // 산지 협동: 남이 만든 트럭은 보기만 한다 (노선·이름·철거는 만든 사람만)
+      const foreign = !!w.territory && v.owner !== this.game.me;
       replaceTransportInfo(el, `<header><img class="swatch" src="${truckIconUrl()}" alt=""><h3>${escapeHtml(v.label)}</h3>
           <button class="x" data-act="close">×</button></header>
+        ${foreign ? `<p class="warn">${escapeHtml(this.game.net.nameOf(v.owner))} 님의 트럭이에요. 노선·이름·철거는 만든 사람만 바꿀 수 있어요.</p>` : ''}
         <div class="dyn"></div>
         ${transportSection('route', '노선', `<div class="route">
           <div class="route-head"><b>노선 ↻</b><span class="muted">도로 연결 ${stations.length}곳</span></div>

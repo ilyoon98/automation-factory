@@ -82,7 +82,16 @@ export class TerritoryHost {
     const owners = planOwners(current, players);
     const keyOf = (p: number) => (p <= 0 ? '' : (this.guests.find((g) => g.p === p)?.key ?? current.find((t) => t.owner === p)?.key ?? ''));
     const keys = owners.map(keyOf);
-    if (w.territories.every((t, k) => t.owner === owners[k] && t.key === keys[k])) return;
-    this.exec({ t: 'territories', owners, keys });
+    // 트럭은 만든 사람 것: 같은 키로 돌아오면 새 번호로 이어받고, 기다리는 동안은 그대로, 떠난 사람 것은 방장에게
+    const present = new Set([0, ...this.guests.map((g) => g.p)]);
+    const trucks: [number, number, string][] = [];
+    for (const v of w.vehicles.values()) {
+      let owner = v.owner, key = v.ownerKey;
+      if (key && byKey.has(key)) owner = byKey.get(key)!;
+      else if (!(key && this.away.has(key)) && !present.has(owner)) [owner, key] = [0, ''];
+      if (owner !== v.owner || key !== v.ownerKey) trucks.push([v.id, owner, key]);
+    }
+    if (!trucks.length && w.territories.every((t, k) => t.owner === owners[k] && t.key === keys[k])) return;
+    this.exec({ t: 'territories', owners, keys, ...(trucks.length ? { trucks } : {}) });
   }
 }

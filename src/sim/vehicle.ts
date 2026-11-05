@@ -63,6 +63,9 @@ export const TRUCK_KIND_LABEL: Record<TruckKind, string> = { basic: '트럭', ad
  */
 export class Vehicle {
   name = '';
+  /** 산지 협동: 만든 사람(플레이어 번호)과 그 접속 키. 만든 사람만 노선·이름·철거를 바꾼다 */
+  owner = 0;
+  ownerKey = '';
 
   get label(): string {
     const base = `${TRUCK_KIND_LABEL[this.kind]} ${this.id}`;

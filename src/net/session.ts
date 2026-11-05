@@ -40,6 +40,8 @@ export const GUEST_SILENT_MS = 5000;
 /** 손님: 방장의 진행(frame)이 이만큼 끊기면 불안정 (ms). 가려진 방장 창도 0.25초마다 보낸다 */
 export const HOST_SILENT_MS = 3000;
 const NAME_KEY = 'automation-game/name';
+/** 이 탭의 접속 키 (새로고침해도 같고, 탭마다 다르다). 다시 접속해 번호가 바뀌어도 같은 사람인지 알아본다 */
+const CLIENT_KEY = 'automation-game/client-key';
 
 /** 플레이어마다 색 (커서·이름표·핑). 접속자 목록 순서대로 나눠 준다 */
 const PLAYER_COLORS = ['#ffb347', '#5fb4ff', '#ff6b9a', '#7be07b', '#c38bff', '#4fd6d0', '#ff8a5c', '#e8e05a'];
@@ -112,7 +114,7 @@ type Msg =
   // 서버 → 방장: 참가 신청, 신청 취소(그만두거나 연결이 끊김)
   | { type: 'join-request'; id: number; name: string }
   | { type: 'join-cancel'; id: number }
-  | { type: 'join'; id: number }
+  | { type: 'join'; id: number; key?: string }
   | { type: 'leave'; id: number }
   // 방 안의 누구든 → 나머지 모두
   | { type: 'presence'; from: number; s: Presence }
@@ -234,6 +236,10 @@ export interface SessionHooks {
   chat(from: number, text: string): void;
   /** 역할·접속 인원이 바뀜 */
   changed(): void;
+  /** 방장: 손님이 들어옴 (key = 손님의 접속 키) / 나감 / 방장이 아니게 됨(방을 닫음) */
+  guestJoined?(p: number, key: string): void;
+  guestLeft?(p: number): void;
+  hostEnded?(): void;
 }
 
 export class Session {
@@ -275,6 +281,10 @@ export class Session {
   asking = false;
   /** 방장: 허락을 기다리는 참가 신청 (먼저 온 순) */
   requests: { id: number; name: string }[] = [];
+  /** 이 탭의 접속 키 */
+  readonly clientKey: string;
+  /** 방장: 손님 번호 → 접속 키 */
+  guestKeys = new Map<number, string>();
   /** 방 안 손님들의 연결 상태 (방장이 재서 모두에게 알린다) */
   links = new Map<number, Link>();
 
@@ -313,6 +323,7 @@ export class Session {
   private presenceAt = 0;
 
   constructor(private hooks: SessionHooks) {
+    this.clientKey = loadClientKey();
     try {
       this.myName = localStorage.getItem(NAME_KEY) ?? '';
       this.intent = (sessionStorage.getItem(INTENT_KEY) as Intent) ?? null;
@@ -652,7 +663,7 @@ export class Session {
 
   /** 서버에 내 이름과 게임 버전을 알린다 (버전·빌드가 방장과 달라야 참가를 막을 수 있다) */
   private hello(): void {
-    this.send({ type: 'hello', name: this.myName, version: VERSION, build: BUILD_ID });
+    this.send({ type: 'hello', name: this.myName, version: VERSION, build: BUILD_ID, key: this.clientKey });
   }
 
   /** 목록 순서(방장 먼저, 그다음 들어온 순)로 색을 정해서 모두의 화면에서 같은 색, 겹치지 않게 */
@@ -841,6 +852,8 @@ export class Session {
         return;
       case 'join':
         this.guests.add(m.id);
+        this.guestKeys.set(m.id, String(m.key ?? '').slice(0, 64));
+        this.hooks.guestJoined?.(m.id, this.guestKeys.get(m.id)!);
         this.lastPong.set(m.id, performance.now());
         this.sendSnapshot(m.id);
         return;
@@ -855,6 +868,7 @@ export class Session {
         this.guests.delete(m.id);
         this.links.delete(m.id);
         this.lastPong.delete(m.id);
+        if (this.guestKeys.delete(m.id)) this.hooks.guestLeft?.(m.id);
         return;
       case 'presence':
         this.others.set(m.from, { s: m.s, t: performance.now() });
@@ -944,6 +958,10 @@ export class Session {
 
   private onRole(role: 'host' | 'guest' | null, reason?: 'left' | 'closed' | 'host-left' | 'kicked'): void {
     const prev = this.role;
+    if (prev === 'host' && role !== 'host') {
+      this.guestKeys.clear();
+      this.hooks.hostEnded?.();
+    }
     if (role === 'host') {
       this.leaveRole();
       this.role = 'host';
@@ -1004,6 +1022,17 @@ export class Session {
     }
     this.resume();
     this.hooks.changed();
+  }
+}
+
+function loadClientKey(): string {
+  const fresh = () => (globalThis.crypto?.randomUUID?.() ?? `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`);
+  try {
+    let key = sessionStorage.getItem(CLIENT_KEY);
+    if (!key) sessionStorage.setItem(CLIENT_KEY, (key = fresh()));
+    return key;
+  } catch {
+    return fresh();
   }
 }
 

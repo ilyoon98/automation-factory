@@ -1,4 +1,4 @@
-import type { ItemId } from '../data/items';
+import { ITEMS, type ItemId } from '../data/items';
 import { STARTING_STOCK } from './mapgen';
 import { grove, lake, patch } from './regional-map';
 import { createRng } from './rng';
@@ -20,6 +20,32 @@ const ORDER: ItemId[] = ['iron-ore', 'coal', 'copper-ore', 'stone'];
 /** 광맥 하나의 매장량 (돌은 끝이 없다) */
 const PATCH_TOTAL = 24000;
 
+const DIRECTIONS = ['동쪽', '남동쪽', '남쪽', '남서쪽', '서쪽', '북서쪽', '북쪽', '북동쪽'];
+const directionCache = new WeakMap<World, Map<number, string>>();
+
+/** 알림용 산지 이름: "철 산지(동쪽)". 방향은 광장에서 본 산지 가운데 쪽 */
+export function territoryName(w: World, id: number): string {
+  let dirs = directionCache.get(w);
+  if (!dirs) {
+    const sum = new Map<number, [number, number, number]>();
+    for (let i = 0; i < (w.territory?.length ?? 0); i++) {
+      const t = w.territory![i];
+      if (!t) continue;
+      const s = sum.get(t) ?? [0, 0, 0];
+      s[0] += i % w.width; s[1] += Math.floor(i / w.width); s[2]++;
+      sum.set(t, s);
+    }
+    dirs = new Map([...sum].map(([t, [x, y, n]]) => {
+      const a = Math.atan2(y / n - w.height / 2, x / n - w.width / 2);
+      return [t, DIRECTIONS[((Math.round(a / (Math.PI / 4)) % 8) + 8) % 8]];
+    }));
+    directionCache.set(w, dirs);
+  }
+  const t = w.territories[id - 1];
+  const name = t ? ITEMS[t.item].name.replace(/광석$/, '') : '';
+  return `${name} 산지(${dirs.get(id) ?? ''})`;
+}
+
 /** owner = 처음 모든 산지를 가질 플레이어 (혼자·방장 = 0). 나누기는 같이 하기에서 따로 한다 */
 export function generateTerritoryWorld(seed: number, owner = 0): World {
   const w = new World(TERRITORY_SIZE, TERRITORY_SIZE);
@@ -40,7 +66,7 @@ export function generateTerritoryWorld(seed: number, owner = 0): World {
       w.territory[w.idx(x, y)] = 1 + Math.min(TERRITORY_COUNT - 1, Math.floor((a / (Math.PI * 2)) * TERRITORY_COUNT));
     }
   }
-  w.territories = Array.from({ length: TERRITORY_COUNT }, (_, k) => ({ id: k + 1, item: ORDER[k % ORDER.length], owner }));
+  w.territories = Array.from({ length: TERRITORY_COUNT }, (_, k) => ({ id: k + 1, item: ORDER[k % ORDER.length], owner, key: '' }));
 
   // 광장: 허브, 담수, 나무 (누구나 쓰는 것만 둔다. 광맥은 없다)
   w.createHub(c - 1, c - 1);

@@ -225,6 +225,8 @@ export class Renderer {
   private activity = new ActivityPhases();
   private generatorPhase = new Map<number, number>();
   private lastGameTime = 0;
+  /** 산지 협동: 주인 이름 (같이 하기 이름표). 없으면 이름 없이 */
+  ownerName: ((p: number) => string) | null = null;
   /** 산지 협동: 산지 이름표 자리 (지도마다 한 번 계산) */
   private territoryCenters = new WeakMap<World, Map<number, [number, number]>>();
   private wires: readonly Wire[] | null = null;
@@ -1131,7 +1133,7 @@ export class Renderer {
       if (!c) continue;
       const [sx, sy] = this.cam.worldToScreen(c[0], c[1]);
       if (sx < -80 || sy < -20 || sx > this.cam.viewW + 80 || sy > this.cam.viewH + 20) continue;
-      const whose = t.owner === me ? ' · 내 땅' : t.owner < 0 ? ' · 주인 없음' : '';
+      const whose = t.owner === me ? ' · 내 땅' : t.owner < 0 ? ' · 주인 없음' : this.ownerName ? ` · ${this.ownerName(t.owner)}` : '';
       this.text(`${ITEMS[t.item].name.replace(/광석$/, '')} 산지${whose}`, sx, sy, t.owner === me ? '#fbf3df' : '#e9d9b4', size);
     }
   }

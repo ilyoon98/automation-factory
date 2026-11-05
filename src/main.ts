@@ -9,7 +9,8 @@ import { ITEM_IDS } from './data/items';
 import { CURRENT_SAVE_KEY, PREVIOUS_SAVE_KEY } from './sim/current-save';
 import { SaveSlots } from './sim/save-slots';
 import { generateRegionalWorld } from './sim/regional-map';
-import { generateTerritoryWorld } from './sim/territory-map';
+import { generateTerritoryWorld, territoryName } from './sim/territory-map';
+import { TerritoryHost } from './net/territory-host';
 import { Chat } from './ui/chat';
 import { uiZoom } from './ui/crisp';
 import { Minimap } from './ui/minimap';
@@ -95,6 +96,7 @@ const session = new Session({
     world = loadWorld() ?? newWorld();
     applySpeed(lastSpeed);
     centerOnHub();
+    territoryHost.adopt();
   },
   getSpeed: () => game.speed,
   setSpeed: applySpeed,
@@ -104,6 +106,10 @@ const session = new Session({
     if (from !== session.me) sound.play('chat');
   },
   changed: () => ui.update(),
+  // 산지 협동: 방장이 손님 입장·퇴장에 맞춰 산지를 다시 나눈다
+  guestJoined: (p, key) => territoryHost.joined(p, key),
+  guestLeft: (p) => territoryHost.left(p),
+  hostEnded: () => territoryHost.ended(),
 });
 const chat = new Chat(session);
 
@@ -240,6 +246,7 @@ const game: GameApi = {
     game.input.resetWorld();
     world = newWorld(kind);
     centerOnHub();
+    territoryHost.adopt();
     game.save();
     session.worldReplaced();
     ui.update();
@@ -323,11 +330,47 @@ function replaceWorld(w: World): void {
   game.input.resetWorld();
   world = w;
   centerOnHub();
+  territoryHost.adopt();
   game.save();
   session.worldReplaced();
   ui.update();
   if (w.loadNote) ui.toast(w.loadNote, 9000);
 }
+
+/** 산지 협동: 산지 나누기는 방장(혼자면 나)이 정해 명령으로 보낸다 */
+const territoryHost = new TerritoryHost(() => world, (cmd) => game.exec(cmd));
+
+/** 산지 주인이 바뀌면 알린다: 내 땅이 되거나 넘어간 것을 먼저 */
+let ownersSeen: { world: World | null; owners: number[] } = { world: null, owners: [] };
+function watchTerritories(): void {
+  if (!world.territory) return;
+  const owners = world.territories.map((t) => t.owner);
+  const before = ownersSeen;
+  ownersSeen = { world, owners };
+  const me = session.me;
+  if (before.world !== world) {
+    // 방장 공장에 들어오면 이미 나눠져 있다: 내 산지를 한 번 알려 준다
+    const mine = world.territories.filter((t) => t.owner === me).map((t) => territoryName(world, t.id));
+    if (session.role === 'guest' && mine.length) ui.toast(`내 산지: ${mine.join(' · ')}`, 6000);
+    return;
+  }
+  if (before.owners.join() === owners.join()) return;
+  const lines: string[] = [];
+  owners.forEach((o, k) => {
+    const was = before.owners[k];
+    if (o === was) return;
+    const name = territoryName(world, world.territories[k].id);
+    if (o === me) lines.unshift(`${name}이 내 땅이 됐어요`);
+    else if (was === me) lines.unshift(`내 ${name}을 ${o < 0 ? '비웠어요' : `${session.nameOf(o)} 님에게 넘겼어요`}`);
+    else lines.push(`${name} → ${o < 0 ? '주인 없음' : `${session.nameOf(o)} 님`}`);
+  });
+  if (lines.length) ui.toast(lines.length > 3 ? `${lines.slice(0, 3).join(' · ')} 외 ${lines.length - 3}곳` : lines.join(' · '), 6000);
+}
+// 2분 기다림은 화면이 가려져도 흘러야 한다 (방장 창을 내려놓아도)
+setInterval(() => {
+  if (session.canSave) territoryHost.tick();
+  watchTerritories();
+}, 1000);
 
 game.input = new Input(canvas, camera, {
   getWorld: () => world,
@@ -556,6 +599,9 @@ if (loaded || session.rejoining) {
   else if (world.loadNote) ui.toast(world.loadNote, 9000);
   started = true;
 } else openStart();
+// 불러온 공장에 지금 없는 손님 산지가 있으면 2분 기다렸다가 다시 나눈다
+if (session.canSave) territoryHost.adopt();
+renderer.ownerName = (p) => session.nameOf(p);
 ui.update();
 
 // 개발 중 콘솔에서 상태를 살펴볼 수 있게

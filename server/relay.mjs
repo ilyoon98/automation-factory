@@ -16,7 +16,7 @@ import { WebSocket, WebSocketServer } from 'ws';
  *
  * @typedef {{ p: number; name: string; host: boolean }} RoomPlayer
  * @typedef {{ open: boolean; players: RoomPlayer[]; version: string }} RoomState version = 방장의 게임 버전
- * @typedef {{ id: number; ws: WebSocket; ip: string; name: string; role: 'host' | 'guest' | null; version: string; build: string; asking: boolean }} Client
+ * @typedef {{ id: number; ws: WebSocket; ip: string; key: string; name: string; role: 'host' | 'guest' | null; version: string; build: string; asking: boolean }} Client
  */
 
 /** 접속한 PC를 IP로 구분한다. IPv4를 감싼 IPv6와 IPv6 루프백도 같은 PC로 본다 @param {string} addr */
@@ -104,7 +104,8 @@ export function attachRelay(http, opts = {}) {
     c.asking = false;
     approved.add(c.ip);
     setRole(c, 'guest');
-    send(h.ws, { type: 'join', id: c.id });
+    // 접속 키: 다시 들어와 번호가 바뀌어도 방장이 같은 사람인지 알아보게 (산지 주인 유지)
+    send(h.ws, { type: 'join', id: c.id, key: c.key });
     sendRoom();
   };
   /** 방장이 고른 손님·신청자 @param {unknown} id */
@@ -123,13 +124,13 @@ export function attachRelay(http, opts = {}) {
 
   wss.on('connection', (/** @type {WebSocket} */ ws, /** @type {import('node:http').IncomingMessage} */ req) => {
     /** @type {Client} */
-    const me = { id: nextId++, ws, ip: pcOf(req?.socket.remoteAddress ?? ''), name: '', role: null, version: '', build: '', asking: false };
+    const me = { id: nextId++, ws, ip: pcOf(req?.socket.remoteAddress ?? ''), key: '', name: '', role: null, version: '', build: '', asking: false };
     clients.set(ws, me);
     send(ws, { type: 'welcome', id: me.id, urls: lanUrls() });
     sendRoom();
 
     ws.on('message', (raw) => {
-      /** @type {{ type?: string; id?: unknown; to?: number; from?: number; name?: unknown; text?: unknown; version?: unknown; build?: unknown }} */
+      /** @type {{ type?: string; id?: unknown; key?: unknown; to?: number; from?: number; name?: unknown; text?: unknown; version?: unknown; build?: unknown }} */
       let msg;
       try {
         msg = JSON.parse(raw.toString());
@@ -139,6 +140,7 @@ export function attachRelay(http, opts = {}) {
       switch (msg.type) {
         case 'hello':
           me.name = String(msg.name ?? '').slice(0, 16);
+          if (msg.key !== undefined) me.key = String(msg.key).slice(0, 64);
           // 버전을 안 보내는 옛 게임은 빈 값: 새 게임과는 버전이 달라서 같이 못 한다
           if (msg.version !== undefined) me.version = String(msg.version).slice(0, 32);
           if (msg.build !== undefined) me.build = String(msg.build).slice(0, 32);

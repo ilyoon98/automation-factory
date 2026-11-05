@@ -85,6 +85,8 @@ export interface Territory {
   id: number;
   item: ItemId;
   owner: number;
+  /** 주인의 접속 키 (같이 하기). 다시 접속해 플레이어 번호가 바뀌어도 같은 사람인지 알아본다. 혼자·방장이면 빈 값 */
+  key: string;
 }
 
 interface OutTarget {
@@ -653,6 +655,21 @@ export class World {
   /** 이 칸을 확인했는지 (예전 지도는 늘 true) */
   isRevealed(i: number): boolean {
     return !this.revealed || this.revealed[i] === 1;
+  }
+
+  /**
+   * 산지 주인을 한꺼번에 바꾼다 (방장이 나누기를 정해 명령으로 보낸다). 산지 순서대로 플레이어 번호(-1 = 없음)와 접속 키.
+   * 모양이 틀리면 아무것도 바꾸지 않는다
+   */
+  setTerritoryOwners(owners: unknown, keys: unknown): boolean {
+    const n = this.territories.length;
+    if (!n || !Array.isArray(owners) || !Array.isArray(keys) || owners.length !== n || keys.length !== n) return false;
+    if (owners.some((o) => !Number.isSafeInteger(o) || o < -1) || keys.some((k) => typeof k !== 'string' || k.length > 64)) return false;
+    this.territories.forEach((t, k) => {
+      t.owner = owners[k] as number;
+      t.key = owners[k] === -1 ? '' : (keys[k] as string);
+    });
+    return true;
   }
 
   /** 칸이 속한 산지 (광장이거나 산지가 없는 세계면 null) */
@@ -5422,7 +5439,7 @@ export class World {
       w.territory = new Uint8Array(w.width * w.height);
       let k = 0;
       for (let j = 0; j < data.territory.length; j += 2) w.territory.fill(data.territory[j], k, (k += data.territory[j + 1]));
-      w.territories = (data.territories ?? []).map((t) => ({ id: t.id, item: t.item, owner: t.owner }));
+      w.territories = (data.territories ?? []).map((t) => ({ id: t.id, item: t.item, owner: t.owner, key: String(t.key ?? '') }));
     }
     for (const [i, itemIdx, a] of data.res) {
       w.resItem[i] = ITEM_IDS[itemIdx];
@@ -5658,7 +5675,7 @@ export class World {
     h.num(this.revealedCount);
     h.str(this.rules).num(this.nextPileEv).num(this.moduleBatches).num(this.advDelivered).num(this.nextZoneId);
     for (const z of this.zones) h.num(z.id).num(z.x).num(z.y).num(z.creator).num(z.budget);
-    for (const t of this.territories) h.num(t.id).str(t.item).num(t.owner);
+    for (const t of this.territories) h.num(t.id).str(t.item).num(t.owner).str(t.key);
     for (const r of this.reservations) h.num(r.v).num(r.holder).str(r.item).num(r.n).str(r.dir);
     const st = this.stats;
     h.num(this.ach.digest());
@@ -6091,7 +6108,8 @@ function loadStats(d: Partial<ReturnType<typeof saveStats>>): FactoryStats {
 /** [값, 이어진 개수] 쌍으로 줄인 배열 (지형 저장용) */
 /** 남의 산지에서 막혔을 때 안내 (주인 이름은 화면에서 덧붙인다) */
 export function territoryReason(t: Territory): string {
-  return t.owner < 0 ? `주인이 없는 ${ITEMS[t.item].name} 산지예요` : `다른 사람의 ${ITEMS[t.item].name} 산지예요`;
+  const name = ITEMS[t.item].name.replace(/광석$/, '');
+  return t.owner < 0 ? `주인이 없는 ${name} 산지예요` : `다른 사람의 ${name} 산지예요`;
 }
 
 function runLength(a: Uint8Array): number[] {

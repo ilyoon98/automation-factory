@@ -73,6 +73,8 @@ export type Command =
   | { t: 'project'; on: boolean }
   /** 전력 구역의 차량 충전 예산 (kW, 0~800) */
   | { t: 'zone-budget'; zone: number; kw: number }
+  /** 산지 협동: 산지 주인 나누기 (방장만). 산지 순서대로 플레이어 번호(-1 = 없음)와 접속 키 */
+  | { t: 'territories'; owners: number[]; keys: string[] }
   | { t: 'undo' }
   | { t: 'redo' };
 
@@ -121,6 +123,7 @@ export interface CommandResults {
   'build-adv-truck': UseResult;
   'power-node': UseResult;
   'zone-budget': boolean;
+  territories: boolean;
   project: boolean;
   'truck-plan': boolean;
   'truck-dispatch': boolean;
@@ -325,6 +328,9 @@ function run(w: World, c: Command): CommandResults[Command['t']] {
       return true;
     case 'zone-budget':
       return w.setZoneBudget(Number(c.zone), Number(c.kw));
+    case 'territories':
+      // 나누기는 방장 한 곳에서 정한다 (손님이 보낸 명령이면 무시)
+      return w.actor === 0 && w.setTerritoryOwners(c.owners, c.keys);
     case 'undo':
       return w.undo();
     case 'redo':

@@ -87,10 +87,19 @@ type Msg =
   | { type: 'welcome'; id: number; urls?: string[] }
   /** 방이 열렸는지, 방 안에 누가 있는지 (방 밖에 있어도 받는다). version = 방장의 게임 버전 */
   | { type: 'room'; open: boolean; players: RosterEntry[]; version?: string }
-  /** 방장과 버전(또는 빌드)이 달라서 참가를 막음 */
+  /**
+   * 참가를 막음. version·build = 방장과 게임이 다름, denied = 방장이 거절(잠시 다시 신청 못 함),
+   * banned = 이 방에서 내보내짐, closed = 허락을 기다리는 동안 방이 닫힘
+   */
   | { type: 'join-refused'; reason: 'version' | 'build'; host: string; me: string }
-  /** 내 역할이 바뀜. reason: left = 내가 나감, closed = 방장이 방을 닫음, host-left = 방장 연결이 끊김 */
-  | { type: 'your-role'; role: 'host' | 'guest' | null; reason?: 'left' | 'closed' | 'host-left' }
+  | { type: 'join-refused'; reason: 'denied' | 'banned' | 'closed' }
+  /** 참가 신청을 방장에게 보냄 (허락을 기다린다) */
+  | { type: 'join-pending' }
+  /** 내 역할이 바뀜. reason: left = 내가 나감, closed = 방장이 방을 닫음, host-left = 방장 연결이 끊김, kicked = 방장이 내보냄 */
+  | { type: 'your-role'; role: 'host' | 'guest' | null; reason?: 'left' | 'closed' | 'host-left' | 'kicked' }
+  // 서버 → 방장: 참가 신청, 신청 취소(그만두거나 연결이 끊김)
+  | { type: 'join-request'; id: number; name: string }
+  | { type: 'join-cancel'; id: number }
   | { type: 'join'; id: number }
   | { type: 'leave'; id: number }
   // 방 안의 누구든 → 나머지 모두
@@ -223,6 +232,10 @@ export class Session {
   lanRooms: LanRoom[] = [];
   /** exe: 다른 PC의 방에 들어가려고 그 PC의 서버(ip:포트)에 붙어 있으면 그 주소. null = 이 게임을 연 서버 */
   server: string | null = null;
+  /** 참가를 신청하고 방장의 허락을 기다리는 중 */
+  asking = false;
+  /** 방장: 허락을 기다리는 참가 신청 (먼저 온 순) */
+  requests: { id: number; name: string }[] = [];
 
   private ws: WebSocket | null = null;
   private retryTimer = 0;
@@ -372,7 +385,9 @@ export class Session {
   /** 방장이면 방 닫기 (손님은 모두 각자 공장으로), 손님이면 나가기 */
   leaveRoom(): void {
     if (this.role === 'solo') {
-      // 방장을 기다리던 중이면 기다리기를 그만두고 내 공장으로
+      // 허락을 기다리던 중이면 신청을 거두고, 방장을 기다리던 중이면 기다리기를 그만두고 내 공장으로
+      if (this.asking) this.send({ type: 'leave-room' });
+      this.asking = false;
       this.setIntent(null);
       if (this.borrowed) this.backToOwnWorld();
       this.switchServer(null);
@@ -395,6 +410,30 @@ export class Session {
   /** 새로고침 전에 방장·손님이었거나 초대 주소로 열어서 저절로 방을 열거나 들어갈 참인지 (시작화면을 건너뛴다) */
   get rejoining(): boolean {
     return this.intent !== null;
+  }
+
+  /** 방장: 참가 신청을 허락한다 */
+  approve(id: number): void {
+    this.answer(id, 'approve');
+  }
+
+  /** 방장: 참가 신청을 거절한다 (그 PC는 잠시 다시 신청하지 못한다) */
+  deny(id: number): void {
+    this.answer(id, 'deny');
+  }
+
+  private answer(id: number, type: 'approve' | 'deny'): void {
+    if (this.role !== 'host') return;
+    this.requests = this.requests.filter((r) => r.id !== id);
+    this.send({ type, id });
+    this.hooks.changed();
+  }
+
+  /** 방장: 손님을 내보낸다. 그 PC는 방이 열려 있는 동안 다시 들어오지 못한다 */
+  kick(p: number): void {
+    if (this.role !== 'host' || p === this.me || !this.roster.some((r) => r.p === p)) return;
+    this.send({ type: 'kick', id: p });
+    this.hooks.toast(`${this.nameOf(p)} 님을 내보냈어요`);
   }
 
   /** 방장 이름 */
@@ -445,6 +484,8 @@ export class Session {
   /** 방장·손님 역할을 내려놓는다 (방 밖으로) */
   private leaveRole(): void {
     this.role = 'solo';
+    this.asking = false;
+    this.requests = [];
     this.me = 0;
     this.synced = false;
     this.guests.clear();
@@ -674,8 +715,17 @@ export class Session {
         this.onRoom(m.open, m.players);
         return;
       case 'join-refused':
-        // 버전이 달라서 못 들어감: 다시 들어가려 하지 않고, 다른 PC의 방이었으면 내 서버로 돌아온다
-        this.hooks.toast(versionMismatchText(m.reason, m.host, m.me));
+        // 못 들어감: 다시 들어가려 하지 않고, 다른 PC의 방이었으면 내 서버로 돌아온다
+        this.asking = false;
+        this.hooks.toast(
+          'host' in m
+            ? versionMismatchText(m.reason, m.host, m.me)
+            : m.reason === 'denied'
+              ? '방장이 참가를 거절했어요. 잠시 뒤에 다시 신청할 수 있어요'
+              : m.reason === 'banned'
+                ? '이 방에서 내보내져서 방이 다시 열릴 때까지 들어갈 수 없어요'
+                : '허락을 기다리는 동안 방이 닫혀서 신청이 취소됐어요',
+        );
         this.setIntent(null);
         if (this.borrowed) this.backToOwnWorld();
         this.switchServer(null);
@@ -683,6 +733,21 @@ export class Session {
         return;
       case 'your-role':
         this.onRole(m.role, m.reason);
+        return;
+      case 'join-pending':
+        this.asking = true;
+        this.hooks.toast('방장에게 참가를 신청했어요. 허락하면 들어가요');
+        this.hooks.changed();
+        return;
+      case 'join-request':
+        if (this.role !== 'host' || this.requests.some((r) => r.id === m.id)) return;
+        this.requests.push({ id: m.id, name: String(m.name ?? '').slice(0, 16) });
+        this.hooks.toast(`${m.name || `P${m.id}`} 님이 들어오려 해요. 위쪽 방 버튼에서 허락하거나 거절해 주세요`);
+        this.hooks.changed();
+        return;
+      case 'join-cancel':
+        this.requests = this.requests.filter((r) => r.id !== m.id);
+        this.hooks.changed();
         return;
       case 'join':
         this.guests.add(m.id);
@@ -766,7 +831,7 @@ export class Session {
     }
   }
 
-  private onRole(role: 'host' | 'guest' | null, reason?: 'left' | 'closed' | 'host-left'): void {
+  private onRole(role: 'host' | 'guest' | null, reason?: 'left' | 'closed' | 'host-left' | 'kicked'): void {
     const prev = this.role;
     if (role === 'host') {
       this.leaveRole();
@@ -788,7 +853,11 @@ export class Session {
       } else {
         this.setIntent(null);
         if (prev === 'guest') {
-          this.hooks.toast(reason === 'closed' ? '방장이 방을 닫았어요. 내 공장으로 돌아가요' : '방에서 나왔어요. 내 공장으로 돌아가요');
+          this.hooks.toast(
+            reason === 'closed' ? '방장이 방을 닫았어요. 내 공장으로 돌아가요'
+              : reason === 'kicked' ? '방장이 나를 내보냈어요. 내 공장으로 돌아가요'
+                : '방에서 나왔어요. 내 공장으로 돌아가요',
+          );
           this.backToOwnWorld();
           // exe: 방장 PC의 서버에서 내 서버로 돌아온다
           this.switchServer(null);

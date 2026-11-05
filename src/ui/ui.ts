@@ -745,12 +745,19 @@ export class UI {
     // 같이 하기: 위쪽 버튼을 누르면 방 창 (만들기·참가·주소 복사·접속자 목록)
     $('net').addEventListener('click', () => this.topbar.toggle('players'));
     $('players').addEventListener('click', (e) => {
-      const t = (e.target as HTMLElement).closest<HTMLElement>('[data-act], [data-goto]');
+      const t = (e.target as HTMLElement).closest<HTMLElement>('[data-act], [data-goto], [data-approve], [data-deny], [data-kick]');
       if (!t) return;
       const net = game.net;
       if (t.dataset.goto !== undefined) {
         const at = net.others.get(Number(t.dataset.goto))?.s.at;
         if (at) game.focus(at[0], at[1]);
+        return;
+      }
+      if (t.dataset.approve !== undefined) return net.approve(Number(t.dataset.approve));
+      if (t.dataset.deny !== undefined) return net.deny(Number(t.dataset.deny));
+      if (t.dataset.kick !== undefined) {
+        const p = Number(t.dataset.kick);
+        if (confirm(`${net.nameOf(p)} 님을 내보낼까요? 이 방이 열려 있는 동안 다시 들어오지 못해요.`)) net.kick(p);
         return;
       }
       const act = t.dataset.act;
@@ -806,7 +813,9 @@ export class UI {
     const lan = net.lanRooms.filter((r) => lanRoomCheck(r) === 'ok');
     let text: string;
     let cls = '';
-    if (net.joining) [text, cls] = ['🚪 들어가는 중…', 'wait'];
+    if (net.asking) [text, cls] = ['🚪 허락 기다리는 중…', 'wait'];
+    else if (net.role === 'host' && net.requests.length) [text, cls] = [`🔔 참가 신청 ${net.requests.length}명`, 'wait'];
+    else if (net.joining) [text, cls] = ['🚪 들어가는 중…', 'wait'];
     else if (!net.connected)
       [text, cls] = [!net.desktop ? '연결 끊김 · 다시 붙는 중' : net.borrowed ? '⏳ 방장 기다리는 중' : '연결 중…', 'wait'];
     else if (net.role === 'host')
@@ -842,8 +851,8 @@ export class UI {
     if (panel.hidden) return;
     const seen = (p: number) => !!net.others.get(p)?.s.at;
     const state =
-      net.role !== 'solo' ? net.role : net.joining ? 'joining' : net.waitingForHost || net.borrowed ? 'wait' : net.roomOpen ? 'open' : 'none';
-    const key = JSON.stringify([state, net.roster, net.me, net.roster.map((r) => seen(r.p)), net.inviteUrl, net.synced, net.lanRooms]);
+      net.role !== 'solo' ? net.role : net.asking ? 'asking' : net.joining ? 'joining' : net.waitingForHost || net.borrowed ? 'wait' : net.roomOpen ? 'open' : 'none';
+    const key = JSON.stringify([state, net.roster, net.me, net.roster.map((r) => seen(r.p)), net.inviteUrl, net.synced, net.lanRooms, net.requests]);
     if (key === this.playersKey) return;
     this.playersKey = key;
 
@@ -852,10 +861,18 @@ export class UI {
         const me = net.role !== 'solo' && r.p === net.me;
         const tags = [r.host && '방장', me && '나'].filter(Boolean).join(' · ');
         const go = net.role !== 'solo' && !me && seen(r.p) ? `<button data-goto="${r.p}" title="그 사람 커서로 화면 이동">보기</button>` : '';
+        const kick = net.role === 'host' && !r.host ? `<button class="danger" data-kick="${r.p}" title="이 방에서 내보내요. 방이 열려 있는 동안 다시 못 들어와요">내보내기</button>` : '';
         return `<div class="row"><span class="dot" style="background:${net.colorOf(r.p)}"></span>
-          <span class="who">${escapeHtml(net.nameOf(r.p))} <span class="tag">${tags}</span></span>${go}</div>`;
+          <span class="who">${escapeHtml(net.nameOf(r.p))} <span class="tag">${tags}</span></span>${go}${kick}</div>`;
       })
       .join('');
+    // 방장: 허락을 기다리는 참가 신청
+    const requests = net.role === 'host' && net.requests.length
+      ? `<label class="hint">참가 신청</label>${net.requests
+          .map((r) => `<div class="row"><span class="who">🙋 ${escapeHtml(r.name || `P${r.id}`)}</span>
+            <button class="primary" data-approve="${r.id}">허락</button><button data-deny="${r.id}" title="거절하면 그 PC는 30초 동안 다시 신청하지 못해요">거절</button></div>`)
+          .join('')}`
+      : '';
     const name = `<label class="hint">내 이름</label>
       <input data-act="rename" maxlength="16" placeholder="${net.role === 'host' ? '방장' : net.role === 'guest' ? `P${net.me}` : '이름'}" value="${escapeHtml(net.myName)}" />`;
     // 주소가 여러 개면(가상 어댑터 등) 첫 주소가 안 될 때 써 볼 수 있게 나머지도 알려 준다
@@ -896,11 +913,15 @@ export class UI {
     let html: string;
     if (state === 'host') {
       html = net.desktop
-        ? `<h3>🏠 내 방 · ${net.players}명</h3>
-          <p class="hint">같은 와이파이에서 exe를 켠 사람들의 방 목록에 이 방이 저절로 떠요.</p>${members}${name}${invite}
+        ? `<h3>🏠 내 방 · ${net.players}명</h3>${requests}
+          <p class="hint">같은 와이파이에서 exe를 켠 사람들의 방 목록에 이 방이 저절로 떠요. 들어오려면 방장의 허락이 필요해요.</p>${members}${name}${invite}
           <button class="wide" data-act="leave">방 닫기</button>`
-        : `<h3>🏠 내 방 · ${net.players}명</h3>${invite}${members}${name}
+        : `<h3>🏠 내 방 · ${net.players}명</h3>${requests}${invite}${members}${name}
         <button class="wide" data-act="leave">방 닫기</button>`;
+    } else if (state === 'asking') {
+      html = `<h3>🙋 허락을 기다리는 중…</h3>
+        <p class="hint">방장에게 참가를 신청했어요. 방장이 허락하면 바로 들어가요.</p>
+        <button class="wide" data-act="leave">신청 취소 (내 공장으로)</button>`;
     } else if (state === 'joining') {
       html = `<h3>🚪 방에 들어가는 중…</h3>
         <p class="hint">방장 PC에 붙는 중이에요. 방이 잠깐 닫혀 있으면 다시 열릴 때 저절로 들어가요.</p>

@@ -503,8 +503,9 @@ const start = new StartScreen(document.getElementById('start') as HTMLElement, {
   },
 });
 
-// 새로고침 전에 같이 하던 중이면 저절로 방에 돌아가므로 시작화면을 건너뛴다
-if (session.rejoining) {
+// 저장한 공장이 있으면 바로 이어 한다 (시작화면은 메뉴의 🏠 시작화면으로).
+// 새로고침 전에 같이 하던 중이면 저절로 방에 돌아가므로 역시 건너뛴다. 처음 켜면 시작화면에서 고른다
+if (loaded || session.rejoining) {
   if (!loaded) ui.showHelp();
   else if (world.loadNote) ui.toast(world.loadNote, 9000);
   started = true;

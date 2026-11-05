@@ -818,9 +818,14 @@ export class UI {
     else if (net.joining) [text, cls] = ['🚪 들어가는 중…', 'wait'];
     else if (!net.connected)
       [text, cls] = [!net.desktop ? '연결 끊김 · 다시 붙는 중' : net.borrowed ? '⏳ 방장 기다리는 중' : '연결 중…', 'wait'];
-    else if (net.role === 'host')
-      [text, cls] = [net.players > 1 ? `🏠 내 방 · ${net.players}명` : net.desktop ? '🏠 방 열림 · 1명' : '🏠 방 열림 · 주소 복사', 'live'];
-    else if (net.role === 'guest') [text, cls] = [net.synced ? `🚪 ${net.hostName}의 방 · ${net.players}명` : '맞추는 중…', net.synced ? 'live' : 'wait'];
+    else if (net.role === 'host') {
+      const shaky = [...net.links.values()].filter((l) => l.unstable).length;
+      [text, cls] = [net.players > 1 ? `🏠 내 방 · ${net.players}명${shaky ? ` · ⚠ 불안정 ${shaky}명` : ''}` : net.desktop ? '🏠 방 열림 · 1명' : '🏠 방 열림 · 주소 복사', shaky ? 'wait' : 'live'];
+    } else if (net.role === 'guest' && net.hostSilent) [text, cls] = ['⚠ 방장 연결 불안정', 'wait'];
+    else if (net.role === 'guest') {
+      const ms = net.linkOf(net.me)?.ms;
+      [text, cls] = [net.synced ? `🚪 ${net.hostName}의 방 · ${net.players}명${ms != null ? ` · ${ms}ms` : ''}` : '맞추는 중…', net.synced ? 'live' : 'wait'];
+    }
     else if (net.waitingForHost || net.borrowed) [text, cls] = ['⏳ 방장 기다리는 중', 'wait'];
     else if (net.roomOpen) [text, cls] = [`🚪 ${net.hostName}의 방 · 참가`, 'wait'];
     else if (lan.length) [text, cls] = [lan.length > 1 ? `🚪 열린 방 ${lan.length}개 · 참가` : `🚪 ${lan[0].host || '누군가'}의 방 · 참가`, 'wait'];
@@ -853,7 +858,7 @@ export class UI {
     const state =
       net.role !== 'solo' ? net.role : net.asking ? 'asking' : net.joining ? 'joining' : net.waitingForHost || net.borrowed ? 'wait' : net.roomOpen ? 'open' : 'none';
     const key = JSON.stringify([state, net.roster, net.me, net.roster.map((r) => seen(r.p)), net.inviteUrl, net.synced, net.lanRooms, net.requests]);
-    if (key === this.playersKey) return;
+    if (key === this.playersKey) return this.updateLinks(panel);
     this.playersKey = key;
 
     const members = net.roster
@@ -861,9 +866,11 @@ export class UI {
         const me = net.role !== 'solo' && r.p === net.me;
         const tags = [r.host && '방장', me && '나'].filter(Boolean).join(' · ');
         const go = net.role !== 'solo' && !me && seen(r.p) ? `<button data-goto="${r.p}" title="그 사람 커서로 화면 이동">보기</button>` : '';
+        // 지연은 2초마다 바뀌므로 창을 다시 그리지 않고 글자만 고친다 (updateLinks)
+        const link = !r.host && net.role !== 'solo' ? `<span class="link" data-link="${r.p}"></span>` : '';
         const kick = net.role === 'host' && !r.host ? `<button class="danger" data-kick="${r.p}" title="이 방에서 내보내요. 방이 열려 있는 동안 다시 못 들어와요">내보내기</button>` : '';
         return `<div class="row"><span class="dot" style="background:${net.colorOf(r.p)}"></span>
-          <span class="who">${escapeHtml(net.nameOf(r.p))} <span class="tag">${tags}</span></span>${go}${kick}</div>`;
+          <span class="who">${escapeHtml(net.nameOf(r.p))} <span class="tag">${tags}</span>${link}</span>${go}${kick}</div>`;
       })
       .join('');
     // 방장: 허락을 기다리는 참가 신청
@@ -957,6 +964,19 @@ export class UI {
         ${net.reachable ? '' : invite}`;
     }
     panel.innerHTML = `${html}<div class="hint">F 또는 Alt + 클릭: 핑 찍기 · 게임 버전 ${VERSION}</div>`;
+    this.updateLinks(panel);
+  }
+
+  /** 접속자 목록의 지연(ms)·불안정 표시만 고친다 (방장이 2초마다 잰다) */
+  private updateLinks(panel: HTMLElement): void {
+    for (const el of panel.querySelectorAll<HTMLElement>('[data-link]')) {
+      const link = this.game.net.linkOf(Number(el.dataset.link));
+      const text = !link ? '' : link.unstable ? '⚠ 불안정' : link.ms == null ? '' : `${link.ms}ms`;
+      const level = !link ? '' : link.unstable || (link.ms ?? 0) >= 250 ? 'bad' : (link.ms ?? 0) >= 100 ? 'slow' : 'good';
+      if (el.textContent !== text) el.textContent = text;
+      if (el.dataset.level !== level) el.dataset.level = level;
+      el.title = link?.unstable ? '방장이 몇 초째 이 사람의 응답을 받지 못했어요' : '방장과 주고받는 데 걸리는 시간';
+    }
   }
 
   private updateCrisp(): void {

@@ -33,6 +33,12 @@ export const CHAT_MAX = 60;
 /** 커서를 보내는 최소 간격 (ms). 안 움직여도 이만큼마다 한 번은 보낸다 */
 const PRESENCE_MIN_MS = 66;
 const PRESENCE_IDLE_MS = 2000;
+/** 방장이 손님들의 지연을 재는 간격 (ms) */
+export const RTT_EVERY_MS = 2000;
+/** 방장: 손님이 이만큼 답이 없으면 불안정 (ms) */
+export const GUEST_SILENT_MS = 5000;
+/** 손님: 방장의 진행(frame)이 이만큼 끊기면 불안정 (ms). 가려진 방장 창도 0.25초마다 보낸다 */
+export const HOST_SILENT_MS = 3000;
 const NAME_KEY = 'automation-game/name';
 
 /** 플레이어마다 색 (커서·이름표·핑). 접속자 목록 순서대로 나눠 준다 */
@@ -81,6 +87,12 @@ interface Stamped {
   cmd: Command;
 }
 
+/** 접속자 한 명의 연결 상태. ms = 방장과의 왕복 시간 (아직 못 쟀으면 null), unstable = 답이 끊김 */
+export interface Link {
+  ms: number | null;
+  unstable: boolean;
+}
+
 /** 서버를 거쳐 오가는 메시지. from은 서버가 붙이고, to가 있으면 그 손님에게만 간다 */
 type Msg =
   // 서버 → 나
@@ -111,8 +123,12 @@ type Msg =
   | { type: 'speed'; from: number; speed: number }
   | { type: 'need-sync'; from: number }
   | { type: 'reply-ack'; from: number; seq: number }
+  | { type: 'rtt-pong'; from: number; t: number }
   // 방장 → 손님
   | { type: 'frame'; upTo: number; cmds: Stamped[]; hashes: [number, number][]; speed: number }
+  /** 지연 재기: 손님은 t를 그대로 돌려준다. rtt = 방장이 잰 손님별 [플레이어, ms, 불안정] */
+  | { type: 'rtt-ping'; t: number }
+  | { type: 'rtt'; links: [number, number | null, boolean][] }
   | { type: 'snapshot'; to?: number; snap: NetSnapshot; speed: number; replies?: [number, [number, PackedReply][]][] };
 
 /** 이 탭에서 방을 만들었는지·참가했는지. 새로고침·잠깐 끊김 뒤에 저절로 다시 열고 다시 들어가려고 (탭을 닫으면 잊는다) */
@@ -236,6 +252,8 @@ export class Session {
   asking = false;
   /** 방장: 허락을 기다리는 참가 신청 (먼저 온 순) */
   requests: { id: number; name: string }[] = [];
+  /** 방 안 손님들의 연결 상태 (방장이 재서 모두에게 알린다) */
+  links = new Map<number, Link>();
 
   private ws: WebSocket | null = null;
   private retryTimer = 0;
@@ -249,6 +267,9 @@ export class Session {
 
   // 방장
   private guests = new Set<number>();
+  /** 손님별 마지막 지연 답 시각 (performance.now) */
+  private lastPong = new Map<number, number>();
+  private rttAt = 0;
   private outbox: Stamped[] = [];
   private hashes: [number, number][] = [];
   /** 손님이 결과를 읽었다고 확인하기 전까지. 동기화가 프레임을 대체해도 응답은 남긴다. */
@@ -262,6 +283,8 @@ export class Session {
   private pending = new Map<number, (r: unknown) => void>();
   /** 이번 참가에서 방장 월드를 한 번이라도 받았는지 (처음 받을 때만 화면을 허브로 옮긴다) */
   private joined = false;
+  /** 방장에게서 마지막으로 진행을 받은 시각 (performance.now) */
+  private hostHeardAt = 0;
 
   private lastPresence = '';
   private presenceAt = 0;
@@ -436,6 +459,16 @@ export class Session {
     this.hooks.toast(`${this.nameOf(p)} 님을 내보냈어요`);
   }
 
+  /** 손님: 방장의 진행이 한동안 오지 않음 (방장 PC가 멈췄거나 네트워크가 끊기는 중) */
+  get hostSilent(): boolean {
+    return this.role === 'guest' && this.synced && performance.now() - this.hostHeardAt > HOST_SILENT_MS;
+  }
+
+  /** 방 안 누군가의 연결 상태. 방장 자신은 없다 */
+  linkOf(p: number): Link | null {
+    return this.links.get(p) ?? null;
+  }
+
   /** 방장 이름 */
   get hostName(): string {
     return this.nameOf(0);
@@ -486,6 +519,8 @@ export class Session {
     this.role = 'solo';
     this.asking = false;
     this.requests = [];
+    this.links.clear();
+    this.lastPong.clear();
     this.me = 0;
     this.synced = false;
     this.guests.clear();
@@ -616,6 +651,25 @@ export class Session {
     }
     if (steps >= MAX_STEPS) this.acc = 0;
     this.flush();
+    this.measureLinks();
+  }
+
+  /** 방장: 2초마다 손님들에게 지연을 묻고, 지금까지 잰 표를 모두에게 알린다 */
+  private measureLinks(): void {
+    if (this.role !== 'host' || !this.guests.size) return;
+    const now = performance.now();
+    if (now - this.rttAt < RTT_EVERY_MS) return;
+    this.rttAt = now;
+    let changed = false;
+    for (const p of this.guests) {
+      const unstable = now - (this.lastPong.get(p) ?? now) > GUEST_SILENT_MS;
+      const link = this.links.get(p) ?? { ms: null, unstable: false };
+      if (link.unstable !== unstable) changed = true;
+      this.links.set(p, { ...link, unstable });
+    }
+    this.send({ type: 'rtt-ping', t: now });
+    this.send({ type: 'rtt', links: [...this.links].map(([p, l]) => [p, l.ms, l.unstable]) });
+    if (changed) this.hooks.changed();
   }
 
   /** 방장: 월드를 통째로 바꿨을 때 (새 게임) 모든 손님에게 다시 보낸다 */
@@ -751,6 +805,7 @@ export class Session {
         return;
       case 'join':
         this.guests.add(m.id);
+        this.lastPong.set(m.id, performance.now());
         this.sendSnapshot(m.id);
         return;
       case 'leave':
@@ -762,6 +817,8 @@ export class Session {
         }
         this.replies.delete(m.id);
         this.guests.delete(m.id);
+        this.links.delete(m.id);
+        this.lastPong.delete(m.id);
         return;
       case 'presence':
         this.others.set(m.from, { s: m.s, t: performance.now() });
@@ -793,6 +850,22 @@ export class Session {
       case 'speed':
         if (this.role === 'host') this.hooks.setSpeed(m.speed);
         return;
+      case 'rtt-pong': {
+        if (this.role !== 'host' || !this.guests.has(m.from) || !Number.isFinite(m.t)) return;
+        const now = performance.now();
+        const was = this.links.get(m.from);
+        this.lastPong.set(m.from, now);
+        this.links.set(m.from, { ms: Math.max(0, Math.round(now - m.t)), unstable: false });
+        if (was?.unstable) this.hooks.changed();
+        return;
+      }
+      case 'rtt-ping':
+        if (this.role === 'guest') this.send({ type: 'rtt-pong', t: m.t });
+        return;
+      case 'rtt':
+        if (this.role !== 'guest' || !Array.isArray(m.links)) return;
+        this.links = new Map(m.links.map(([p, ms, unstable]) => [p, { ms, unstable }]));
+        return;
       case 'need-sync':
         if (this.role === 'host' && this.guests.has(m.from)) this.sendSnapshot(m.from);
         return;
@@ -801,6 +874,7 @@ export class Session {
         for (const c of m.cmds) this.inbox.push(c);
         for (const [t, h] of m.hashes) this.expected.set(t, h);
         this.hostTick = m.upTo;
+        this.hostHeardAt = performance.now();
         this.syncSpeed(m.speed);
         return;
       case 'snapshot': {
@@ -822,6 +896,7 @@ export class Session {
         this.synced = true;
         this.joined = true;
         this.borrowed = true;
+        this.hostHeardAt = performance.now();
         this.hooks.setWorld(w, first);
         this.syncSpeed(m.speed);
         if (first) this.hooks.toast(`${this.hostName}의 공장에 들어왔어요`);

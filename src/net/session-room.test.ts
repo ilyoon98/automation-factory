@@ -99,3 +99,59 @@ describe('손님: 허락 기다리기', () => {
     expect(hooks.toast).toHaveBeenLastCalledWith('방장이 나를 내보냈어요. 내 공장으로 돌아가요');
   });
 });
+
+describe('연결 표시', () => {
+  it('방장은 2초마다 지연을 묻고, 답으로 왕복 시간을 재어 표를 모두에게 알린다', () => {
+    let now = 1000;
+    vi.spyOn(performance, 'now').mockImplementation(() => now);
+    const { s, sent, recv } = session();
+    recv({ type: 'your-role', role: 'host' });
+    recv({ type: 'join', id: 3 });
+    now = 3500;
+    s.advance(0);
+    const ping = sent.find((m) => m.type === 'rtt-ping');
+    expect(ping).toEqual({ type: 'rtt-ping', t: 3500 });
+    now = 3542;
+    recv({ type: 'rtt-pong', from: 3, t: 3500 });
+    expect(s.linkOf(3)).toEqual({ ms: 42, unstable: false });
+    now = 5600;
+    s.advance(0);
+    expect(sent.filter((m) => m.type === 'rtt').at(-1)).toEqual({ type: 'rtt', links: [[3, 42, false]] });
+    vi.restoreAllMocks();
+  });
+
+  it('방장은 5초 넘게 답이 없는 손님을 불안정으로 표시하고, 답이 오면 푼다', () => {
+    let now = 1000;
+    vi.spyOn(performance, 'now').mockImplementation(() => now);
+    const { s, recv } = session();
+    recv({ type: 'your-role', role: 'host' });
+    recv({ type: 'join', id: 3 });
+    now = 7000;
+    s.advance(0);
+    expect(s.linkOf(3)?.unstable).toBe(true);
+    recv({ type: 'rtt-pong', from: 3, t: 6990 });
+    expect(s.linkOf(3)).toEqual({ ms: 10, unstable: false });
+    vi.restoreAllMocks();
+  });
+
+  it('손님은 지연 질문에 바로 답하고, 방장 표를 받아 보며, 방장 진행이 3초 끊기면 불안정이다', () => {
+    let now = 1000;
+    vi.spyOn(performance, 'now').mockImplementation(() => now);
+    const { s, sent, recv } = session();
+    recv({ type: 'room', open: true, players: [{ p: 0, name: '', host: true }, { p: 7, name: '', host: false }] });
+    s.joinRoom();
+    recv({ type: 'your-role', role: 'guest' });
+    const w = new World(10, 10); w.rules = 'regional-v1'; w.createHub(0, 0);
+    recv({ type: 'snapshot', snap: w.snapshot(), speed: 1 });
+    recv({ type: 'rtt-ping', t: 123 });
+    expect(sent.at(-1)).toEqual({ type: 'rtt-pong', t: 123 });
+    recv({ type: 'rtt', links: [[7, 55, false]] });
+    expect(s.linkOf(7)).toEqual({ ms: 55, unstable: false });
+    expect(s.hostSilent).toBe(false);
+    now = 4500;
+    expect(s.hostSilent).toBe(true);
+    recv({ type: 'frame', upTo: w.tickCount, cmds: [], hashes: [], speed: 1 });
+    expect(s.hostSilent).toBe(false);
+    vi.restoreAllMocks();
+  });
+});

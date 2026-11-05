@@ -15,6 +15,8 @@ export const TERRITORY_SIZE = 256;
 /** 광장 반경 (칸) */
 export const PLAZA_RADIUS = 30;
 export const TERRITORY_COUNT = 8;
+/** 처음 여는 산지 수 (자원마다 하나). 사람이 더 많으면 방장이 사람 수만큼 연다 */
+export const TERRITORY_START_OPEN = 4;
 /** 둘레 순서. 네 칸 건너면 같은 자원 (반대편) */
 const ORDER: ItemId[] = ['iron-ore', 'coal', 'copper-ore', 'stone'];
 /** 광맥 하나의 매장량 (돌은 끝이 없다) */
@@ -66,7 +68,9 @@ export function generateTerritoryWorld(seed: number, owner = 0): World {
       w.territory[w.idx(x, y)] = 1 + Math.min(TERRITORY_COUNT - 1, Math.floor((a / (Math.PI * 2)) * TERRITORY_COUNT));
     }
   }
-  w.territories = Array.from({ length: TERRITORY_COUNT }, (_, k) => ({ id: k + 1, item: ORDER[k % ORDER.length], owner, key: '' }));
+  w.territories = Array.from({ length: TERRITORY_COUNT }, (_, k) => ({
+    id: k + 1, item: ORDER[k % ORDER.length], owner: k < TERRITORY_START_OPEN ? owner : -1, key: '', open: k < TERRITORY_START_OPEN,
+  }));
 
   // 광장: 허브, 담수, 나무 (누구나 쓰는 것만 둔다. 광맥은 없다)
   w.createHub(c - 1, c - 1);

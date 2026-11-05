@@ -1081,16 +1081,20 @@ export class Renderer {
       const id = map[i];
       return id !== 0 && world.territories[id - 1]?.owner !== me;
     };
-    ctx.fillStyle = 'rgba(30, 18, 8, 0.22)';
-    for (let y = y0; y <= y1; y++) {
-      let run = -1;
-      for (let x = x0; x <= x1 + 1; x++) {
-        const dark = x <= x1 && foreign(world.idx(x, y));
-        if (dark && run < 0) run = x;
-        if (!dark && run >= 0) {
-          const [sx, sy] = this.cam.worldToScreen(run, y);
-          ctx.fillRect(sx, sy, (x - run) * z, z);
-          run = -1;
+    const closed = (i: number) => map[i] !== 0 && world.territories[map[i] - 1]?.open === false;
+    // 남의 땅은 조금, 아직 닫힌 산지는 더 어둡게
+    for (const [shade, test] of [['rgba(30, 18, 8, 0.22)', foreign], ['rgba(20, 12, 6, 0.3)', closed]] as const) {
+      ctx.fillStyle = shade;
+      for (let y = y0; y <= y1; y++) {
+        let run = -1;
+        for (let x = x0; x <= x1 + 1; x++) {
+          const dark = x <= x1 && test(world.idx(x, y));
+          if (dark && run < 0) run = x;
+          if (!dark && run >= 0) {
+            const [sx, sy] = this.cam.worldToScreen(run, y);
+            ctx.fillRect(sx, sy, (x - run) * z, z);
+            run = -1;
+          }
         }
       }
     }
@@ -1133,7 +1137,7 @@ export class Renderer {
       if (!c) continue;
       const [sx, sy] = this.cam.worldToScreen(c[0], c[1]);
       if (sx < -80 || sy < -20 || sx > this.cam.viewW + 80 || sy > this.cam.viewH + 20) continue;
-      const whose = t.owner === me ? ' · 내 땅' : t.owner < 0 ? ' · 주인 없음' : this.ownerName ? ` · ${this.ownerName(t.owner)}` : '';
+      const whose = !t.open ? ' · 잠김' : t.owner === me ? ' · 내 땅' : t.owner < 0 ? ' · 주인 없음' : this.ownerName ? ` · ${this.ownerName(t.owner)}` : '';
       this.text(`${ITEMS[t.item].name.replace(/광석$/, '')} 산지${whose}`, sx, sy, t.owner === me ? '#fbf3df' : '#e9d9b4', size);
     }
   }

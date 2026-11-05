@@ -1,4 +1,5 @@
 import type { ItemId } from '../data/items';
+import { evaluateTerritoryTasks } from './territory-goals';
 import type { World } from './world';
 
 /**
@@ -342,6 +343,8 @@ export function evaluateGoals(w: World): string[] {
     if (g.id === 'MG36') w.stats.completion = { time: w.time, sites: productionZones(w).length, delivered: w.stats.projectDelivered };
     got.push(g.id);
   }
+  // 산지 협동: 지역 과제 대신 산지 과제 (이루면 닫힌 산지가 열린다)
+  if (w.territory) return [...got, ...evaluateTerritoryTasks(w)];
   // 지역 과제: 지금 지역까지의 과제만 판정한다. 한 지역의 과제를 REGION_NEED개 이루면 다음 땅이 열린다
   for (let i = 0; i < REGION_STAGES.length && i <= currentStage(w); i++) {
     const s = REGION_STAGES[i];

@@ -5,6 +5,8 @@ import { AWAY_GRACE_MS, TerritoryHost } from './territory-host';
 
 function setup() {
   const w = generateTerritoryWorld(5);
+  // 여덟 곳을 모두 연 지도 (산지 과제로 다 열린 뒤)
+  for (const t of w.territories) { t.open = true; t.owner = 0; }
   let now = 0;
   const sent: Command[] = [];
   // 방장 명령은 방장 번호(0)로 바로 적용된다

@@ -4,59 +4,88 @@ import type { Territory } from './world';
 /**
  * 산지 나누기 (docs/멀티-산지협동-상세기획.md §6).
  *
- * 산지는 둘레를 따라 1~8번이고 철·석탄·구리·돌이 번갈아 돈다 (1 철, 2 석탄, 3 구리, 4 돌, 5 철 …).
- * 인원마다 나누는 묶음은 표로 정해 둔다: 혼자서 네 자원을 다 갖지 않게, 점수 합이 비슷하게,
- * 둘 이상 갖는 사람은 서로 다른 자원을 이웃한 땅으로. 사람이 바뀌면 지금 주인과 가장 많이 겹치게 짝지어
- * 넘어가는 산지를 줄인다.
+ * 열린 산지만 나눈다. 산지는 많아야 8곳이라 열린 산지를 사람 수만큼 묶는 모든 방법(벨 수, 8곳이면 4,140가지)을 보고
+ * 가장 나은 것을 고른다: 둘 이상이면 한 사람이 네 자원을 다 갖지 않게, 점수 합이 비슷하게,
+ * 같은 사람의 산지는 서로 다른 자원·이웃한 땅으로. 같은 점수면 지금 주인이 가장 많이 남는 짝을 고른다.
  */
 
 /** 산지 점수: 수요가 많은 자원일수록 높다. 점수가 낮은 자원을 맡은 사람은 산지를 더 받는다 */
 export const TERRITORY_SCORE: Partial<Record<ItemId, number>> = { coal: 3, 'iron-ore': 3, 'copper-ore': 2, stone: 2 };
 
-/** 인원수(1~8) → 사람마다 가질 산지 번호 묶음 */
-const PLANS: number[][][] = [
-  [],
-  [[1, 2, 3, 4, 5, 6, 7, 8]],
-  // 철·구리 / 석탄·돌: 서로 없으면 굴러가지 않는다
-  [[1, 3, 5, 7], [2, 4, 6, 8]],
-  [[1, 5], [2, 6], [3, 4, 7, 8]],
-  [[1, 5], [2, 6], [3, 7], [4, 8]],
-  [[2], [6], [8, 1], [4, 5], [3, 7]],
-  [[1], [2], [5], [6], [3, 4], [7, 8]],
-  [[1], [2], [5], [6], [7], [8], [3, 4]],
-  [[1], [2], [3], [4], [5], [6], [7], [8]],
-];
-
-/** 산지 수(8)를 넘는 사람은 광장에만 짓는다 */
-export const MAX_TERRITORY_PLAYERS = PLANS.length - 1;
+/** 둘레를 도는 산지 수 (1번과 8번이 이웃) */
+const RING = 8;
 
 /**
- * players(먼저 온 순, 방장 먼저)에게 산지를 나눈 결과: 산지 순서대로 주인 플레이어 번호 (-1 = 없음).
- * 같은 묶음 모양이라도 반대편(번호 +4)으로 돌려 보고, 지금 주인이 그대로 남는 산지가 가장 많은 짝을 고른다
+ * players(먼저 온 순, 방장 먼저)에게 열린 산지를 나눈 결과: 산지 순서대로 주인 플레이어 번호 (-1 = 없음·닫힘).
+ * 열린 산지보다 사람이 많으면 넘는 사람은 산지가 없다 (광장에만 짓는다)
  */
 export function planOwners(territories: Territory[], players: number[]): number[] {
-  const n = Math.min(players.length, MAX_TERRITORY_PLAYERS);
+  const open = territories.filter((t) => t.open);
+  const n = Math.min(players.length, open.length);
   if (!n) return territories.map(() => -1);
   const who = players.slice(0, n);
-  const current = new Map(territories.map((t) => [t.id, t.owner]));
+  let bestCost = Infinity;
   let best: number[] | null = null;
   let bestKeep = -1;
-  for (const shift of [0, 4]) {
-    const groups = PLANS[n].map((g) => g.map((id) => ((id - 1 + shift) % 8) + 1));
-    // 묶음 → 사람 짝짓기: 사람은 많아야 8명이라 모든 순서를 본다. 같으면 먼저 온 사람이 앞 묶음
+  for (const blocks of partitions(open.length, n)) {
+    const groups = blocks.map((b) => b.map((i) => open[i]));
+    const c = cost(groups, n);
+    if (c > bestCost) continue;
+    if (c < bestCost) [bestCost, bestKeep] = [c, -1];
+    // 묶음 → 사람 짝짓기: 지금 주인이 그대로 남는 산지가 가장 많은 순서 (같으면 먼저 온 사람이 앞 묶음)
     for (const order of permutations(n)) {
       let keep = 0;
       order.forEach((g, k) => {
-        for (const id of groups[g]) if (current.get(id) === who[k]) keep++;
+        for (const t of groups[g]) if (t.owner === who[k]) keep++;
       });
       if (keep <= bestKeep) continue;
       bestKeep = keep;
       const owner = new Map<number, number>();
-      order.forEach((g, k) => groups[g].forEach((id) => owner.set(id, who[k])));
+      order.forEach((g, k) => groups[g].forEach((t) => owner.set(t.id, who[k])));
       best = territories.map((t) => owner.get(t.id) ?? -1);
     }
   }
   return best!;
+}
+
+/** 나누기의 나쁜 정도 (작을수록 좋다) */
+function cost(groups: Territory[][], n: number): number {
+  const scores = groups.map((g) => g.reduce((a, t) => a + (TERRITORY_SCORE[t.item] ?? 0), 0));
+  let c = (Math.max(...scores) - Math.min(...scores)) * 10;
+  for (const g of groups) {
+    const kinds = new Set(g.map((t) => t.item)).size;
+    // 혼자서 네 자원을 다 가지면 교환할 일이 없다
+    if (n >= 2 && kinds >= 4) c += 1000;
+    // 같은 자원을 여러 곳 갖기보다 서로 다른 자원을
+    c += (g.length - kinds) * 3;
+    // 같은 사람 땅은 붙어 있을수록 좋다
+    for (const a of g) for (const b of g) if (a.id < b.id && (b.id - a.id === 1 || (a.id === 1 && b.id === RING))) c -= 1;
+  }
+  // 한 자원을 여러 사람이 나눠 가질수록 서로 주고받을 일이 줄어든다
+  const holders = new Map<ItemId, number>();
+  for (const g of groups) for (const item of new Set(g.map((t) => t.item))) holders.set(item, (holders.get(item) ?? 0) + 1);
+  for (const k of holders.values()) c += (k - 1) * 5;
+  return c;
+}
+
+/** 0..m-1을 정확히 n묶음으로 나누는 모든 방법 (묶음 순서는 처음 나온 원소 순) */
+function* partitions(m: number, n: number): Generator<number[][]> {
+  const label = new Array<number>(m).fill(0);
+  function* go(i: number, used: number): Generator<number[][]> {
+    if (m - i < n - used) return;
+    if (i === m) {
+      if (used !== n) return;
+      const blocks: number[][] = Array.from({ length: n }, () => []);
+      label.forEach((l, k) => blocks[l].push(k));
+      yield blocks;
+      return;
+    }
+    for (let l = 0; l <= Math.min(used, n - 1); l++) {
+      label[i] = l;
+      yield* go(i + 1, Math.max(used, l + 1));
+    }
+  }
+  yield* go(0, 0);
 }
 
 /** 0..n-1의 모든 순서 (사전 순) */

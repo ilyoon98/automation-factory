@@ -17,6 +17,8 @@ export class TerritoryHost {
   private guests: { p: number; key: string }[] = [];
   /** 끊긴 손님: 접속 키 → 끊긴 시각 */
   private away = new Map<string, number>();
+  /** 마지막으로 본 열린 산지 (산지 과제로 새로 열리면 다시 나눈다) */
+  private openSeen = '';
 
   constructor(
     private getWorld: () => World,
@@ -66,7 +68,9 @@ export class TerritoryHost {
       this.away.delete(key);
       expired = true;
     }
-    if (expired) this.rebalance();
+    // 산지 과제를 이뤄 새 산지가 열렸으면 누군가에게 붙인다
+    const open = this.getWorld().territories.map((t) => (t.open ? 1 : 0)).join('');
+    if (expired || open !== this.openSeen) this.rebalance();
   }
 
   /** 지금 있는 사람과 기다리는 사람으로 다시 나눠, 바뀌면 명령을 보낸다 */
@@ -79,6 +83,12 @@ export class TerritoryHost {
     // 기다리는 사람은 예전 번호 그대로 자리를 지킨다
     const waiting = [...new Set(current.filter((t) => t.key && this.away.has(t.key)).map((t) => t.owner))];
     const players = [0, ...this.guests.map((g) => g.p), ...waiting.filter((p) => p !== 0 && !this.guests.some((g) => g.p === p))];
+    // 사람이 열린 산지보다 많으면 사람 수만큼 연다 (모두 자기 땅을 하나는 갖게)
+    let opened = false;
+    for (const t of current) {
+      if (current.filter((x) => x.open).length >= players.length) break;
+      if (!t.open) [t.open, opened] = [true, true];
+    }
     const owners = planOwners(current, players);
     const keyOf = (p: number) => (p <= 0 ? '' : (this.guests.find((g) => g.p === p)?.key ?? current.find((t) => t.owner === p)?.key ?? ''));
     const keys = owners.map(keyOf);
@@ -91,7 +101,8 @@ export class TerritoryHost {
       else if (!(key && this.away.has(key)) && !present.has(owner)) [owner, key] = [0, ''];
       if (owner !== v.owner || key !== v.ownerKey) trucks.push([v.id, owner, key]);
     }
-    if (!trucks.length && w.territories.every((t, k) => t.owner === owners[k] && t.key === keys[k])) return;
-    this.exec({ t: 'territories', owners, keys, ...(trucks.length ? { trucks } : {}) });
+    this.openSeen = current.map((t) => (t.open ? 1 : 0)).join('');
+    if (!trucks.length && !opened && w.territories.every((t, k) => t.owner === owners[k] && t.key === keys[k])) return;
+    this.exec({ t: 'territories', owners, keys, ...(trucks.length ? { trucks } : {}), ...(opened ? { open: current.map((t) => t.open) } : {}) });
   }
 }

@@ -52,6 +52,7 @@ import { blueprintCode, blueprintPreview, defaultBlueprintName, saveBlueprint } 
 import { copyText } from './clipboard';
 import { GUIDE, findTarget, type GuideFocus } from './guide';
 import { goalFocus } from './goal-focus';
+import { TERRITORY_TASKS, currentTerritoryTask } from '../sim/territory-goals';
 import { MAIN_GOALS, PROJECT_GOAL, REGION_NEED, REGION_STAGES, currentGoal, currentStage, goalNeedsStage, stageCleared, type GoalHint } from '../sim/goals';
 import { ACH_BY_ID, Q60_ITEMS, achProgress, activeAchievements, sustainedSecs, type AchDef, type AchKind } from '../sim/achievements';
 import { Codex, depositName, type DepositId } from './codex';
@@ -1666,7 +1667,7 @@ export class UI {
       <div class="now"><small class="muted">${g.chapter} · ${g.id}</small><b>${g.title}</b><p>${withBuildingIcons(g.hint)}</p></div>
       <ul class="steps">${checks}</ul>
       ${need ? `<p class="reward">${mapIcon()} 다음 지역이 필요해요: 아래 "${need.name}" 지역 과제 ${need.tasks.filter((t) => w.challenges.has(t.id)).length}/${REGION_NEED}</p>` : ''}
-      ${this.regionHtml(w)}${this.trackedAchHtml(w)}`;
+      ${this.regionHtml(w)}${this.territoryTaskHtml(w)}${this.trackedAchHtml(w)}`;
     // 선택 도전 목록을 펼친 동안 다시 그리면 목록이 바로 닫힌다: 고르는 중이면 그대로 둔다
     if (html === this.guideHtml || $('guide').contains(document.activeElement) && document.activeElement instanceof HTMLSelectElement) return;
     this.guideHtml = html;
@@ -1703,6 +1704,22 @@ export class UI {
     return `<div class="row"><span>지역 과제 · ${s.name} <small class="muted">셋 중 ${REGION_NEED}개</small></span><b>${got}/${REGION_NEED}</b></div>
       <ul class="steps chals">${rows}</ul>
       <p class="reward">보상: ${mapIcon()} ${siteLabels(s.opens).join(', ')}</p>`;
+  }
+
+  /** 산지 협동: 지금 할 산지 과제와 진행 (이루면 닫힌 산지가 하나 열린다) */
+  private territoryTaskHtml(w: World): string {
+    if (!w.territory) return '';
+    const open = w.territories.filter((t) => t.open).length;
+    const t = currentTerritoryTask(w);
+    const done = TERRITORY_TASKS.filter((x) => w.challenges.has(x.id)).length;
+    const head = `<div class="row"><span>산지 과제 <small class="muted">열린 산지 ${open}/${w.territories.length}</small></span><b>${done}/${TERRITORY_TASKS.length}</b></div>`;
+    if (!t) return `${head}<p class="muted">산지 과제를 모두 이뤘어요.</p>`;
+    const rows = t
+      .checks(w)
+      .map(([label, have, need, hint]) => `<li class="sub ${have >= need ? 'done' : ''}"><span class="mark">${have >= need ? '✓' : '·'}</span>${this.checkIcon(w, hint)}${label} <b>${Math.min(have, need).toLocaleString()}/${need.toLocaleString()}</b></li>`)
+      .join('');
+    const reward = open < w.territories.length ? `<p class="reward">보상: ${mapIcon()} 닫힌 산지 1곳이 열려요</p>` : '';
+    return `${head}<ul class="steps chals"><li class="chal"><span class="mark">▾</span>${t.title}</li><li class="sub muted">${t.hint}</li>${rows}</ul>${reward}`;
   }
 
   private trackedChallenge(): string {

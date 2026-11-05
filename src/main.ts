@@ -11,6 +11,7 @@ import { SaveSlots } from './sim/save-slots';
 import { generateRegionalWorld } from './sim/regional-map';
 import { generateTerritoryWorld, territoryName } from './sim/territory-map';
 import { TerritoryHost } from './net/territory-host';
+import { mapIcon } from './ui/icons';
 import { Chat } from './ui/chat';
 import { uiZoom } from './ui/crisp';
 import { Minimap } from './ui/minimap';
@@ -341,12 +342,16 @@ function replaceWorld(w: World): void {
 const territoryHost = new TerritoryHost(() => world, (cmd) => game.exec(cmd));
 
 /** 산지 주인이 바뀌면 알린다: 내 땅이 되거나 넘어간 것을 먼저 */
-let ownersSeen: { world: World | null; owners: number[] } = { world: null, owners: [] };
+let ownersSeen: { world: World | null; owners: number[]; open: boolean[] } = { world: null, owners: [], open: [] };
 function watchTerritories(): void {
   if (!world.territory) return;
   const owners = world.territories.map((t) => t.owner);
+  const open = world.territories.map((t) => t.open);
   const before = ownersSeen;
-  ownersSeen = { world, owners };
+  ownersSeen = { world, owners, open };
+  // 산지 과제를 이뤄(또는 사람이 늘어) 새 산지가 열렸으면 알린다
+  const opened = before.world === world ? world.territories.filter((t, k) => t.open && !before.open[k]) : [];
+  if (opened.length) ui.notice(`${mapIcon()} 새 산지가 열렸어요`, opened.map((t) => territoryName(world, t.id)).join(', '));
   const me = session.me;
   if (before.world !== world) {
     // 방장 공장에 들어오면 이미 나눠져 있다: 내 산지를 한 번 알려 준다

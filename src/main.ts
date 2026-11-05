@@ -275,6 +275,10 @@ const game: GameApi = {
   get hasBackup() {
     return hasBackup;
   },
+  home() {
+    game.save();
+    openStart();
+  },
 };
 
 /** 새 게임·파일 불러오기·되돌리기로 공장이 통째로 바뀌기 바로 전의 공장 (한 칸만) */
@@ -444,10 +448,15 @@ document.addEventListener('visibilitychange', () => {
   if (!document.hidden) ui.update();
 });
 
-/** 시작화면에 보일 지금 상태. 저장 여부는 켤 때 불러온 공장 기준 (새 공장을 고르면 그때부터 저장된다) */
+/** 처음 켤 때의 시작화면을 지났는지. 지난 뒤에 다시 열면 지금 공장을 이어 하는 것이다 */
+let started = false;
+/** 시작화면이 멈춘 공장인지 (원래 멈춰 있던 공장은 닫을 때 그대로 둔다) */
+let pausedByStart = false;
+
+/** 시작화면에 보일 지금 상태. 처음에는 켤 때 불러온 저장 기준, 그 뒤로는 지금 공장 */
 function startState(): StartState {
   return {
-    hasSave: loaded !== null,
+    hasSave: started || loaded !== null,
     day: Math.floor(world.time / DAY_SEC) + 1,
     sites: world.zones.length,
     netReady: ui.togetherReady,
@@ -456,14 +465,30 @@ function startState(): StartState {
   };
 }
 
-/** 시작화면을 닫으면 멈춰 둔 공장을 원래 속도로 돌린다 */
+/** 시작화면을 닫으면 시작화면이 멈춘 공장만 원래 속도로 돌린다 */
 function leaveStart(): void {
-  if (session.role === 'solo' && game.speed === 0) applySpeed(lastSpeed);
+  if (pausedByStart && session.role === 'solo') applySpeed(lastSpeed);
+  pausedByStart = false;
+  started = true;
+}
+
+/** 시작화면을 연다. 같이 하는 중에는 다른 사람도 멈추므로 혼자 할 때만 멈춘다 */
+function openStart(): void {
+  if (session.role === 'solo' && game.speed > 0) {
+    game.speed = 0;
+    pausedByStart = true;
+  }
+  start.open(startState());
+  // 연결·방 목록이 늦게 오므로 열려 있는 동안 가끔 다시 그린다
+  const refresh = setInterval(() => (start.isOpen ? start.update(startState()) : clearInterval(refresh)), 500);
+  ui.update();
 }
 
 const start = new StartScreen(document.getElementById('start') as HTMLElement, {
   play() {
+    const first = !started;
     leaveStart();
+    if (!first) return;
     if (!loaded) ui.showHelp();
     else if (world.loadNote) ui.toast(world.loadNote, 9000);
   },
@@ -482,12 +507,8 @@ const start = new StartScreen(document.getElementById('start') as HTMLElement, {
 if (session.rejoining) {
   if (!loaded) ui.showHelp();
   else if (world.loadNote) ui.toast(world.loadNote, 9000);
-} else {
-  game.speed = 0;
-  start.open(startState());
-  // 연결·방 목록이 늦게 오므로 열려 있는 동안 가끔 다시 그린다
-  const refresh = setInterval(() => (start.isOpen ? start.update(startState()) : clearInterval(refresh)), 500);
-}
+  started = true;
+} else openStart();
 ui.update();
 
 // 개발 중 콘솔에서 상태를 살펴볼 수 있게

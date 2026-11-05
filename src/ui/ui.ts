@@ -86,6 +86,8 @@ export interface GameApi {
   /** 마지막 저장이 됐는지(ok), 그 뒤로 내가 공장을 바꿨는지(dirty) */
   readonly saveState: { ok: boolean; dirty: boolean };
   newGame(): void;
+  /** 저장하고 시작화면으로 (혼자 할 때는 공장을 멈춘다) */
+  home(): void;
   /** 지금 공장을 파일로 내려받는다 (다른 PC로 옮기거나 백업) */
   exportSave(): void;
   /** 파일 내용으로 공장을 바꾼다. 안 되면 이유, 되면 null */
@@ -317,7 +319,7 @@ export class UI {
     $('btn-menu').addEventListener('click', () => this.topbar.toggle('menu'));
     // 메뉴 안 항목을 고르면 메뉴는 닫는다 (소리 켜기·끄기는 결과를 보도록 남긴다)
     $('menu-pop').addEventListener('click', (e) => {
-      if ((e.target as HTMLElement).closest('#btn-new, #btn-help')) this.topbar.close(false);
+      if ((e.target as HTMLElement).closest('#btn-home, #btn-new, #btn-help')) this.topbar.close(false);
     });
     $('btn-research').addEventListener('click', () => this.toggleModal('research'));
     $('btn-stats').addEventListener('click', () => this.toggleModal('stats'));
@@ -443,6 +445,10 @@ export class UI {
     onUiZoom(() => this.updateCrisp());
     this.updateCrisp();
     $('btn-new').addEventListener('click', () => ($('newgame').hidden = false));
+    $('btn-home').addEventListener('click', () => {
+      this.closeWindows();
+      game.home();
+    });
     $('newgame').addEventListener('click', (e) => {
       const rules = (e.target as HTMLElement).closest<HTMLElement>('[data-rules]')?.dataset.rules;
       if (!rules || !confirm('지금 공장을 버리고 새 게임을 시작할까요?')) return;

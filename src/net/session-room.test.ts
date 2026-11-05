@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { World } from '../sim/world';
-import { Session } from './session';
+import { DEFAULT_ROOM_PORT, Session, parseRoomAddress } from './session';
 
 afterEach(() => vi.unstubAllGlobals());
 
@@ -153,5 +153,26 @@ describe('연결 표시', () => {
     recv({ type: 'frame', upTo: w.tickCount, cmds: [], hashes: [], speed: 1 });
     expect(s.hostSilent).toBe(false);
     vi.restoreAllMocks();
+  });
+});
+
+describe('주소로 참가', () => {
+  it('초대 주소·호스트:포트·호스트만 모두 서버 주소로 바꾸고, 엉뚱한 글은 거른다', () => {
+    expect(parseRoomAddress('  http://25.12.34.56:47820/?join ')).toBe('25.12.34.56:47820');
+    expect(parseRoomAddress('100.64.1.2:47821')).toBe('100.64.1.2:47821');
+    expect(parseRoomAddress('25.12.34.56')).toBe(`25.12.34.56:${DEFAULT_ROOM_PORT}`);
+    expect(parseRoomAddress('my-pc.tail1234.ts.net')).toBe(`my-pc.tail1234.ts.net:${DEFAULT_ROOM_PORT}`);
+    for (const bad of ['', '   ', 'ftp://1.2.3.4', 'http://a:b@1.2.3.4', '1.2.3.4:99999', '방장 PC']) expect(parseRoomAddress(bad)).toBeNull();
+  });
+
+  it('그 주소의 서버로 옮겨 붙어 참가하려 하고, 방 안이거나 주소가 틀리면 이유를 돌려준다', () => {
+    const { s } = session();
+    expect(s.joinAddress('아무 말')).toMatch(/알아볼 수 없어요/);
+    expect(s.joinAddress('25.12.34.56')).toBeNull();
+    expect(s.server).toBe(`25.12.34.56:${DEFAULT_ROOM_PORT}`);
+    expect(s.waitingForHost).toBe(true);
+    const other = session();
+    other.recv({ type: 'your-role', role: 'host' });
+    expect(other.s.joinAddress('25.12.34.56')).toMatch(/나와 주세요/);
   });
 });

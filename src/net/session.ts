@@ -177,6 +177,29 @@ export function compareVersions(a: string, b: string): number {
   return a === b ? 0 : a ? 1 : -1;
 }
 
+/** exe 게임 서버의 기본 포트 (electron/main.mjs의 GAME_PORT). 주소에 포트가 없으면 이것으로 */
+export const DEFAULT_ROOM_PORT = 47820;
+
+/**
+ * 친구가 보낸 방 주소를 서버 주소(호스트:포트)로. 초대 주소(http://25.1.2.3:47820/?join), 호스트:포트, 호스트만 모두 받는다.
+ * 알아볼 수 없으면 null
+ */
+export function parseRoomAddress(text: string): string | null {
+  const raw = text.trim();
+  if (!raw) return null;
+  let url: URL;
+  try {
+    url = new URL(/^[a-z]+:\/\//i.test(raw) ? raw : `http://${raw}`);
+  } catch {
+    return null;
+  }
+  if (url.protocol !== 'http:' || url.username || url.password) return null;
+  const host = url.hostname;
+  if (!/^[a-z0-9.-]+$/i.test(host) && !/^\[[0-9a-f:]+\]$/i.test(host)) return null;
+  const port = url.port ? Number(url.port) : DEFAULT_ROOM_PORT;
+  return `${host}:${port}`;
+}
+
 /** 참가가 막혔을 때 보여 줄 말 */
 export function versionMismatchText(reason: 'version' | 'build', host: string, me: string): string {
   if (reason === 'build') return `방장과 게임 파일이 달라요 (둘 다 ${me}이지만 따로 빌드한 파일). 같은 파일로 켜 주세요`;
@@ -403,6 +426,19 @@ export class Session {
     }
     this.setIntent('guest');
     this.switchServer(`${r.ip}:${r.port}`);
+  }
+
+  /**
+   * 주소로 참가: 방 목록에 뜨지 않는 방(VPN·다른 네트워크)에 그 PC의 서버로 옮겨 붙어 신청한다.
+   * 붙지 못하거나 버전이 다르거나 거절되면 내 서버로 돌아온다. 알아볼 수 없는 주소면 이유를 돌려준다
+   */
+  joinAddress(text: string): string | null {
+    const server = parseRoomAddress(text);
+    if (!server) return '주소를 알아볼 수 없어요. 방장 방 창의 주소(예: 25.12.34.56:47820)를 그대로 붙여 넣어 주세요';
+    if (this.role !== 'solo' || this.borrowed || this.intent) return '지금은 다른 방에 들어갈 수 없어요. 방에서 먼저 나와 주세요';
+    this.setIntent('guest');
+    this.switchServer(server);
+    return null;
   }
 
   /** 방장이면 방 닫기 (손님은 모두 각자 공장으로), 손님이면 나가기 */

@@ -764,6 +764,7 @@ export class UI {
       if (act === 'create') net.createRoom();
       if (act === 'join') net.joinRoom();
       if (act === 'join-lan' && t.dataset.room) net.joinLan(t.dataset.room);
+      if (act === 'join-addr') this.joinAddress();
       if (act === 'solo') this.topbar.close(true);
       if (act === 'leave' && (net.role !== 'host' || confirm('방을 닫을까요? 손님들은 각자 자기 공장으로 돌아가요.'))) net.leaveRoom();
       if (act === 'copy') {
@@ -773,10 +774,21 @@ export class UI {
       }
       if (act === 'select') (t as HTMLInputElement).select();
     });
+    $('players').addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && (e.target as HTMLElement).dataset.act === 'join-addr-input') this.joinAddress();
+    });
     $('players').addEventListener('change', (e) => {
       const el = e.target as HTMLInputElement;
       if (el.dataset.act === 'rename') game.net.rename(el.value);
     });
+  }
+
+  /** 방 창의 주소로 참가 */
+  private joinAddress(): void {
+    const input = $('players').querySelector<HTMLInputElement>('[data-act="join-addr-input"]');
+    const err = this.game.net.joinAddress(input?.value ?? '');
+    this.toast(err ?? '방장 PC에 붙는 중이에요. 붙으면 참가를 신청해요', 3500);
+    this.update();
   }
 
   /** 시작화면의 같이 하기: 위쪽 함께 하기 창을 연다 */
@@ -917,6 +929,10 @@ export class UI {
       .join('');
     const lan = `<label class="hint">같은 와이파이에서 열린 방</label>
       ${lanList || '<p class="hint">아직 없어요. 다른 PC에서 방을 만들면 여기에 저절로 떠요.</p>'}`;
+    // 방 목록에 뜨지 않는 방 (VPN·다른 네트워크): 방장이 보낸 주소로 들어간다
+    const byAddress = `<label class="hint">주소로 참가 (목록에 안 뜨는 방 · VPN)</label>
+      <div class="invite"><input data-act="join-addr-input" spellcheck="false" placeholder="예: 25.12.34.56:47820" aria-label="방장 주소" />
+        <button class="primary" data-act="join-addr">참가</button></div>`;
     let html: string;
     if (state === 'host') {
       html = net.desktop
@@ -949,21 +965,31 @@ export class UI {
             ? `<div class="warn">방장 버전 ${escapeHtml(net.roomVersion || '옛 버전')}, 내 버전 ${VERSION}. 버전이 같아야 같이 할 수 있어요</div>`
             : '<button class="primary wide" data-act="join">참가하기</button>'
         }
-        <p class="hint">참가하면 방장의 공장에서 같이 지어요. 내 공장은 저장된 채로 남아 있다가, 나오면 돌아와요.</p>`;
+        <p class="hint">참가하면 방장의 공장에서 같이 지어요. 내 공장은 저장된 채로 남아 있다가, 나오면 돌아와요.</p>${byAddress}`;
     } else if (net.desktop) {
       html = `<h3>👥 같이 하기</h3>${lan}
         <p class="hint">참가하면 방장의 공장에서 같이 지어요. 내 공장은 저장된 채로 남아 있다가, 나오면 돌아와요.
           방을 만들면 지금 내 공장에 다른 사람들이 들어와요. 허브 재고와 연구는 모두 함께 써요.</p>
         ${name}<button class="primary wide" data-act="create">방 만들기</button>
+        ${byAddress}
         <button class="wide" data-act="solo">혼자 하기</button>
         ${net.reachable ? '' : invite}`;
     } else {
       html = `<h3>👥 같이 하기</h3>
         <p class="hint">방을 만들면 지금 내 공장에 다른 사람들이 들어와 같이 지어요. 허브 재고와 연구는 모두 함께 써요.</p>
         ${name}<button class="primary wide" data-act="create">방 만들기</button>
+        ${byAddress}
         ${net.reachable ? '' : invite}`;
     }
+    // 방 목록이 바뀌어 다시 그려도 쓰고 있던 주소는 남긴다
+    const typed = panel.querySelector<HTMLInputElement>('[data-act="join-addr-input"]');
+    const typing = typed && document.activeElement === typed;
     panel.innerHTML = `${html}<div class="hint">F 또는 Alt + 클릭: 핑 찍기 · 게임 버전 ${VERSION}</div>`;
+    const field = panel.querySelector<HTMLInputElement>('[data-act="join-addr-input"]');
+    if (typed && field) {
+      field.value = typed.value;
+      if (typing) field.focus();
+    }
     this.updateLinks(panel);
   }
 

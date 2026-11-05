@@ -392,11 +392,6 @@ export class Session {
     return this.server !== null && this.waitingForHost && !this.borrowed;
   }
 
-  /** 새로고침 전에 방장·손님이었어서 저절로 다시 열거나 들어갈 참인지 */
-  get rejoining(): boolean {
-    return this.intent !== null;
-  }
-
   /** 방장 이름 */
   get hostName(): string {
     return this.nameOf(0);

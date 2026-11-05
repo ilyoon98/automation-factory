@@ -269,8 +269,6 @@ export class UI {
   private oreCycle = { id: 0, n: 0 };
   /** 접속자 목록을 마지막으로 그린 상태 */
   private playersKey = '';
-  /** exe를 켜면 방 창을 먼저 띄운다 (같은 와이파이의 방 목록 · 방 만들기 · 혼자 하기). 서버에 붙으면 한 번 */
-  private roomsOnStart: boolean;
   /** 통계 창을 마지막으로 그린 시각 (1초마다만 다시 그려서 숫자가 덜 흔들리고 클릭이 씹히지 않게) */
   private statsAt = 0;
   /** 허브 재고 기록 (통계 창 그래프용). 게임 시간 STOCK_SAMPLE_SEC초마다, 최근 STOCK_SAMPLES개. 화면 쪽에만 둔다 */
@@ -279,7 +277,6 @@ export class UI {
   private histNext = 0;
 
   constructor(private game: GameApi) {
-    this.roomsOnStart = game.net.desktop;
     this.toolbar = new Toolbar(game.input);
     this.toolbar.onLockedClick = (t) => this.openResearchFor(t);
     this.codex = new Codex(
@@ -783,11 +780,6 @@ export class UI {
     const off = offline(net);
     el.disabled = off;
     if (off && this.topbar.isOpen('players')) this.topbar.close(false);
-    if (this.roomsOnStart && net.connected) {
-      this.roomsOnStart = false;
-      // 새로고침 전에 방장·손님이었으면 저절로 다시 들어가므로 묻지 않는다
-      if (net.role === 'solo' && !net.rejoining) this.topbar.open('players');
-    }
     const chat = $<HTMLButtonElement>('btn-chat');
     const together = net.role !== 'solo';
     chat.disabled = !together;

@@ -154,7 +154,7 @@ const REGIONAL_ITEM_GROUPS: { name: string; items: ItemId[] }[] = [
     name: '산업 소재',
     items: ['tin-plate', 'bronze', 'rubber', 'insulated-wire', 'plastic', 'aluminum-plate', 'hardened-rubber', 'sulfuric-acid', 'lithium', 'lubricant', 'fuel', 'adv-lubricant'],
   },
-  { name: '산업 부품', items: ['bronze-drive', 'motor', 'adv-circuit', 'controller', 'frame', 'tire', 'battery-pack', 'hc-cable'] },
+  { name: '산업 부품', items: ['bronze-drive', 'motor', 'adv-circuit', 'controller', 'frame', 'tire', 'power-circuit', 'battery-pack', 'hc-cable'] },
   { name: '완제품', items: ['truck-kit', 'module'] },
 ];
 

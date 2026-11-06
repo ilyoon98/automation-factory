@@ -11,7 +11,7 @@ try {
   const { FOREST } = await server.ssrLoadModule('/src/data/buildings.ts');
   const WARMUP = 600, MEASURE = 3600;
 
-  function probe({ name, cutters, planters = [[0, 0]], care = false, terrain = 'grass', initialSeeds = 100, range = 3, blockers = [] }) {
+  function probe({ name, cutters, planters = [[0, 0]], care = false, terrain = 'grass', initialSeeds = 100, range = FOREST.lumberjackRange, blockers = [] }) {
     const w = new World(44, 44);
     w.createHub(0, 0);
     for (const item of ITEM_IDS) w.stock.set(item, 10000);
@@ -26,8 +26,8 @@ try {
     const cs = cutters.map(([dx, dy]) => {
       const c = w.place('lumberjack', 20 + dx, 20 + dy, 0);
       assert.ok(c);
-      if (range !== FOREST.range) {
-        // 후보 설계만 이 측정의 벌목 대상 배열에 주입한다. 현재 게임 상수는 그대로다.
+      if (range !== FOREST.lumberjackRange) {
+        // 비교용 옛 0.8.3 범위만 이 측정에 주입한다. current 행은 현재 게임의 범위를 그대로 쓴다.
         c.mineTiles = [];
         for (let y = c.y - range; y < c.y + c.size + range; y++)
           for (let x = c.x - range; x < c.x + c.size + range; x++)
@@ -78,26 +78,26 @@ try {
   }
 
   const layouts = [
+    { name: 'baseline-v0.8.3-one-adjacent', cutters: [[2, 0]], range: 3 },
+    { name: 'baseline-v0.8.3-two-adjacent', cutters: [[-2, 0], [2, 0]], range: 3 },
+    { name: 'baseline-v0.8.3-two-offset4', cutters: [[-4, 0], [4, 0]], range: 3 },
     { name: 'current-one-adjacent', cutters: [[2, 0]] },
-    { name: 'current-two-adjacent', cutters: [[-2, 0], [2, 0]] },
-    { name: 'current-two-offset4', cutters: [[-4, 0], [4, 0]] },
-    { name: 'proposed-radius5-one', cutters: [[2, 0]], range: 5 },
   ];
   const rows = [];
   const record = config => { if (!process.argv[2] || config.name.includes(process.argv[2])) rows.push(probe(config)); };
   for (const terrain of ['grass', 'forest']) for (const care of [false, true])
     for (const layout of layouts) record({ ...layout, terrain, care });
   for (const terrain of ['grass', 'forest']) for (const care of [false, true])
-    record({ name: 'current-two-offset4-three-belt-cells', cutters: [[-4, 0], [4, 0]], terrain, care, blockers: [[0, -3], [0, -2], [0, -1]] });
+    record({ name: 'baseline-v0.8.3-two-offset4-three-belt-cells', cutters: [[-4, 0], [4, 0]], range: 3, terrain, care, blockers: [[0, -3], [0, -2], [0, -1]] });
   for (const terrain of ['grass', 'forest']) for (const care of [false, true])
-    record({ name: 'proposed-radius5-three-belt-cells', cutters: [[2, 0]], range: 5, terrain, care, blockers: [[0, -3], [0, -2], [0, -1]] });
+    record({ name: 'current-three-belt-cells', cutters: [[2, 0]], terrain, care, blockers: [[0, -3], [0, -2], [0, -1]] });
   for (const terrain of ['grass', 'forest']) for (const care of [false, true])
-    record({ name: 'current-two-planters-one-cutter', planters: [[-4, 0], [4, 0]], cutters: [[0, 0]], initialSeeds: 200, terrain, care });
-  record({ name: 'current-two-planters-one-cutter-100seeds', planters: [[-4, 0], [4, 0]], cutters: [[0, 0]], initialSeeds: 100 });
-  record({ name: 'current-one-right-five-seeds', cutters: [[2, 0]], initialSeeds: 5 });
-  record({ name: 'current-one-left-five-seeds', cutters: [[-2, 0]], initialSeeds: 5 });
-  record({ name: 'current-one-bottom-five-seeds', cutters: [[0, 2]], initialSeeds: 5 });
-  record({ name: 'proposed-radius5-five-seeds', cutters: [[2, 0]], range: 5, initialSeeds: 5 });
+    record({ name: 'baseline-v0.8.3-two-planters-one-cutter', planters: [[-4, 0], [4, 0]], cutters: [[0, 0]], range: 3, initialSeeds: 200, terrain, care });
+  record({ name: 'baseline-v0.8.3-two-planters-one-cutter-100seeds', planters: [[-4, 0], [4, 0]], cutters: [[0, 0]], range: 3, initialSeeds: 100 });
+  record({ name: 'baseline-v0.8.3-one-right-five-seeds', cutters: [[2, 0]], range: 3, initialSeeds: 5 });
+  record({ name: 'baseline-v0.8.3-one-left-five-seeds', cutters: [[-2, 0]], range: 3, initialSeeds: 5 });
+  record({ name: 'baseline-v0.8.3-one-bottom-five-seeds', cutters: [[0, 2]], range: 3, initialSeeds: 5 });
+  record({ name: 'current-five-seeds', cutters: [[2, 0]], initialSeeds: 5 });
   console.log(JSON.stringify({ protocol: { warmupSeconds: WARMUP, measureSeconds: MEASURE, tickRate: TICK_RATE,
     weather: 'clear', initialTrees: 0, endlessResearch: 0, transport: 'instant, conserved, planter input capped at 5',
     limitations: 'Instant transport; three-cell belt cases reserve land only. No complete logistics or power-grid layout; not a play difficulty or global optimum verdict.' }, rows }, null, 2));

@@ -30,7 +30,7 @@ describe('분리기 동시 산출 저장 이행', () => {
     expect([...b.outBuf]).toEqual([['iron-concentrate', 3], ['copper-concentrate', 1], ['slag', 1]]);
     expect(b.crafting).toBe(false); expect(b.progress).toBe(0); expect(b.cycle).toBe(0);
     expect(loaded.stock).toEqual(new Map(save.stock));
-    expect(loaded.serialize().rev).toBe(3);
+    expect(loaded.serialize().rev).toBe(4);
     for (const next of [World.deserialize(loaded.serialize()), World.fromSnapshot(loaded.snapshot())]) {
       expect(next.buildings.get(id)!.inBuf.get('mineral-dust')).toBe(3);
       expect(next.buildings.get(id)!.outBuf).toEqual(b.outBuf);

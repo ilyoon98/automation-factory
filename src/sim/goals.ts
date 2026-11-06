@@ -137,7 +137,7 @@ export const MAIN_GOALS: MainGoal[] = [
   },
   // ───── 배터리와 조립 거점 ─────
   { id: 'MG25', chapter: '배터리와 조립 거점', title: '염호에서 리튬', requires: ['MG19', 'MG20'], hint: '리튬과 축전(T06), 염수와 물로 전해로에서 리튬.', checks: (w) => [tech(w, 'lithium-storage'), made(w, 'lithium', 10, '리튬')] },
-  { id: 'MG26', chapter: '배터리와 조립 거점', title: '배터리 팩', requires: ['MG25', 'MG18'], hint: '리튬·구리판·회로·플라스틱으로 배터리 팩.', checks: (w) => [made(w, 'battery-pack', 10, '배터리 팩')] },
+  { id: 'MG26', chapter: '배터리와 조립 거점', title: '배터리 팩', requires: ['MG25', 'MG18'], hint: '회로·주석판·플라스틱으로 전력 회로, 리튬·구리판·전력 회로로 배터리 팩.', checks: (w) => [made(w, 'battery-pack', 10, '배터리 팩')] },
   { id: 'MG27', chapter: '배터리와 조립 거점', title: '기계를 위한 윤활제', requires: ['MG25', 'MG18'], hint: '정유소 윤활유와 리튬으로 화학 반응기에서 고급 윤활제.', checks: (w) => [made(w, 'adv-lubricant', 10, '고급 윤활제')] },
   {
     id: 'MG28',

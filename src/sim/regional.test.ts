@@ -72,11 +72,12 @@ function viaNet(w: World): World {
 }
 
 describe('P0: 규칙 프로필과 새 데이터', () => {
-  it('아이템 55종 (기존 27 + 신규 28), 기존 아이템 번호는 그대로', () => {
-    expect(ITEM_IDS.length).toBe(55);
+  it('아이템 56종이며 전력 회로는 기존 아이템 번호 뒤에 추가한다', () => {
+    expect(ITEM_IDS.length).toBe(56);
     expect(ITEM_IDS.indexOf('paper')).toBe(26);
     expect(ITEM_IDS.indexOf('tin-ore')).toBe(27);
-    expect(ITEM_IDS.at(-1)).toBe('module');
+    expect(ITEM_IDS.indexOf('module')).toBe(54);
+    expect(ITEM_IDS.at(-1)).toBe('power-circuit');
   });
 
   it('신규 레시피 23개 (P01~P23)가 있고 재료가 모두 정의된 아이템이다', () => {

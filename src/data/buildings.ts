@@ -429,7 +429,7 @@ export const BUILDINGS: Record<BuildingType, BuildingDef> = {
     ],
     power: 50,
     color: '#6f8f3a',
-    description: '둘레 3칸(8×8) 안의 다 자란 나무를 2초에 한 그루 베어 노란 화살표(앞)로 통나무 2 + 묘목 1을 내보낸다.',
+    description: '둘레 5칸(12×12) 안의 다 자란 나무를 2초에 한 그루 베어 노란 화살표(앞)로 통나무 2 + 묘목 1을 내보낸다.',
     placeable: true,
   },
   planter: {
@@ -444,7 +444,7 @@ export const BUILDINGS: Record<BuildingType, BuildingDef> = {
     ],
     power: 30,
     color: '#5fae5a',
-    description: '컨베이어로 묘목을 받아 둘레 3칸(8×8) 안의 빈 땅에 1초에 하나 심는다. 다 캔 광맥 자리에도 심는다. 나무는 2분이면 다 자란다. 아무 면으로나 받는다.',
+    description: '컨베이어로 묘목을 받아 둘레 3칸(8×8) 안의 빈 땅에 1초에 하나 심는다. 다 캔 광맥 자리에도 심는다. 기본 성장 시간은 2분이며 지형·날씨·연구에 따라 달라진다. 아무 면으로나 받는다.',
     placeable: true,
   },
   sawmill: {
@@ -652,7 +652,7 @@ export const BUILDINGS: Record<BuildingType, BuildingDef> = {
     cost: [
       { item: 'battery-pack', count: 4 },
       { item: 'steel', count: 4 },
-      { item: 'controller', count: 1 },
+      { item: 'power-circuit', count: 2 },
     ],
     power: 0,
     color: '#3f8a6a',
@@ -838,8 +838,10 @@ export const isForestType = (t: BuildingType) => t === 'lumberjack' || t === 'pl
 export const FOREST = {
   /** 묘목이 다 자란 나무가 되는 시간 (초) */
   grow: 120,
-  /** 벌목기·식목기가 다루는 범위: 건물 둘레 이만큼 (2×2 + 둘레 3칸 = 8×8) */
-  range: 3,
+  /** 식목 범위: 2×2 몸체 + 둘레 3칸 = 8×8 */
+  planterRange: 3,
+  /** 벌목 범위: 2×2 몸체 + 둘레 5칸 = 12×12 */
+  lumberjackRange: 5,
   /** 벌목기가 한 그루 베는 시간, 식목기가 하나 심는 시간 (초) */
   cut: 2,
   plant: 1,
@@ -852,6 +854,10 @@ export const FOREST = {
   /** 목표 "숲 되살리기": 다 캔 광맥 자리에 다 자란 나무 이만큼 */
   revive: 50,
 };
+
+/** 시뮬레이션과 배치·선택 표시에서 함께 쓰는 산림 작업 반경. */
+export const forestRange = (type: BuildingType): number =>
+  type === 'lumberjack' ? FOREST.lumberjackRange : type === 'planter' ? FOREST.planterRange : 0;
 
 export const HUB_BASE_POWER = 400;
 export const GENERATOR_POWER = 900;

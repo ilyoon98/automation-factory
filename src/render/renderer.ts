@@ -1,6 +1,6 @@
 import {
   BUILDINGS,
-  FOREST,
+  forestRange,
   GENERATOR_POWER,
   HYDRO_POWER,
   GRID as POWER_GRID,
@@ -485,7 +485,7 @@ export class Renderer {
       if (b) {
         const [sx, sy] = cam.worldToScreen(b.x, b.y);
         this.outline(sx, sy, b.size * z, b.size * z, SELECT);
-        if (isForestType(b.type)) this.drawForestRange(b.x, b.y, b.size);
+        if (isForestType(b.type)) this.drawForestRange(b.type, b.x, b.y, b.size);
       }
     }
     // 단체 선택: 고른 건물마다 선택 테두리. 드래그 중이면 고르게 될 건물과 개수
@@ -961,9 +961,9 @@ export class Renderer {
     }
   }
 
-  /** 벌목기·식목기가 다루는 범위 (건물 둘레 FOREST.range칸) 점선 */
-  private drawForestRange(x: number, y: number, size: number): void {
-    const r = FOREST.range;
+  /** 설비별 실제 산림 작업 범위 점선. */
+  private drawForestRange(type: BuildingType, x: number, y: number, size: number): void {
+    const r = forestRange(type);
     const w = (size + 2 * r) * this.cam.zoom;
     const [sx, sy] = this.cam.worldToScreen(x - r, y - r);
     this.outline(sx, sy, w, w, TREE_LEAF.hi, true);
@@ -2042,7 +2042,7 @@ export class Renderer {
       ctx.fillRect(sx, sy, w, w);
     }
     this.outline(sx, sy, w, w, ok ? '#7fd17a' : PAL.red);
-    if (isForestType(tool)) this.drawForestRange(ox, oy, def.size);
+    if (isForestType(tool)) this.drawForestRange(tool, ox, oy, def.size);
     const shown = !setting ? null : tool === 'sorter' || tool === 'unloader' ? (setting as ItemId) : RECIPES[setting]?.outputs[0].item;
     if (shown) {
       if (def.size === 1) this.drawStack(shown, ox + 0.5, oy + 6 / TILE);

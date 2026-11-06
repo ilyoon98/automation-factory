@@ -386,11 +386,11 @@ export const REGIONAL_TECHS: Tech[] = [
     icon: '🧪',
     category: 'production',
     name: '리튬과 축전',
-    description: '염수 시추, 축전기, 리튬·배터리 팩·고급 윤활제 레시피',
+    description: '염수 시추, 축전기, 리튬·전력 회로·배터리 팩·고급 윤활제 레시피',
     cost: stacks({ frame: 10, controller: 10, plastic: 40 }),
     requires: ['oil-control', 'electro-metal'],
     unlockBuildings: ['accumulator'],
-    unlockRecipes: ['lithium', 'battery-pack', 'adv-lubricant'],
+    unlockRecipes: ['lithium', 'power-circuit', 'battery-pack', 'adv-lubricant'],
   },
   {
     id: 'advanced-vehicle',

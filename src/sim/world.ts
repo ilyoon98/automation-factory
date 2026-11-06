@@ -21,6 +21,7 @@ import {
   WIND_POWER,
   isBeltType,
   isForestType,
+  forestRange,
   isMinerType,
   isRecipeMachine,
   isExtractorType,
@@ -70,7 +71,7 @@ const MINER_OUT_CAP = 2;
 /** 벌목기가 쌓아 두는 통나무·묘목 (두 그루분) */
 const LUMBER_OUT_CAP = 6;
 /** 기계 입력/출력 버퍼: 레시피 몇 회분까지 쌓아 두는지 */
-const MACHINE_BUFFER_CRAFTS = 2;
+export const MACHINE_BUFFER_CRAFTS = 2;
 const GENERATOR_FUEL_CAP = 5;
 /** 수력 발전기가 쌓아 두는 물 (최대로 돌면 5초 분량) */
 const HYDRO_WATER_CAP = 10;
@@ -115,8 +116,9 @@ export interface PowerState {
   charge: number;
 }
 
-/** 저장 파일의 콘텐츠 개정. 1: 먼 광맥 축소, 2: 분리기 동시 산출, 3: 세척·콘크리트 수지 */
-const CONTENT_REV = 3;
+/** 저장 콘텐츠 개정. 1: 광맥 축소, 2: 분리기, 3: 세척·콘크리트, 4: 전력 회로 */
+const CONTENT_REV = 4;
+const OLD_ACCUMULATOR_COST: ItemStack[] = [{ item: 'battery-pack', count: 4 }, { item: 'steel', count: 4 }, { item: 'controller', count: 1 }];
 
 /** 가동 기록을 평균 내는 시간 (초). 이만큼 지난 일은 점점 잊는다. */
 export const STATS_TAU = 15;
@@ -154,6 +156,7 @@ export type EditOp =
       id: number;
       /** 장착돼 있던 모듈을 내려놓은 회수 사건 번호. 되돌릴 때 그 회수분이 그 자리에 남아 있으면 다시 장착한다 */
       mod?: number;
+      legacyAccumulator?: true;
     }
   | { kind: 'rotate'; x: number; y: number; from: Dir; to: Dir }
   | { kind: 'recipe'; x: number; y: number; from: string | null; to: string | null }
@@ -1491,8 +1494,9 @@ export class World {
       ug: b.ugMode,
       id: b.id,
       ...(b.module ? { mod: ev } : {}),
+      ...(b.legacyAccumulator ? { legacyAccumulator: true as const } : {}),
     });
-    for (const c of b.def.cost) addTo(this.stock, c.item, c.count);
+    for (const c of b.legacyAccumulator ? OLD_ACCUMULATOR_COST : b.def.cost) addTo(this.stock, c.item, c.count);
     this.refundContents(b, 'remove', ev);
     this.dropModule(b, 'remove', ev);
     const partner = this.partnerOf(b);
@@ -2148,9 +2152,9 @@ export class World {
     this.growing.length = keep;
   }
 
-  /** 벌목기·식목기가 다루는 칸들: 건물 둘레 FOREST.range칸 (건물 칸 빼고, 위에서 아래·왼쪽에서 오른쪽 차례) */
-  forestTiles(b: { x: number; y: number; size: number }): number[] {
-    const r = FOREST.range;
+  /** 설비별 산림 작업 범위 (몸체 제외, 위에서 아래·왼쪽에서 오른쪽 차례). 불러올 때도 다시 계산한다. */
+  forestTiles(b: { type: BuildingType; x: number; y: number; size: number }): number[] {
+    const r = forestRange(b.type);
     const out: number[] = [];
     for (let y = b.y - r; y < b.y + b.size + r; y++) {
       for (let x = b.x - r; x < b.x + b.size + r; x++) {
@@ -2443,7 +2447,16 @@ export class World {
 
   /** 철거한 건물을 같은 자리에 같은 설정으로 다시 짓는다 */
   private restore(op: Extract<EditOp, { kind: 'remove' }>): boolean {
+    if (op.legacyAccumulator && !this.canAfford(OLD_ACCUMULATOR_COST)) return false;
+    // 옛 축전기의 철거 취소는 옛 비용으로 재설치한다. 배치 위치·연구 검사는 그대로 사용한다.
+    if (op.legacyAccumulator) for (const c of BUILDINGS.accumulator.cost) addTo(this.stock, c.item, c.count);
     const b = this.place(op.type, op.x, op.y, op.dir);
+    if (op.legacyAccumulator) {
+      if (b) {
+        for (const c of OLD_ACCUMULATOR_COST) addTo(this.stock, c.item, -c.count);
+        b.legacyAccumulator = true;
+      } else for (const c of BUILDINGS.accumulator.cost) addTo(this.stock, c.item, -c.count);
+    }
     if (!b) return false;
     if (op.recipe && this.unlockedRecipes.has(op.recipe)) this.setRecipe(b, op.recipe);
     if (op.filter) this.setFilter(b, op.filter);
@@ -5491,6 +5504,7 @@ export class World {
         outBuf: [...b.outBuf],
         crafting: b.crafting,
         progress: b.progress,
+        ...(b.legacyAccumulator ? { legacyAccumulator: true as const } : {}),
         outRR: b.outRR,
         mineIdx: b.mineIdx,
         fuel: b.fuel,
@@ -5632,6 +5646,7 @@ export class World {
     let retiredChargers = 0;
     const updatedSeparators: Building[] = [];
     const updatedRecipes: Building[] = [];
+    const updatedBatteries: Building[] = [];
     for (const s of data.buildings) {
       if (s.type === 'charger') {
         retiredChargers++;
@@ -5645,6 +5660,7 @@ export class World {
         continue;
       }
       const b = new Building(s.id, s.type, s.x, s.y, s.dir);
+      b.legacyAccumulator = b.type === 'accumulator' && (!!s.legacyAccumulator || (data.rev ?? 0) < 4);
       b.recipe = s.recipe;
       b.inBuf = new Map(s.inBuf);
       b.outBuf = new Map(s.outBuf);
@@ -5702,6 +5718,15 @@ export class World {
           b.progress = 0;
           updatedRecipes.push(b);
         }
+      }
+      if ((data.rev ?? 0) < 4 && b.type === 'assembler' && b.recipe === 'battery-pack') {
+        if (b.crafting) {
+          for (const [item, n] of [['lithium', 2], ['copper-plate', 2], ['circuit', 1], ['plastic', 1]] as [ItemId, number][]) addTo(b.inBuf, item, n);
+        }
+        b.crafting = false;
+        b.modBatch = false;
+        b.progress = 0;
+        updatedBatteries.push(b);
       }
       w.attach(b);
     }
@@ -5767,7 +5792,7 @@ export class World {
     }
     w.nextPileEv = Math.max(data.pileEv ?? 1, ...w.piles.map((p) => p.ev + 1));
     // 취소된 구 배치의 분리 예약은 여기서 마무리한다. 기존 더미의 사건 번호를 먼저 복원해야 한다.
-    for (const b of [...updatedSeparators, ...updatedRecipes]) if (b.detach) w.dropModule(b, 'module');
+    for (const b of [...updatedSeparators, ...updatedRecipes, ...updatedBatteries]) if (b.detach) w.dropModule(b, 'module');
     w.doneCmds = new Map(data.cmds ?? []);
     w.zones = (data.zones ?? []).map((z) => ({ ...z }));
     w.reservations = (data.resv ?? []).map((r) => ({ ...r }));
@@ -5790,6 +5815,7 @@ export class World {
     if (retiredChargers) w.loadNote = [w.loadNote, '충전기를 제거하고 건설 재료를 돌려드렸어요.'].filter(Boolean).join(' ');
     if (updatedSeparators.length) w.loadNote = [w.loadNote, '분리기가 10초마다 철 7·구리 2·슬래그 1을 함께 만들어요. 진행 중이던 분리 작업의 재료는 입고 칸으로 돌려줬어요.'].filter(Boolean).join(' ');
     if (updatedRecipes.length) w.loadNote = [w.loadNote, '세척·콘크리트 레시피가 바뀌었어요. 진행 중이던 작업의 재료는 입고 칸으로 돌려줬어요.'].filter(Boolean).join(' ');
+    if (updatedBatteries.length) w.loadNote = [w.loadNote, '배터리 팩에 전력 회로가 필요해요. 진행 중이던 작업의 옛 재료는 입고 칸으로 돌려줬어요.'].filter(Boolean).join(' ');
     // 0.6.11~0.8.0은 창고에 바깥쪽 컨베이어만 닿아도 내보냈다. 이제는 창고마다 스위치를 켜야 한다
     if (!data.storageSwitch) {
       const leaders = new Set([...w.buildings.values()].filter((b) => b.type === 'storage' && w.storageExits(b).length).map((b) => w.storageGroup(b)[0].id));
@@ -5904,6 +5930,7 @@ export class World {
     for (const b of this.buildings.values()) {
       h.num(b.id).str(b.type).num(b.x).num(b.y).num(b.dir).str(b.recipe ?? '').str(b.filter ?? '');
       if (b.exportOn) h.str('export');
+      if (b.legacyAccumulator) h.str('legacy-accumulator');
       if (b.stationName) h.str('station-name').str(b.stationName);
       if (b.junction) h.str('junction').num(b.junction.inputs).num(b.junction.outputs);
       h.num(b.progress).num(b.crafting ? 1 : 0).num(b.outRR).num(b.mineIdx).num(b.fuel).num(b.energy);
@@ -5956,6 +5983,7 @@ export class World {
 }
 
 export interface SavedBuilding {
+  legacyAccumulator?: true;
   id: number;
   type: BuildingType;
   x: number;

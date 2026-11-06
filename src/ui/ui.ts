@@ -1,6 +1,7 @@
 import {
   BUILDINGS,
   FOREST,
+  forestRange,
   GENERATOR_POWER,
   HUB_BASE_POWER,
   HYDRO_POWER,
@@ -72,6 +73,7 @@ import { replaceRoadBuilder, roadBuilderHtml, roadPlanKey } from './road-builder
 import { replacePanel } from './panel';
 import { ChangeFlash, setupUiMotion, tweenBars } from './ui-motion';
 import { pickupSummary } from './pickup-summary';
+import { getProductionDiagnostic } from './production-diagnostics';
 import type { PickupSource } from '../render/pickup-feedback';
 
 export interface GameApi {
@@ -2531,6 +2533,7 @@ export class UI {
 
   private infoDynamic(w: World, b: Building): string {
     const lines: string[] = [];
+    const diagnostic = getProductionDiagnostic(w, b);
     if (w.regional && b.type !== 'station') lines.push(...this.gridLines(w, b));
     const st = w.machineStats(b);
     if (st) lines.push(productionBlock(st));
@@ -2545,7 +2548,10 @@ export class UI {
       lines.push(`<div class="row"><span>발전 출력</span><b>${Math.round(b.load)}${rated === null ? '' : ` <small class="muted">/ 최대 ${rated}</small>`} kW</b></div>`);
     }
     if (HAS_STATUS.includes(b.type)) {
-      lines.push(`<div class="row"><span>현재 상태</span><b style="color:${STATUS_COLOR[b.status]}">${STATUS_LABEL[b.status]}</b></div>`);
+      const color = diagnostic?.severity === 'warning' ? '#b7791f' : diagnostic ? STATUS_COLOR.idle : STATUS_COLOR[b.status];
+      const icon = diagnostic?.item ? itemIcon(diagnostic.item) + ' ' : '';
+      lines.push(`<div class="row"><span>현재 상태</span><b style="color:${color}">${icon}${escapeHtml(diagnostic?.label ?? STATUS_LABEL[b.status])}</b></div>`);
+      if (diagnostic?.detail) lines.push(`<p class="muted">${escapeHtml(diagnostic.detail)}</p>`);
     }
     if (b.crafting) {
       const time = w.craftTime(b);
@@ -2598,6 +2604,8 @@ export class UI {
         break;
       case 'lumberjack':
       case 'planter': {
+        const span = b.size + forestRange(b.type) * 2;
+        lines.push(`<div class="row"><span>작업 범위</span><b>${span}×${span}</b></div>`);
         // 범위 안 나무: 다 자란 것 · 자라는 것 · 심을 수 있는 빈 땅
         let grown = 0;
         let growing = 0;
@@ -2618,9 +2626,9 @@ export class UI {
         if (b.type === 'planter') {
           lines.push(`<div class="row"><span>심을 빈 땅</span><b>${room}칸</b></div>`);
           if (spent) lines.push(`<div class="row"><span>다 캔 광맥 땅</span><b>${spent}칸 · 다 자란 나무 ${revived}</b></div>`);
-          lines.push(`<div class="row"><span>묘목</span><b>${itemIcon('sapling')} ${countOf(b.inBuf, 'sapling')} / ${FOREST.planterCap}</b></div>`);
+          lines.push(`<div class="row" title="5개는 입고 한도예요. 묘목은 심을 때 1개를 쓰고 벨 때 1개를 돌려받아, 숲 전체에는 더 많은 묘목이 필요해요."><span>묘목 입고</span><b>${itemIcon('sapling')} ${countOf(b.inBuf, 'sapling')} / ${FOREST.planterCap}</b></div>`);
           const sec = Math.round(FOREST.grow / w.treeGrowth());
-          lines.push(`<div class="row"><span>나무 성장 시간</span><b>${sec}초</b></div>`);
+          lines.push(`<div class="row" title="지형과 날씨에 따라 실제 성장 시간이 달라져요."><span>기본 성장 시간</span><b>${sec}초</b></div>`);
         } else {
           lines.push(`<div class="row"><span>출력 대기</span><b>${buf(b.outBuf)}</b></div>`);
         }
@@ -3464,7 +3472,10 @@ export class UI {
       let s = `<b>${escapeHtml(b.type === 'station' ? b.stationLabel : b.def.name)}</b>`;
       if (b.type === 'station') s += ` · ${STATION_MODE_NAME[b.stationMode]} · 트럭 ${w.trucksOf(b).length}대`;
       if (HAS_STATUS.includes(b.type)) {
-        s += ` · <span style="color:${STATUS_COLOR[b.status]}">${STATUS_LABEL[b.status]}</span>`;
+        const diagnostic = getProductionDiagnostic(w, b);
+        const color = diagnostic?.severity === 'warning' ? '#b7791f' : diagnostic ? STATUS_COLOR.idle : STATUS_COLOR[b.status];
+        const icon = diagnostic?.item ? itemIcon(diagnostic.item) + ' ' : '';
+        s += ` · <span style="color:${color}">${icon}${escapeHtml(diagnostic?.label ?? STATUS_LABEL[b.status])}</span>`;
       }
       const r = w.recipeOf(b);
       if (r) s += ` · ${r.name}`;

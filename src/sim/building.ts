@@ -55,6 +55,8 @@ export class Building {
 
   // 공통
   status: Status = 'idle';
+  /** 전력 회로 도입 전 축전기는 철거 시 실제 옛 건설 재료를 반환한다. */
+  legacyAccumulator = false;
 
   // 제련로 / 조립기 / 채굴기
   recipe: string | null = null;

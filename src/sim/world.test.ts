@@ -2232,9 +2232,9 @@ describe('숲·나무', () => {
     expect(near).toBeLessThan(20);
   });
 
-  it('벌목기: 범위(8×8) 안의 다 자란 나무를 2초에 한 그루 베어 통나무 2 + 묘목 1. 다 베면 "다 자란 나무 없음"', () => {
+  it('벌목기: 범위(12×12) 안의 다 자란 나무를 2초에 한 그루 베어 통나무 2 + 묘목 1. 다 베면 "다 자란 나무 없음"', () => {
     const w = makeWorld();
-    w.setTree(13, 13, 1); // 범위 안 (12~18)
+    w.setTree(13, 13, 1); // 범위 안 (10~21)
     w.setTree(25, 25, 1); // 범위 밖
     const lj = w.place('lumberjack', 15, 15, 1)!;
     run(w, FOREST.cut + 0.1);

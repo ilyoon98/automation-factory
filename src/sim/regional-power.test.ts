@@ -13,6 +13,7 @@ function makeWorld(width = 200, height = 60): World {
   for (const item of ['iron-plate', 'gear', 'stone', 'steel', 'circuit', 'wood', 'copper-wire', 'motor', 'insulated-wire', 'aluminum-plate', 'hc-cable', 'controller', 'battery-pack', 'brick', 'coal', 'bronze', 'concrete'] as const) {
     w.stock.set(item, 5000);
   }
+  w.stock.set('power-circuit', 5000);
   return w;
 }
 

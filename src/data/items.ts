@@ -35,7 +35,7 @@ export type ItemId =
   | 'crude-oil'
   | 'sulfur'
   | 'brine'
-  // 가공품·부품·조립품 22종
+  // 가공품·부품·조립품 (전력 회로는 저장 번호 보존을 위해 ITEMS 맨 뒤에 추가)
   | 'tin-plate'
   | 'bronze'
   | 'bronze-drive'
@@ -57,7 +57,8 @@ export type ItemId =
   | 'fuel'
   | 'adv-lubricant'
   | 'truck-kit'
-  | 'module';
+  | 'module'
+  | 'power-circuit';
 
 /** 아이템을 그릴 때 쓰는 모양 */
 export type ItemShape = 'ore' | 'plate' | 'gear' | 'wire' | 'ingot' | 'chip' | 'powder' | 'drop' | 'sapling' | 'log' | 'plank' | 'sheet';
@@ -132,6 +133,7 @@ export const ITEMS: Record<ItemId, ItemDef> = {
   'adv-lubricant': { id: 'adv-lubricant', name: '고급 윤활제', color: '#6a9ad9', shape: 'drop' },
   'truck-kit': { id: 'truck-kit', name: '고급 트럭 조립품', color: '#d9a03c', shape: 'ingot' },
   module: { id: 'module', name: '자동화 설비 모듈', color: '#8f5fd9', shape: 'chip' },
+  'power-circuit': { id: 'power-circuit', name: '전력 회로', color: '#d7a92b', shape: 'chip' },
 };
 
 export const ITEM_IDS = Object.keys(ITEMS) as ItemId[];

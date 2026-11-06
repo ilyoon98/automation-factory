@@ -37,7 +37,7 @@ describe('세척·콘크리트 레시피 저장 이행', () => {
     expect(b.inBuf).toEqual(expected); expect([...b.outBuf]).toEqual(old.outBuf);
     expect(b.crafting).toBe(false); expect(b.progress).toBe(0); expect(b.modBatch).toBe(false);
     expect(loaded.stock).toEqual(new Map(save.stock));
-    expect(loaded.serialize().rev).toBe(3);
+    expect(loaded.serialize().rev).toBe(4);
     for (const again of [World.deserialize(loaded.serialize()), World.fromSnapshot(loaded.snapshot())]) {
       expect(again.buildings.get(id)!.inBuf).toEqual(expected);
       expect(again.buildings.get(id)!.outBuf).toEqual(b.outBuf);

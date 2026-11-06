@@ -39,6 +39,7 @@ import { representativeWires, wireKey } from './wires';
 import { sound } from '../ui/sound';
 import type { Wire } from '../sim/world';
 import { queueStationTransfer, stationRoadPreview, stationTransfer, transferEndpoints, transferLabel, transferSample, TRANSFER_DURATION, type StationTransfer } from './station-feedback';
+import { PickupFeedback, pickupSample, type PickupSource } from './pickup-feedback';
 
 /** 목표 표시 색 (진분홍: 모래·광맥·숲·호수 어디에도 없는 색이라 눈에 띈다. style.css .guide-pulse와 같게) */
 const GUIDE_COLOR = '#ff3d8b';
@@ -236,6 +237,7 @@ export class Renderer {
   private batchAt = new Map<number, number>();
   private stationTransfers = new Map<number, StationTransfer>();
   private flights: StationTransfer[] = [];
+  private pickups = new PickupFeedback();
   private layer: MapLayer = 'base';
   private previousLayer: MapLayer = 'base';
   private layerAt = -Infinity;
@@ -264,6 +266,7 @@ export class Renderer {
     this.rejection = null;
     this.puffs = []; this.hops.clear(); this.flights = []; this.batchAt.clear(); this.sparkleT0 = -1;
     this.stationTransfers.clear();
+    this.pickups.clear();
     if (this.seenWorld) {
       this.seenResearch = researchCount(this.seenWorld);
       this.seenFinale = this.seenWorld.goals.has('MG36');
@@ -275,6 +278,14 @@ export class Renderer {
         this.knownRevealCount = this.seenWorld.revealedCount;
       }
     }
+  }
+
+  /** 성공한 회수만 호출한다. 화면 안 더미에서 대표 아이템이 모이는 짧은 장식. */
+  showPickup(world: World, sources: PickupSource[]): void {
+    const enabled = world === this.seenWorld && !!this.cam && !document.hidden && !this.lod && !reducedEffects();
+    const visible = enabled ? sources.filter(({ tile }) => Number.isSafeInteger(tile) && tile >= 0 && tile < world.width * world.height &&
+      world.isRevealed(tile) && this.onScreen(tile % world.width, Math.floor(tile / world.width))) : [];
+    this.pickups.add(world, visible, performance.now() / 1000, enabled);
   }
 
   private onScreen(x: number, y: number, size = 1): boolean {
@@ -342,6 +353,7 @@ export class Renderer {
     this.selectedVehicle = view.selectedVehicle;
     if (reducedEffects()) {
       this.puffs = []; this.hops.clear(); this.flights = []; this.batchAt.clear(); this.sparkleT0 = -1;
+      this.pickups.clear();
     }
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.imageSmoothingEnabled = false;
@@ -440,6 +452,7 @@ export class Renderer {
     // 화물은 기상·정보 면 위에서 읽히되 미공개 지형을 넘어 드러나지 않는다.
     ctx.save(); this.clipRevealed(world);
     this.drawCargoFlights(world, spots);
+    this.drawPickups(world);
     ctx.restore();
     {
       const low = new Set<number>();
@@ -1881,6 +1894,29 @@ export class Renderer {
       ctx.fillStyle = CREAM; ctx.fillRect(Math.round(x - 5 * u), Math.round(y - 5 * u), 10 * u, 10 * u);
       this.outline(Math.round(x - 5 * u), Math.round(y - 5 * u), 10 * u, 10 * u, PAL.ink);
       this.blit(`item:${f.item}`, 0, Math.round(x - 4 * u), Math.round(y - 4 * u));
+      ctx.restore();
+    }
+  }
+
+  private drawPickups(world: World): void {
+    const now = performance.now() / 1000;
+    const effects = this.pickups.active(world, now, !reducedEffects() && !this.lod && !document.hidden);
+    const ctx = this.ctx, u = this.u;
+    for (const effect of effects) {
+      const x = effect.tile % world.width, y = Math.floor(effect.tile / world.width);
+      if (!world.isRevealed(effect.tile) || !this.onScreen(x, y)) continue;
+      const [sx, sy] = this.cam.worldToScreen(x, y);
+      const sample = pickupSample(effect, now);
+      const cx = sx + 10 * u, cy = sy + 10 * u;
+      ctx.save(); ctx.globalAlpha = sample.alpha;
+      // 원래 더미의 중심을 남겨 어느 자리에서 주웠는지 알아볼 수 있게 한다.
+      this.outline(cx - 5 * u, cy - 5 * u, 10 * u, 10 * u, '#bce29d');
+      for (const offset of sample.offsets) this.blit(`item:${effect.item}`, 0, cx + (offset.x - 4) * u, cy + (offset.y - 4) * u);
+      if (sample.sparkle) {
+        ctx.fillStyle = CREAM;
+        ctx.fillRect(cx - 2 * u, cy, 5 * u, u);
+        ctx.fillRect(cx, cy - 2 * u, u, 5 * u);
+      }
       ctx.restore();
     }
   }

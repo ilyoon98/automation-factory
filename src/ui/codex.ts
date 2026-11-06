@@ -527,10 +527,7 @@ export class Codex {
     const locked = !w.unlockedRecipes.has(r.id);
     const plus = '<span class="plus">+</span>';
     const left = r.inputs.map((s) => chip(s.item, `×${fmt(s.count)}`, me)).join(plus);
-    // 분리기: 10개마다 정해진 개수
-    const right = r.pattern
-      ? `${r.outputs.map((o) => chip(o.item, `${Math.round(o.count * 10)}`, me)).join(plus)}<span class="muted every">${r.pattern.length}개마다</span>`
-      : r.outputs.map((s) => chip(s.item, `×${fmt(s.count)}`, me)).join(plus);
+    const right = r.outputs.map((s) => chip(s.item, `×${fmt(s.count)}`, me)).join(plus);
     const list = side === 'out' ? r.outputs : r.inputs;
     const target = (me && list.find((s) => s.item === me)) || r.outputs[0];
     const per = target.count * (60 / r.time);

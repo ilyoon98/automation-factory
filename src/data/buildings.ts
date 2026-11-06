@@ -343,7 +343,7 @@ export const BUILDINGS: Record<BuildingType, BuildingDef> = {
     ],
     power: 150,
     color: '#3f86a8',
-    description: '모래 3 + 물 2 → 광물 가루 1 + 진흙 1. 진흙은 제련로에서 벽돌이 된다.',
+    description: '5초마다 모래 5 + 물 2 → 광물 가루 5 + 진흙 2. 진흙은 제련로에서 벽돌이 된다.',
     placeable: true,
   },
   separator: {
@@ -357,7 +357,7 @@ export const BUILDINGS: Record<BuildingType, BuildingDef> = {
     ],
     power: 300,
     color: '#9a6ab8',
-    description: '광물 가루를 철 정광·구리 정광·슬래그로 나눈다. 10개마다 정확히 7·2·1개씩, 한 줄로 섞여 나온다.',
+    description: '광물 가루 10개를 10초 동안 분리해 철 정광 7·구리 정광 2·슬래그 1개를 함께 만든다. 출구는 한 줄이므로 분류기로 나눈다.',
     placeable: true,
   },
   pump: {

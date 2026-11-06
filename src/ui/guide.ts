@@ -228,7 +228,7 @@ export const GUIDE: GuideStep[] = [
   },
   {
     title: '콘크리트 만들기',
-    hint: '조립기에 슬래그 2 + 자갈 1을 넣으세요. 콘크리트가 나와요.',
+    hint: '조립기에 슬래그 1 + 자갈 2를 넣으세요. 콘크리트가 나와요.',
     done: (w) => w.incomePerMinute('concrete') > 0 || w.stockOf('concrete') > 0,
     focus: () => ({ build: 'assembler' }),
   },

@@ -21,10 +21,8 @@ export interface Recipe {
   /** 1회 제작 시간 (초) */
   time: number;
   inputs: ItemStack[];
-  /** 1회 제작 결과. pattern이 있으면 1회당 평균 개수 (예: 0.7) */
+  /** 1회 제작 완료 시 함께 나오는 결과 */
   outputs: ItemStack[];
-  /** 있으면 제작할 때마다 이 순서대로 하나씩 나온다 (분리기) */
-  pattern?: ItemId[];
 }
 
 export const RECIPES: Record<string, Recipe> = {
@@ -99,7 +97,7 @@ export const RECIPES: Record<string, Recipe> = {
     id: 'crush-gravel',
     name: '자갈 분쇄',
     machine: 'crusher',
-    time: 1.5,
+    time: 2,
     inputs: [{ item: 'gravel', count: 1 }],
     outputs: [{ item: 'sand', count: 1 }],
   },
@@ -115,39 +113,26 @@ export const RECIPES: Record<string, Recipe> = {
     id: 'wash',
     name: '모래 세척',
     machine: 'washer',
-    time: 3,
+    time: 5,
     inputs: [
-      { item: 'sand', count: 3 },
+      { item: 'sand', count: 5 },
       { item: 'water', count: 2 },
     ],
     outputs: [
-      { item: 'mineral-dust', count: 1 },
-      { item: 'mud', count: 1 },
+      { item: 'mineral-dust', count: 5 },
+      { item: 'mud', count: 2 },
     ],
   },
   separate: {
     id: 'separate',
     name: '광물 분리',
     machine: 'separator',
-    time: 4,
-    inputs: [{ item: 'mineral-dust', count: 1 }],
+    time: 10,
+    inputs: [{ item: 'mineral-dust', count: 10 }],
     outputs: [
-      { item: 'iron-concentrate', count: 0.7 },
-      { item: 'copper-concentrate', count: 0.2 },
-      { item: 'slag', count: 0.1 },
-    ],
-    // 10개마다 철 7 · 구리 2 · 슬래그 1, 한쪽으로 몰리지 않게 섞은 순서
-    pattern: [
-      'iron-concentrate',
-      'iron-concentrate',
-      'copper-concentrate',
-      'iron-concentrate',
-      'iron-concentrate',
-      'slag',
-      'iron-concentrate',
-      'copper-concentrate',
-      'iron-concentrate',
-      'iron-concentrate',
+      { item: 'iron-concentrate', count: 7 },
+      { item: 'copper-concentrate', count: 2 },
+      { item: 'slag', count: 1 },
     ],
   },
   'iron-plate-c': {
@@ -178,10 +163,10 @@ export const RECIPES: Record<string, Recipe> = {
     id: 'concrete',
     name: '콘크리트',
     machine: 'assembler',
-    time: 3,
+    time: 2,
     inputs: [
-      { item: 'slag', count: 2 },
-      { item: 'gravel', count: 1 },
+      { item: 'slag', count: 1 },
+      { item: 'gravel', count: 2 },
     ],
     outputs: [{ item: 'concrete', count: 1 }],
   },
@@ -254,7 +239,7 @@ export const RECIPES: Record<string, Recipe> = {
   'hardened-rubber': r('hardened-rubber', '강화 고무', 'chem-reactor', 4, { rubber: 3, sulfur: 1 }, { 'hardened-rubber': 3 }),
   tire: r('tire', '강화 타이어', 'assembler', 4, { 'hardened-rubber': 2, steel: 1 }, { tire: 2 }),
   'sulfuric-acid': r('sulfuric-acid', '황산', 'chem-reactor', 4, { sulfur: 1, water: 2 }, { 'sulfuric-acid': 2 }),
-  'acid-wash': r('acid-wash', '고효율 모래 세척', 'washer', 4, { sand: 3, water: 2, 'sulfuric-acid': 1 }, { 'mineral-dust': 2, mud: 1 }),
+  'acid-wash': r('acid-wash', '고효율 모래 세척', 'washer', 4, { sand: 4, water: 2, 'sulfuric-acid': 1 }, { 'mineral-dust': 8, mud: 2 }),
   lithium: r('lithium', '리튬', 'electrolyzer', 6, { brine: 4, water: 2 }, { lithium: 1 }),
   'battery-pack': r('battery-pack', '배터리 팩', 'assembler', 6, { lithium: 2, 'copper-plate': 2, circuit: 1, plastic: 1 }, { 'battery-pack': 1 }),
   'hc-cable': r('hc-cable', '고용량 케이블', 'assembler', 4, { 'aluminum-plate': 2, 'insulated-wire': 2, 'hardened-rubber': 1 }, { 'hc-cable': 2 }),

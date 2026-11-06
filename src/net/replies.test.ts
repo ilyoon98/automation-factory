@@ -41,7 +41,9 @@ it.each([undefined,null,false,true,0])('값 %s도 JSON을 거친 뒤 명령을 �
 });
 
 it('회수 결과는 나중에 원본 수량이 바뀌어도 실제 처리 시점의 수량을 보존한다', () => {
-  const result={ok:true,items:[['coal',5]],moved:5};
-  const packed=packReply({t:'pile-collect',rid:'one',tile:20},result);result.items[0][1]=99;
-  expect(unpackReply(network(packed),new World(40,30))).toEqual({ok:true,items:[['coal',5]],moved:5});
+  const result={ok:true,items:[['coal',5]],moved:5,destinations:{storage:2,hub:3},pickups:[{tile:20,item:'coal'}]};
+  const packed=packReply({t:'pile-collect',rid:'one',tile:20},result);
+  result.items[0][1]=99;result.destinations.hub=99;result.pickups[0].tile=99;
+  expect(unpackReply(network(packed),new World(40,30))).toEqual({ok:true,items:[['coal',5]],moved:5,
+    destinations:{storage:2,hub:3},pickups:[{tile:20,item:'coal'}]});
 });

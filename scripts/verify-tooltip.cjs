@@ -39,12 +39,12 @@ app.whenReady().then(async () => {
     await js(`ui.mouse={x:innerWidth-2,y:innerHeight-2};ui.updateTooltip(tw);`);
     await check('tooltip remains readable in a narrow window', `const r=document.getElementById('tooltip').getBoundingClientRect();return r.width>100&&r.left>=0&&r.right<=innerWidth&&r.bottom<=innerHeight;`);
     await js(`tw.rules='regional-v1';window.pickupTile=tw.idx(15,15);tw.piles=[{tile:pickupTile,item:'iron-plate',n:10,ev:1,why:'remove'}];
-      window.pickupCommand=null;game.exec=(cmd,done)=>{pickupCommand={cmd,done};};ui.pickPile(pickupTile,100,300);
+      window.pickupCommand=null;game.exec=(cmd,done)=>{pickupCommand={cmd,done};};
+      game.showPickup=sources=>window.pickupSources=sources;ui.pickPile(pickupTile);
       tw.piles=[{tile:pickupTile,item:'iron-plate',n:3,ev:1,why:'remove'},{tile:pickupTile,item:'coal',n:2,ev:2,why:'truck'}];
       const result=(await import('/src/sim/commands.ts')).applyCommand(tw,0,pickupCommand.cmd);pickupCommand.done(result);`);
-    await check('pickup feedback reports actual transferred items after a delayed command',`return [...document.querySelectorAll('.gain-float>div')].map(e=>e.textContent).join(',')==='+3,+2';`);
-    await js(`document.querySelectorAll('.gain-float').forEach(e=>e.remove());(await import('/src/ui/crisp.ts')).setCrispText(true);ui.floatGain(100,300,[['coal',2]]);`);
-    await check('pickup feedback stays at the requested screen position with crisp text',`const z=(await import('/src/ui/crisp.ts')).uiZoom(),el=document.querySelector('.gain-float');return Math.abs(parseFloat(el.style.left)*z-100)<1&&Math.abs(parseFloat(el.style.top)*z-300)<1;`);
+    await check('pickup feedback reports actual destination totals after a delayed command',`return document.getElementById('toast').textContent==='허브 +5개';`);
+    await check('pickup effect keeps world coordinates regardless of text UI scaling',`return pickupSources.length===1&&pickupSources[0].tile===pickupTile&&pickupSources[0].item==='iron-plate';`);
     console.log(JSON.stringify({passed:true,checks}));
     await server.close();app.exit(0);
   } catch(error) { console.error(error);await server.close();app.exit(1); }

@@ -71,6 +71,8 @@ import { planRoad, type RoadPlanResult } from '../sim/road-plan';
 import { replaceRoadBuilder, roadBuilderHtml, roadPlanKey } from './road-builder';
 import { replacePanel } from './panel';
 import { ChangeFlash, setupUiMotion, tweenBars } from './ui-motion';
+import { pickupSummary } from './pickup-summary';
+import type { PickupSource } from '../render/pickup-feedback';
 
 export interface GameApi {
   getWorld(): World;
@@ -106,6 +108,8 @@ export interface GameApi {
   /** 지도 켜고 끄기 */
   readonly mapShown: boolean;
   toggleMap(): void;
+  /** 성공한 회수 위치에만 짧은 화면 효과. 재고·시뮬레이션은 바꾸지 않는다. */
+  showPickup(sources: PickupSource[]): void;
 }
 
 type OreAlert = { r: PatchReport; level: 'low' | 'empty' };
@@ -1482,41 +1486,32 @@ export class UI {
     return `<div class="line-items"><b>이 줄의 아이템</b>${rows}<small class="muted">빼기: 연결된 줄 전체에서 해당 품목 회수</small></div>`;
   }
 
-  /** 회수 더미를 바로 줍는다 (가까운 창고·정류장, 없으면 허브). 주운 자리에 "+아이콘 개수"가 떠오른다 */
-  pickPile(tile: number, sx: number, sy: number): void {
-    this.sendUse(`pile:${tile}`, { t: 'pile-collect', rid: newRid(), tile }, (r) => this.floatGain(sx, sy, r.items ?? []));
+  /** 회수 더미를 바로 줍고 실제 이동 결과로 연출·도착지 수량을 알린다. */
+  pickPile(tile: number): void {
+    const world = this.game.getWorld();
+    this.sendUse(`pile:${tile}`, { t: 'pile-collect', rid: newRid(), tile }, r => this.pileFeedback(world, r));
   }
 
   /** Shift 드래그로 고른 영역의 회수 더미를 바로 줍고, 무엇을 얼마나 주웠는지 알린다 */
   pickPiles(tiles: number[], kept: number): void {
-    const left = kept ? `하역기가 쓰는 더미 ${kept}곳은 남겨 뒀어요` : '';
     if (!tiles.length) {
-      this.toast(left, 3000);
+      if (kept) this.toast(pickupSummary({ ok: true }, kept), 2400);
       return;
     }
     // 드래그마다 다른 영역이라 처리 중이어도 다음 줍기를 막지 않는다
     const rid = newRid();
+    const world = this.game.getWorld();
     this.sendUse(`piles:${rid}`, { t: 'piles-collect', rid, tiles }, (r) => {
-      const items = (r.items ?? []).map(([i, n]) => `${ITEMS[i].name} ${n}개`);
-      const shown = items.length > 3 ? [...items.slice(0, 3), `외 ${items.length - 3}종`] : items;
-      this.toast([`회수 더미 ${r.collected ?? 0}곳에서 ${shown.join(' · ')} 주웠어요`, left].filter(Boolean).join(' · '), 4000);
+      this.pileFeedback(world, r, kept);
     });
   }
 
-  /** 얻은 것을 그 자리에서 위로 떠오르며 사라지게 (화면 좌표) */
-  private floatGain(sx: number, sy: number, items: [ItemId, number][]): void {
-    if (!items.length) return;
-    const el = document.createElement('div');
-    el.className = 'gain-float';
-    el.style.left = `${sx / uiZoom()}px`;
-    el.style.top = `${sy / uiZoom()}px`;
-    el.innerHTML = items
-      .slice(0, 4)
-      .map(([i, n]) => `<div>+${itemIcon(i)}${n}</div>`)
-      .join('') + (items.length > 4 ? `<div>+${items.length - 4}종</div>` : '');
-    document.body.appendChild(el);
+  private pileFeedback(world: World, result: UseResult, kept = 0): void {
+    // 느린 응답이 다른 공장에 도착해 그 지도의 물건을 주운 것처럼 보이지 않게 한다.
+    if (this.game.getWorld() !== world) return;
+    this.game.showPickup(result.pickups ?? []);
     sound.play('click');
-    setTimeout(() => el.remove(), 1400);
+    this.toast(pickupSummary(result, kept), 2400);
   }
 
   /** regional-v1: 지도에 있는 땅마다 지금 날씨와 영향 (화면 가운데 땅을 굵게). 예보는 없다 */
@@ -2233,11 +2228,7 @@ export class UI {
       const r = w.recipeOf(b);
       if (r) {
         const fmt = (s: ItemStack) => `${itemLink(s.item)} ×${s.count}`;
-        // 분리기: 10개마다 정해진 개수가 섞여 나온다
-        const outs = r.pattern
-          ? `${r.outputs.map((o) => `${itemIcon(o.item)}${ITEMS[o.item].name} ${Math.round(o.count * 10)}`).join(' · ')}
-             <span class="muted">(${r.pattern.length}개마다, 한 줄로 섞여 나옴)</span>`
-          : r.outputs.map(fmt).join(' + ');
+        const outs = r.outputs.map(fmt).join(' + ');
         html += `<div class="recipe-card">
           <div>${r.inputs.map(fmt).join(' + ')}</div>
           <div class="arrow">→ ${r.time}초 →</div>
@@ -2946,8 +2937,7 @@ export class UI {
     }
     if (take && sel) {
       this.sendUse(`line:${sel.id}`, { t: 'line-take', rid: newRid(), id: sel.id, item: take }, (r) => {
-        const to = r.from ? this.game.getWorld().buildings.get(r.from) : undefined;
-        this.toast(`줄에서 ${ITEMS[take].name} ${r.moved}개를 빼서 ${to ? BUILDINGS[to.type].name : '허브'}로 옮겼어요`, 3000);
+        this.toast(`${ITEMS[take].name} 회수 · ${pickupSummary(r)}`, 2400);
       });
       this.update();
       return;

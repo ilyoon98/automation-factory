@@ -173,6 +173,7 @@ let pendingSave: number | null = null;
 
 const game: GameApi = {
   getWorld: () => world,
+  showPickup: sources => renderer.showPickup(world, sources),
   exec: (cmd, done) => {
     if (cmd.t !== 'end') saveState.dirty = true;
     return session.exec(cmd, (r) => {
@@ -388,10 +389,7 @@ game.input = new Input(canvas, camera, {
     if (session.role === 'solo') ui.toast('핑은 같이 할 때 다른 사람에게 보여요');
     else session.ping(x, y);
   },
-  pickPile(tile) {
-    const [sx, sy] = camera.worldToScreen((tile % world.width) + 0.5, Math.floor(tile / world.width));
-    ui.pickPile(tile, sx, sy);
-  },
+  pickPile: tile => ui.pickPile(tile),
   pickPiles: (tiles, kept) => ui.pickPiles(tiles, kept),
 });
 const ui = new UI(game);

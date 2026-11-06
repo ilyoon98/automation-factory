@@ -25,7 +25,10 @@ describe('선택한 바닥 아이템 일괄 줍기', () => {
     const hub = w.stockOf('iron-plate'), ids = [...w.buildings.keys()];
     const outside = w.idx(50, 35); w.piles.push({ tile: outside, item: 'coal', n: 7, ev: 4, why: 'remove' });
     const r = applyCommand(w, 0, { t: 'piles-collect', rid: 'batch', tiles: [...tiles, tiles[0]] });
-    expect(r).toMatchObject({ ok: true, moved: 30, collected: 3, items: [['iron-plate', 30]] });
+    expect(r).toMatchObject({ ok: true, moved: 30, collected: 3, items: [['iron-plate', 30]],
+      destinations: { storage: 10, station: 10, hub: 10 },
+      pickups: tiles.map(tile => ({ tile, item: 'iron-plate' })),
+    });
     expect(storage.inBuf.get('iron-plate')).toBe(10);
     expect(station.outBuf.get('iron-plate')).toBe(10);
     expect(w.stockOf('iron-plate')).toBe(hub + 10);
@@ -43,6 +46,8 @@ describe('선택한 바닥 아이템 일괄 줍기', () => {
     const a = applyCommand(w, 0, { t: 'piles-collect', rid: 'order', tiles: [near, tiles[0]] });
     const b = applyCommand(guest, 0, { t: 'piles-collect', rid: 'order', tiles: [tiles[0], near] });
     expect(a).toEqual(b); expect(w.checksum()).toBe(guest.checksum());
+    expect(a.destinations).toEqual({ storage: 5, hub: 9 });
+    expect(Object.values(a.destinations!).reduce((sum, n) => sum + n, 0)).toBe(a.moved);
     expect(storage.inBuf.get('iron-plate')).toBe(5); expect(w.stockOf('iron-plate')).toBe(hub + 5);
     expect(storage.inBuf.get('coal')).toBeUndefined();
   });
@@ -51,7 +56,9 @@ describe('선택한 바닥 아이템 일괄 줍기', () => {
     const { w, tiles } = setup(); w.collectPile(tiles[0]);
     w.piles.push({ tile: tiles[1], item: 'gear', n: 3, ev: 4, why: 'remove' });
     expect(applyCommand(w, 0, { t: 'piles-collect', rid: 'stale', tiles: [tiles[0], tiles[1]] }))
-      .toMatchObject({ ok: true, moved: 13, collected: 1, items: [['iron-plate', 10], ['gear', 3]] });
+      .toMatchObject({ ok: true, moved: 13, collected: 1, items: [['iron-plate', 10], ['gear', 3]],
+        destinations: { station: 13 }, pickups: [{ tile: tiles[1], item: 'iron-plate' }],
+      });
     expect(w.collectPiles([tiles[0], tiles[1]])).toMatchObject({ ok: false });
   });
 
@@ -77,5 +84,15 @@ describe('선택한 바닥 아이템 일괄 줍기', () => {
     const { w, tiles } = setup(); w.revealed = new Uint8Array(w.width * w.height); w.revealed[tiles[0]] = 1;
     expect(w.collectPiles(tiles).ok).toBe(false);
     expect(w.pileCount(tiles[0], 'iron-plate')).toBe(10);
+  });
+
+  it('대량 회수는 전량 옮기고 도착지 합계를 유지하되 응답의 연출 표본 수만 제한한다', () => {
+    const { w } = setup(); w.piles = [];
+    const tiles = Array.from({ length: 100 }, (_, i) => w.idx(i % 50, 30 + Math.floor(i / 50)));
+    for (const tile of tiles) w.piles.push({ tile, item: 'coal', n: 10, ev: 4, why: 'remove' });
+    const result = w.collectPiles(tiles);
+    expect(result).toMatchObject({ ok: true, moved: 1000, collected: 100, destinations: { hub: 1000 } });
+    expect(result.pickups).toHaveLength(32);
+    expect(w.piles).toHaveLength(0);
   });
 });

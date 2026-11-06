@@ -526,7 +526,7 @@ describe('석탄 독립: 태양광·수력·전기로', () => {
     f.inBuf.set('iron-plate', 4);
     const s = w.place('separator', 10, 5, 1)!;
     w.setRecipe(s, 'separate');
-    s.inBuf.set('mineral-dust', 4);
+    s.inBuf.set('mineral-dust', 10);
     const h = w.place('hydro', 15, 15, 0)!;
     h.fuel = 10;
     const g = w.place('generator', 20, 20, 0)!;
@@ -1510,28 +1510,83 @@ describe('M7: 흙에서 금속 얻기', () => {
     expect(c.recipe).toBe('crush-dirt');
   });
 
-  it('세척기: 모래 3 + 물 2 → 광물 가루 1 + 진흙 1', () => {
+  it('세척기는 모래5 + 물2를 5초간 처리해 광물 가루5 + 진흙2를 함께 만든다', () => {
     const w = m7World();
     const wsh = w.place('washer', 10, 10, 3)!;
     w.setRecipe(wsh, 'wash');
-    wsh.inBuf.set('sand', 3);
+    wsh.inBuf.set('sand', 5);
     wsh.inBuf.set('water', 2);
-    run(w, 3.1);
-    expect(Object.fromEntries(wsh.outBuf)).toEqual({ 'mineral-dust': 1, mud: 1 });
+    run(w, 4.9);
+    expect(wsh.outBuf.size).toBe(0);
+    expect(wsh.inBuf.size).toBe(0);
+    run(w, 0.2);
+    expect(Object.fromEntries(wsh.outBuf)).toEqual({ 'mineral-dust': 5, mud: 2 });
   });
 
-  it('분리기는 10개마다 정확히 철 정광 7 · 구리 정광 2 · 슬래그 1', () => {
+  it('콘크리트는 슬래그1 + 자갈2를 2초간 사용하며 자갈이 하나면 기다린다', () => {
+    const w = m7World();
+    const assembler = w.place('assembler', 10, 10, 0)!;
+    w.setRecipe(assembler, 'concrete');
+    assembler.inBuf.set('slag', 1);
+    assembler.inBuf.set('gravel', 1);
+    run(w, 3);
+    expect(assembler.crafting).toBe(false);
+    expect(assembler.inBuf.get('slag')).toBe(1);
+    assembler.inBuf.set('gravel', 2);
+    run(w, 2.1);
+    expect(Object.fromEntries(assembler.outBuf)).toEqual({ concrete: 1 });
+    expect(assembler.inBuf.size).toBe(0);
+  });
+
+  it('분리기는 가루10개를 쓰고 10초 후 철7·구리2·슬래그1을 한 번에 만든다', () => {
     const w = m7World();
     const s = w.place('separator', 10, 10, 3)!;
     w.setRecipe(s, 'separate');
-    const counts: Record<string, number> = {};
-    for (let k = 0; k < 20; k++) {
-      s.inBuf.set('mineral-dust', 2);
-      run(w, 4.05);
-      for (const [item, n] of s.outBuf) counts[item] = (counts[item] ?? 0) + n;
-      s.outBuf.clear();
+    s.inBuf.set('mineral-dust', 10);
+    run(w, 9.9);
+    expect(s.inBuf.get('mineral-dust') ?? 0).toBe(0);
+    expect(s.crafting).toBe(true);
+    expect(s.outBuf.size).toBe(0);
+    run(w, 0.2);
+    expect(s.crafting).toBe(false);
+    expect(Object.fromEntries(s.outBuf)).toEqual({ 'iron-concentrate': 7, 'copper-concentrate': 2, slag: 1 });
+    expect(w.stats.recipeDone.get('separate')).toBe(1);
+  });
+
+  it('분리기는 가루9개로 시작하지 않고 열 번째가 들어오면 한 배치를 시작한다', () => {
+    const w = m7World();
+    const s = w.place('separator', 10, 10, 3)!;
+    w.setRecipe(s, 'separate');
+    s.inBuf.set('mineral-dust', 9);
+    run(w, 12);
+    expect(s.status).toBe('no-input');
+    expect(s.inBuf.get('mineral-dust')).toBe(9);
+    expect(s.outBuf.size).toBe(0);
+    s.inBuf.set('mineral-dust', 10);
+    w.tick();
+    expect(s.crafting).toBe(true);
+    expect(s.inBuf.get('mineral-dust') ?? 0).toBe(0);
+    expect(s.outBuf.size).toBe(0);
+  });
+
+  it('분리기는 슬래그 출구가 막히면 다음 배치를 멈추고 비우면 세 품목을 함께 다시 만든다', () => {
+    const w = m7World();
+    const s = w.place('separator', 10, 10, 3)!;
+    w.setRecipe(s, 'separate');
+    s.inBuf.set('mineral-dust', 50);
+    for (let i = 0; i < 40 * TICK_RATE; i++) {
+      s.outBuf.delete('iron-concentrate');
+      s.outBuf.delete('copper-concentrate');
+      w.tick();
     }
-    expect(counts).toEqual({ 'iron-concentrate': 14, 'copper-concentrate': 4, slag: 2 });
+    expect(s.status).toBe('output-full');
+    expect(s.outBuf.get('slag')).toBe(2);
+    expect(s.inBuf.get('mineral-dust')).toBe(30);
+    expect(w.stats.recipeDone.get('separate')).toBe(2);
+    s.outBuf.delete('slag');
+    run(w, 10.1);
+    expect(Object.fromEntries(s.outBuf)).toEqual({ 'iron-concentrate': 7, 'copper-concentrate': 2, slag: 1 });
+    expect(w.stats.recipeDone.get('separate')).toBe(3);
   });
 
   it('정광과 진흙은 제련로가 알아서 철판·구리판·벽돌로 만든다', () => {
@@ -1553,15 +1608,22 @@ describe('M7: 흙에서 금속 얻기', () => {
     }
   });
 
-  it('흙 채굴기·분리기 차례가 저장/불러오기 후에도 유지된다', () => {
+  it('흙 채굴과 분리기 배치 진행도가 저장/불러오기 후에도 이어진다', () => {
     const w = m7World();
     w.place('miner', 10, 10, 3);
     const s = w.place('separator', 20, 10, 3)!;
-    s.cycle = 7;
+    w.setRecipe(s, 'separate');
+    s.inBuf.set('mineral-dust', 10);
+    run(w, 4);
     const copy = World.deserialize(JSON.parse(JSON.stringify(w.serialize())));
     expect(copy.buildingAt(10, 10)!.mineDirt).toBe(true);
-    expect(copy.buildingAt(20, 10)!.cycle).toBe(7);
+    const restored = copy.buildingAt(20, 10)!;
+    expect(restored.crafting).toBe(true);
+    expect(restored.progress).toBe(s.progress);
+    expect(restored.inBuf.get('mineral-dust') ?? 0).toBe(0);
     expect(copy.dirtMining).toBe(true);
+    run(copy, 6.1);
+    expect(Object.fromEntries(restored.outBuf)).toEqual({ 'iron-concentrate': 7, 'copper-concentrate': 2, slag: 1 });
   });
 });
 

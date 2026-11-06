@@ -115,8 +115,8 @@ export interface PowerState {
   charge: number;
 }
 
-/** 저장 파일의 콘텐츠 개정. 1: 먼 광맥을 줄였다 */
-const CONTENT_REV = 1;
+/** 저장 파일의 콘텐츠 개정. 1: 먼 광맥 축소, 2: 분리기 동시 산출, 3: 세척·콘크리트 수지 */
+const CONTENT_REV = 3;
 
 /** 가동 기록을 평균 내는 시간 (초). 이만큼 지난 일은 점점 잊는다. */
 export const STATS_TAU = 15;
@@ -333,6 +333,8 @@ export const PILE_REASON_LABEL: Record<PileReason, string> = {
 /**
  * 현지 실물을 쓰는 명령(모듈 설치·분리, 고급 트럭 조립)의 결과. 저장해 두고, 같은 rid가 다시 오면 다시 실행하지 않고 이 결과만 돌려준다
  */
+export type PickupDestinations = Partial<Record<'storage' | 'station' | 'hub', number>>;
+
 export interface UseResult {
   ok: boolean;
   /** 실패 이유 (화면 안내용) */
@@ -349,6 +351,10 @@ export interface UseResult {
   collected?: number;
   /** 회수 명령이 실제로 옮긴 품목별 수량 (응답을 기다리는 사이 더미가 달라질 수 있다) */
   items?: [ItemId, number][];
+  /** 실제 입고된 수량. 가까운 창고가 일부만 받으면 허브 몫도 따로 기록한다. */
+  destinations?: PickupDestinations;
+  /** 성공한 회수 위치와 대표 품목. 대량 회수 응답·저장 크기를 제한해 최대 32곳만 연출한다. */
+  pickups?: { tile: number; item: ItemId }[];
 }
 
 /** 회수 더미를 손으로 옮길 수 있는 거리: 창고·정류장 몸체까지 체비쇼프 칸 */
@@ -1861,17 +1867,25 @@ export class World {
    * 손으로 주운 물건을 둔다: tile에서 PILE_REACH칸 안에 자리가 남은 창고·정류장이 있으면 거기 (자리만큼),
    * 나머지는 허브로. 넣은 곳 (창고·정류장 id, 모두 허브면 0)
    */
-  private stashNear(tile: number, list: [ItemId, number][]): number {
+  private stashNear(tile: number, list: [ItemId, number][]): { from: number; destinations: PickupDestinations } {
     const t = this.pileTarget(tile);
     const buf = t ? (t.b.type === 'station' && t.b.stationMode === 'unload' ? t.b.outBuf : t.b.inBuf) : null;
     let room = t?.room ?? 0;
+    const destinations: PickupDestinations = {};
     for (const [item, n] of list) {
       const k = buf ? Math.min(room, n) : 0;
-      if (k > 0) addTo(buf!, item, k);
+      if (k > 0) {
+        addTo(buf!, item, k);
+        const kind = t!.b.type === 'storage' ? 'storage' : 'station';
+        destinations[kind] = (destinations[kind] ?? 0) + k;
+      }
       room -= k;
-      if (n - k > 0) addTo(this.stock, item, n - k);
+      if (n - k > 0) {
+        addTo(this.stock, item, n - k);
+        destinations.hub = (destinations.hub ?? 0) + n - k;
+      }
     }
-    return t && t.room > 0 ? t.b.id : 0;
+    return { from: t && t.room > 0 ? t.b.id : 0, destinations };
   }
 
   /** 회수 더미를 줍는다: 가까운 창고·정류장(없거나 모자라면 허브)으로. 먼저 생긴 사건부터 */
@@ -1882,9 +1896,9 @@ export class World {
     const moved = list.reduce((a, p) => a + p.n, 0);
     const items = new Map<ItemId, number>();
     for (const p of list) addTo(items, p.item, p.n);
-    const from = this.stashNear(tile, list.map((p): [ItemId, number] => [p.item, p.n]));
+    const delivery = this.stashNear(tile, list.map((p): [ItemId, number] => [p.item, p.n]));
     this.piles = this.piles.filter((p) => p.tile !== tile);
-    return { ok: true, moved, from, items: [...items] };
+    return { ok: true, moved, ...delivery, items: [...items], pickups: [{ tile, item: list[0].item }] };
   }
 
   /** 선택한 칸만 각각 기존 현지 회수 규칙으로 줍는다. 사라진 더미는 건너뛰고, 중복 칸은 한 번만. */
@@ -1895,6 +1909,8 @@ export class World {
       return { ok: false, reason: '선택한 회수 위치가 올바르지 않아요' };
     }
     const items = new Map<ItemId, number>();
+    const destinations: PickupDestinations = {};
+    const pickups: NonNullable<UseResult['pickups']> = [];
     let moved = 0, collected = 0;
     // 같은 창고의 남은 공간을 여러 더미가 쓸 때도 명령·저장·멀티플레이의 처리 순서를 고정한다.
     for (const tile of [...new Set(tiles)].sort((a, b) => a - b)) {
@@ -1903,8 +1919,13 @@ export class World {
       moved += result.moved ?? 0;
       collected++;
       for (const [item, n] of result.items ?? []) addTo(items, item, n);
+      for (const kind of ['storage', 'station', 'hub'] as const) {
+        const n = result.destinations?.[kind] ?? 0;
+        if (n) destinations[kind] = (destinations[kind] ?? 0) + n;
+      }
+      if (pickups.length < 32) pickups.push(...result.pickups ?? []);
     }
-    return collected ? { ok: true, moved, collected, items: [...items] }
+    return collected ? { ok: true, moved, collected, items: [...items], destinations, pickups }
       : { ok: false, reason: '선택한 회수 더미가 이미 없어졌어요' };
   }
 
@@ -1956,8 +1977,8 @@ export class World {
       b.items = b.items.filter((it) => it.item !== item);
     }
     if (!n) return { ok: false, reason: '이 줄에 그 아이템이 없어요' };
-    const from = this.stashNear(this.idx(start.x, start.y), [[item, n]]);
-    return { ok: true, moved: n, from };
+    const delivery = this.stashNear(this.idx(start.x, start.y), [[item, n]]);
+    return { ok: true, moved: n, ...delivery };
   }
 
   // ───────────────────────── 자동화 설비 모듈 (regional-v1) ─────────────────────────
@@ -2660,7 +2681,7 @@ export class World {
       b.status = 'no-recipe';
       return;
     }
-    // 분리기처럼 평균 개수가 1보다 작은 결과도 최소 1개 분량은 쌓아 둘 수 있게
+    // 결과 품목마다 두 번의 제작 분량을 보관한다.
     if (r.outputs.some((o) => countOf(b.outBuf, o.item) >= Math.max(1, o.count) * MACHINE_BUFFER_CRAFTS)) {
       b.status = 'output-full';
       return;
@@ -4164,12 +4185,6 @@ export class World {
     }
     const r = this.recipeOf(b);
     if (!r) return;
-    if (r.pattern) {
-      // 분리기: 정해진 순서대로 하나씩
-      this.produce(b, r.pattern[b.cycle % r.pattern.length], 1);
-      b.cycle = (b.cycle + 1) % r.pattern.length;
-      return;
-    }
     for (const o of r.outputs) this.produce(b, o.item, o.count);
     this.stats.recipeDone.set(r.id, (this.stats.recipeDone.get(r.id) ?? 0) + 1);
     this.ach.addWin(`r:${r.id}`, 1, this.time);
@@ -5615,6 +5630,8 @@ export class World {
     const oldGrid = rules !== 'legacy-v042' && data.grid !== 'pole-grid-v1';
     let terminals = 0;
     let retiredChargers = 0;
+    const updatedSeparators: Building[] = [];
+    const updatedRecipes: Building[] = [];
     for (const s of data.buildings) {
       if (s.type === 'charger') {
         retiredChargers++;
@@ -5659,6 +5676,33 @@ export class World {
       // 슬롯이 비었는데 모듈 배치·분리 예약이 있는 손상 저장은 아이템을 만들어 맞추지 않고 효과만 버린다
       b.modBatch = !!s.modBatch && !!b.module && b.crafting;
       b.detach = !!s.detach && !!b.module;
+      if ((data.rev ?? 0) < 2 && b.type === 'separator' && b.recipe === 'separate') {
+        // 구 방식은 시작 때 가루 1개만 차감했다. 그것을 새 10개 배치로 완성/환불하지 않는다.
+        if (b.crafting) addTo(b.inBuf, 'mineral-dust', 1);
+        b.crafting = false;
+        b.modBatch = false;
+        b.progress = 0;
+        b.cycle = 0;
+        updatedSeparators.push(b);
+      }
+      if ((data.rev ?? 0) < 3) {
+        // 이전 레시피로 이미 소모한 재료만 환불한다. 새 레시피의 투입량을 쓰면 실물이 바뀐다.
+        // rev1 배포본은 일반 세척3모래+2물, rev2 작업본은2모래+1물이었다.
+        const original = (data.rev ?? 0) < 2;
+        const inputs: [ItemId, number][] | null = b.type === 'washer' && b.recipe === 'wash'
+          ? [['sand', original ? 3 : 2], ['water', original ? 2 : 1]]
+          : b.type === 'assembler' && b.recipe === 'concrete'
+            ? [['slag', 2], ['gravel', 1]]
+            : original && b.type === 'washer' && b.recipe === 'acid-wash'
+              ? [['sand', 3], ['water', 2], ['sulfuric-acid', 1]] : null;
+        if (inputs) {
+          if (b.crafting) for (const [item, n] of inputs) addTo(b.inBuf, item, n);
+          b.crafting = false;
+          b.modBatch = false;
+          b.progress = 0;
+          updatedRecipes.push(b);
+        }
+      }
       w.attach(b);
     }
     w.nextStationNo = data.nextStationNo ?? Math.max(0, ...w.stations().map((s) => s.stationNo)) + 1;
@@ -5722,6 +5766,8 @@ export class World {
       if (item && n > 0) w.piles.push({ tile, item, n, ev, why });
     }
     w.nextPileEv = Math.max(data.pileEv ?? 1, ...w.piles.map((p) => p.ev + 1));
+    // 취소된 구 배치의 분리 예약은 여기서 마무리한다. 기존 더미의 사건 번호를 먼저 복원해야 한다.
+    for (const b of [...updatedSeparators, ...updatedRecipes]) if (b.detach) w.dropModule(b, 'module');
     w.doneCmds = new Map(data.cmds ?? []);
     w.zones = (data.zones ?? []).map((z) => ({ ...z }));
     w.reservations = (data.resv ?? []).map((r) => ({ ...r }));
@@ -5742,6 +5788,8 @@ export class World {
     // v1은 입출구 방향이 없던 시절이라, 이어진 컨베이어를 보고 방향을 맞춰 준다.
     if (data.v === 1) for (const b of w.buildings.values()) w.orientLegacy(b);
     if (retiredChargers) w.loadNote = [w.loadNote, '충전기를 제거하고 건설 재료를 돌려드렸어요.'].filter(Boolean).join(' ');
+    if (updatedSeparators.length) w.loadNote = [w.loadNote, '분리기가 10초마다 철 7·구리 2·슬래그 1을 함께 만들어요. 진행 중이던 분리 작업의 재료는 입고 칸으로 돌려줬어요.'].filter(Boolean).join(' ');
+    if (updatedRecipes.length) w.loadNote = [w.loadNote, '세척·콘크리트 레시피가 바뀌었어요. 진행 중이던 작업의 재료는 입고 칸으로 돌려줬어요.'].filter(Boolean).join(' ');
     // 0.6.11~0.8.0은 창고에 바깥쪽 컨베이어만 닿아도 내보냈다. 이제는 창고마다 스위치를 켜야 한다
     if (!data.storageSwitch) {
       const leaders = new Set([...w.buildings.values()].filter((b) => b.type === 'storage' && w.storageExits(b).length).map((b) => w.storageGroup(b)[0].id));
@@ -5930,7 +5978,7 @@ export interface SavedBuilding {
   heldFrom: number;
   /** 흙 채굴기만 */
   mineDirt?: boolean;
-  /** 분리기 다음 차례 */
+  /** 창고·하역기의 다음 품목 차례 (구 저장에서는 분리 순번도 사용) */
   cycle?: number;
   /** 스마트 분류기만 */
   filter?: ItemId;

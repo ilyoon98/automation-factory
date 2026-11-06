@@ -1290,14 +1290,20 @@ body[data-top='narrow'] #tabs {
   padding: 7px 14px;
   opacity: 0;
   transition:
-    opacity 0.15s,
-    transform 0.15s steps(2);
+    opacity 0.15s steps(3),
+    transform 0.15s steps(3);
   pointer-events: none;
 }
 #toast.show {
   opacity: 1;
   transform: translate(-50%, 0);
 }
+/* 토스트: 처음 뜰 때 튀어 오르고, 떠 있는 동안 새 메시지가 오면 한 번 들썩인다 (ui.ts toast) */
+@keyframes toast-in { from { transform: translate(-50%, 10px) scale(0.94); opacity: 0; } to { transform: translate(-50%, 0); opacity: 1; } }
+@keyframes toast-bump { 0%, 100% { transform: translate(-50%, 0); } 40% { transform: translate(-50%, -4px); } }
+html:not(.reduced-effects) #toast.show.enter { animation: toast-in 0.16s steps(3) both; }
+html:not(.reduced-effects) #toast.show.bump { animation: toast-bump 0.2s steps(3); }
+html.reduced-effects #toast { transition: none; }
 
 /* 채팅: 위쪽 바 아래 ~ 툴바 위 아무 줄에서 오른쪽 → 왼쪽으로 흘러가는 메시지 (줄 높이는 chat.ts의 LANE_H) */
 #chat-flow {

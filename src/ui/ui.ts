@@ -1057,7 +1057,14 @@ export class UI {
 
   toast(msg: string, ms = 1800): void {
     const el = $('toast');
+    const shown = el.classList.contains('show');
     el.textContent = msg;
+    // 처음 뜨면 enter, 떠 있는데 새 메시지가 오면 bump (같은 클래스를 다시 달아도 움직이게 한 번 비운다)
+    el.classList.remove('enter', 'bump');
+    if (!reducedEffects()) {
+      void el.offsetWidth;
+      el.classList.add(shown ? 'bump' : 'enter');
+    }
     el.classList.add('show');
     clearTimeout(this.toastTimer);
     this.toastTimer = window.setTimeout(() => el.classList.remove('show'), ms);

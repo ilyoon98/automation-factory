@@ -379,7 +379,8 @@ h3 small {
 }
 
 /* 위쪽 팝오버 (시간·메뉴·함께 하기·채팅): 위쪽 바 전체 아래 8px. 좌우 위치는 topbar.ts가 버튼에 맞춰 화면 안으로 */
-.popover {
+.popover,
+.popover-like {
   position: fixed;
   top: calc(var(--top-h, 84px) + 8px);
   z-index: 50;
@@ -1467,7 +1468,8 @@ body[data-top='narrow'] #tabs {
 
 /* 모달 */
 /* 큰 창: 위쪽 바 아래 8px 가운데. 위쪽 바는 덮지 않아 다른 창 버튼·팝오버를 바로 누를 수 있다 */
-.modal {
+.modal,
+.modal-like {
   position: fixed;
   inset: var(--top-h, 84px) 0 0 0;
   z-index: 80;
@@ -2166,7 +2168,7 @@ body.one-panel #left {
 #info .load-stock .row { flex-wrap: wrap; gap: 4px; }
 
 /* 시작화면: 위쪽 바까지 덮고 멈춘 공장을 흐리게 비춘다. 업데이트 알림(50)은 위에 남긴다 */
-#start.modal { inset: 0; z-index: 45; align-items: center; padding: 16px; background: rgba(43, 33, 25, 0.62); }
+#start.modal, #start.modal-like { inset: 0; z-index: 45; align-items: center; padding: 16px; background: rgba(43, 33, 25, 0.62); }
 #start .start-card { width: min(420px, calc(100vw / var(--uiz) - 32px)); background: var(--paper); border: 3px solid var(--ink); box-shadow: var(--bevel), 6px 6px 0 rgba(20, 12, 6, 0.45); padding: 20px 18px 12px; text-align: center; }
 #start h1 { margin: 0 0 16px; font-size: 24px; color: var(--ink); }
 #start .start-actions { display: flex; flex-direction: column; gap: 8px; }
@@ -2191,3 +2193,45 @@ body.one-panel #left {
 #players .link[data-level="good"] { color: #3f8a3a; }
 #players .link[data-level="slow"] { color: #b7791f; }
 #players .link[data-level="bad"] { color: #c0392b; font-weight: 700; }
+
+/* ───── UI 움직임: 창 열기·닫기, 버튼·카드 반응, 숫자·막대 변화 (효과 줄이기를 켜면 모두 끈다) ───── */
+@keyframes ui-pop { from { transform: translateY(6px) scale(0.96); opacity: 0; } to { transform: none; opacity: 1; } }
+@keyframes ui-drop { from { transform: translateY(-6px); opacity: 0; } to { transform: none; opacity: 1; } }
+@keyframes ui-slide { from { transform: translateX(10px); opacity: 0; } to { transform: none; opacity: 1; } }
+@keyframes ui-fade { from { opacity: 0; } to { opacity: 1; } }
+@keyframes ui-out { from { transform: none; opacity: 1; } to { transform: translateY(4px) scale(0.96); opacity: 0; } }
+@keyframes ui-fade-out { from { opacity: 1; } to { opacity: 0; } }
+@keyframes card-in { from { transform: translateY(8px); opacity: 0; } to { transform: none; opacity: 1; } }
+@keyframes card-pick { 0% { transform: none; } 40% { transform: translateY(-3px); } 100% { transform: none; } }
+html:not(.reduced-effects) .modal:not([hidden]) { animation: ui-fade 0.12s steps(3) both; }
+/* 창 안 내용은 다시 그릴 때마다 튀지 않게, 열리는 순간 붙는 ui-opening 동안만 */
+html:not(.reduced-effects) .modal.ui-opening > * { animation: ui-pop 0.14s steps(3) both; }
+html:not(.reduced-effects) .popover:not([hidden]) { animation: ui-drop 0.1s steps(2) both; }
+html:not(.reduced-effects) #info:not([hidden]) { animation: ui-slide 0.12s steps(3) both; }
+/* 닫힘 잔상 (ui-motion.ts가 잠깐 띄웠다 지운다) */
+.ui-ghost { pointer-events: none; }
+.ui-ghost.modal-like { animation: ui-fade-out 0.14s steps(3) both; }
+.ui-ghost.modal-like > * { animation: ui-out 0.14s steps(3) both; }
+.ui-ghost:not(.modal-like) { animation: ui-out 0.12s steps(3) both; }
+/* 버튼은 눌린 동안 한 칸 내려앉는다 */
+html:not(.reduced-effects) button:active:not(:disabled) { transform: translateY(1px); }
+/* 툴바: 탭을 바꾸면 카드가 차례로 올라오고, 고른 카드는 한 번 튄다 */
+html:not(.reduced-effects) #palette .pal { animation: card-in 0.16s steps(3) both; }
+html:not(.reduced-effects) #palette .pal:nth-child(2) { animation-delay: 20ms; }
+html:not(.reduced-effects) #palette .pal:nth-child(3) { animation-delay: 40ms; }
+html:not(.reduced-effects) #palette .pal:nth-child(4) { animation-delay: 60ms; }
+html:not(.reduced-effects) #palette .pal:nth-child(5) { animation-delay: 80ms; }
+html:not(.reduced-effects) #palette .pal:nth-child(6) { animation-delay: 100ms; }
+html:not(.reduced-effects) #palette .pal:nth-child(7) { animation-delay: 120ms; }
+html:not(.reduced-effects) #palette .pal:nth-child(8) { animation-delay: 140ms; }
+html:not(.reduced-effects) #palette .pal:nth-child(9) { animation-delay: 160ms; }
+html:not(.reduced-effects) #palette .pal:nth-child(10) { animation-delay: 180ms; }
+html:not(.reduced-effects) #palette .pal.active { animation: card-pick 0.24s steps(4); }
+html:not(.reduced-effects) #tabs .tab.active { animation: card-pick 0.2s steps(3); }
+/* 허브 재고: 늘면 초록, 줄면 빨강으로 잠깐 */
+#stock .stock-row b.up { color: #3f8a3a; }
+#stock .stock-row b.down { color: #c0392b; }
+#stock .stock-row b.up::after { content: ' ▲'; font-size: 9px; }
+#stock .stock-row b.down::after { content: ' ▼'; font-size: 9px; }
+/* 진행 막대: 이전 폭에서 새 폭으로 끊어지며 (ui-motion.ts가 이전 폭을 이어 준다) */
+html:not(.reduced-effects) [data-bar] { transition: width 0.4s steps(5); }

@@ -70,6 +70,7 @@ import { equipmentHelp, powerUsage, unloaderInfo } from './equipment-info';
 import { planRoad, type RoadPlanResult } from '../sim/road-plan';
 import { replaceRoadBuilder, roadBuilderHtml, roadPlanKey } from './road-builder';
 import { replacePanel } from './panel';
+import { ChangeFlash, setupUiMotion, tweenBars } from './ui-motion';
 
 export interface GameApi {
   getWorld(): World;
@@ -284,6 +285,7 @@ export class UI {
   private histNext = 0;
 
   constructor(private game: GameApi) {
+    setupUiMotion();
     this.toolbar = new Toolbar(game.input);
     this.toolbar.onLockedClick = (t) => this.openResearchFor(t);
     this.codex = new Codex(
@@ -1445,11 +1447,12 @@ export class UI {
     $('power').innerHTML = `
       <h3>전력</h3>
       <div class="row"><span>전력 사용률</span><b style="color:${usage.color}">${usage.percent === null ? '공급 없음' : `${usage.percent}%`}</b></div>
-      <div class="bar" title="수요 ÷ 공급 용량. 빈 부분은 여유 용량이며, 100%를 넘으면 용량이 부족해요."><div style="width:${usage.fill}%;background:${usage.color}"></div></div>
+      <div class="bar" title="수요 ÷ 공급 용량. 빈 부분은 여유 용량이며, 100%를 넘으면 용량이 부족해요."><div data-bar="power" style="width:${usage.fill}%;background:${usage.color}"></div></div>
       <div class="row" title="사용은 기계가 요청한 작업 전력이며, 공급은 발전·축전의 공급 용량이에요."><span>사용 / 공급</span><b>${Math.round(p.demand)} / ${Math.round(p.capacity)} kW</b></div>
       ${usage.shortfall > 0.5 ? `<p class="power-src" style="color:${usage.color}">전력 부족 ${Math.round(usage.shortfall)} kW</p>` : ''}
       ${parts.length > 1 ? `<p class="muted power-src">${parts.join(' · ')} kW</p>` : ''}
       ${p.charge > 0 ? `<p class="muted power-src">충전 수요 ${Math.round(p.charge)} kW</p>` : ''}`;
+    tweenBars($('power'));
   }
 
   /** 창고: 바깥쪽 컨베이어로 내보내기 스위치와 품목 (합쳐진 창고는 묶음 전체에 같이 적용) */
@@ -1566,7 +1569,7 @@ export class UI {
         ].filter(Boolean);
         return `<div class="zone-row" data-net="${id}" title="누르면 이 망으로">
           <div class="row"><span>전력망 ${id} <span class="muted">${id === hubNet ? '허브' : s.source ? '' : '공급원 없음'}</span></span><b style="color:${color}">${usage.percent === null ? '공급 없음' : `사용 ${usage.percent}%`}</b></div>
-          <div class="bar" title="수요 ÷ 공급 용량. 빈 부분은 여유 용량이며, 100%를 넘으면 용량이 부족해요."><div style="width:${usage.fill}%;background:${color}"></div></div>
+          <div class="bar" title="수요 ÷ 공급 용량. 빈 부분은 여유 용량이며, 100%를 넘으면 용량이 부족해요."><div data-bar="net-${id}" style="width:${usage.fill}%;background:${color}"></div></div>
           <p class="muted power-src" title="사용은 기계가 요청한 작업 전력이며, 공급은 발전·축전의 공급 용량이에요.">사용 ${kw(need)} / 공급 ${kw(s.capacity)} kW${extra.length ? ` · ${extra.join(' · ')}` : ''}</p>
           ${usage.shortfall > 0.5 ? `<p class="power-src" style="color:#c0392b">전력 부족 ${kw(usage.shortfall)} kW</p>` : ''}</div>`;
       })
@@ -1574,6 +1577,7 @@ export class UI {
     $('power').innerHTML = `<h3>전력 <span class="muted">일하는 망 ${nets.length}개 · 거점 ${w.zones.length}곳</span></h3>${rows}
       ${nets.length > shown.length ? `<p class="muted power-src">외 ${nets.length - shown.length}개 망</p>` : ''}
       ${!nets.length ? '<p class="muted power-src">전기를 사용하는 설비가 없어요.</p>' : ''}`;
+    tweenBars($('power'));
   }
 
   private updateStock(w: World): void {
@@ -1587,10 +1591,11 @@ export class UI {
     // 허브 재고: 처음엔 STOCK_FOLD개만, 펼치면 전부 (들어오는 속도가 있는 것부터)
     const items = ITEM_IDS.filter((i) => w.stockOf(i) > 0 || w.incomePerMinute(i) > 0);
     const shown = this.stockOpen ? items : items.slice(0, STOCK_FOLD);
+    const flash = this.stockChange.mark(w, shown.map((i) => [i, w.stockOf(i)]), performance.now(), !reducedEffects());
     const rows = shown
       .map((i) => {
         const rate = w.incomePerMinute(i);
-        return `<div class="row stock-row" data-item="${i}" title="클릭: 도감">${itemIcon(i)}<span>${ITEMS[i].name}</span><b>${w.stockOf(i)}</b><em>${rate ? `+${rate}/분` : ''}</em></div>`;
+        return `<div class="row stock-row" data-item="${i}" title="클릭: 도감">${itemIcon(i)}<span>${ITEMS[i].name}</span><b class="${flash.get(i) ?? ''}">${w.stockOf(i)}</b><em>${rate ? `+${rate}/분` : ''}</em></div>`;
       })
       .join('');
     // 펼치기·접기는 제목 줄에 (펼친 뒤 접으려고 맨 아래까지 내려가지 않게)
@@ -1598,6 +1603,8 @@ export class UI {
     $('stock').innerHTML = `<h3 class="stock-head">허브 재고 <small class="muted">${items.length}종</small>${more}</h3>${rows || '<p class="muted">비어 있음</p>'}`;
   }
   private stockOpen = false;
+  /** 허브 재고 증감 표시 (바뀐 개수를 잠깐 초록·빨강으로) */
+  private stockChange = new ChangeFlash<ItemId>();
 
   /** 곧 바닥나거나 바닥난 광맥: 처음 한 번은 알림, 해결될 때까지 왼쪽 위 목록 */
   private updateOreAlerts(w: World): void {
@@ -1676,7 +1683,7 @@ export class UI {
     const cur = currentGoal(w);
     this.applyGuideFocus(w, cur ? goalFocus(w, cur) : null);
     const pct = Math.round((done / MAIN_GOALS.length) * 100);
-    const head = `<h3>메인 목표 <small>${done}/${MAIN_GOALS.length}</small></h3><div class="gbar"><i style="width:${pct}%"></i></div>`;
+    const head = `<h3>메인 목표 <small>${done}/${MAIN_GOALS.length}</small></h3><div class="gbar"><i data-bar="goal" style="width:${pct}%"></i></div>`;
     const g = currentGoal(w);
     if (!g) {
       $('guide').innerHTML = `${head}<p class="muted">공장망 완성! 지도는 계속 운영할 수 있어요. 끝없는 연구와 거점 확장을 이어 가 보세요.</p>`;
@@ -1700,6 +1707,7 @@ export class UI {
     if (html === this.guideHtml || $('guide').contains(document.activeElement) && document.activeElement instanceof HTMLSelectElement) return;
     this.guideHtml = html;
     $('guide').innerHTML = html;
+    tweenBars($('guide'));
   }
   private guideHtml = '';
 
@@ -1748,7 +1756,7 @@ export class UI {
       })
       .join('');
     return `<div class="row"><span>🚀 우주 엘리베이터 <small class="muted">${e.stage + 1}/${ELEVATOR_STAGES.length} ${s.name}</small></span><b>${pct}%</b></div>
-      <div class="gbar"><i style="width:${pct}%"></i></div>
+      <div class="gbar"><i data-bar="elevator" style="width:${pct}%"></i></div>
       <ul class="steps chals">${rows}</ul>
       <div class="actions"><button data-elevator title="허브에 들어온 물건 중 지금 단계에 필요한 것을 엘리베이터로 보내요. 건설 재료가 모자라면 잠시 꺼 두세요">${e.on ? '허브 납품 켜짐' : '허브 납품 꺼짐'}</button></div>`;
   }
@@ -1971,7 +1979,7 @@ export class UI {
     this.guideWorld = w;
     const done = GUIDE.filter((s) => w.guideDone.has(s.title)).length;
     const pct = Math.round((done / GUIDE.length) * 100);
-    const head = `<h3>목표 <small>${done}/${GUIDE.length}</small></h3><div class="gbar"><i style="width:${pct}%"></i></div>`;
+    const head = `<h3>목표 <small>${done}/${GUIDE.length}</small></h3><div class="gbar"><i data-bar="guide" style="width:${pct}%"></i></div>`;
     const cur = GUIDE.findIndex((s) => !w.guideDone.has(s.title));
     this.applyGuideFocus(w, cur < 0 ? null : (GUIDE[cur].focus?.(w) ?? null));
     if (cur < 0) {

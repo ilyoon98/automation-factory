@@ -26,6 +26,8 @@ export interface StartState {
   /** 같은 와이파이에 들어갈 수 있는 방 수 */
   rooms: number;
   version: string;
+  /** 제목 아래 컨베이어에 실려 지나가는 물건 그림 (주소). 없으면 띠를 그리지 않는다 */
+  belt?: string[];
 }
 
 export interface StartActions {
@@ -73,7 +75,8 @@ export function startScreenHtml(s: StartState, edit: Editing = NO_EDIT): string 
     .join('');
   const list = s.slots.length ? `<section class="start-slots"><h2>공장 목록</h2>${rows}</section>` : '';
   return `<div class="start-card">
-    <h1>자동화 공장</h1>
+    <h1 class="start-title" aria-label="자동화 공장">${titleLetters('자동화 공장')}</h1>
+    ${beltHtml(s.belt)}
     <div class="start-actions">${play}${fresh}${together}</div>
     ${list}
     <p class="muted">게임 버전 ${s.version}</p>
@@ -177,6 +180,18 @@ export class StartScreen {
     this.edit = { ...NO_EDIT };
     run();
   }
+}
+
+/** 제목 글자를 하나씩 떨어뜨리려고 글자마다 칸을 나눈다 (차례는 --i) */
+function titleLetters(title: string): string {
+  return [...title].map((c, i) => (c === ' ' ? '<span class="sp"> </span>' : `<span aria-hidden="true" style="--i:${i}">${c}</span>`)).join('');
+}
+
+/** 제목 아래 작은 컨베이어: 같은 줄을 두 번 이어 붙여 끊김 없이 돈다. 물건 하나가 40px, 1초에 40px을 2px씩 끊어 간다 */
+function beltHtml(icons: string[] | undefined): string {
+  if (!icons?.length) return '';
+  const row = icons.map((src) => `<img src="${src}" alt="">`).join('');
+  return `<div class="start-belt" aria-hidden="true"><div class="belt-track" style="animation-duration:${icons.length}s;animation-timing-function:steps(${icons.length * 20})">${row}${row}</div></div>`;
 }
 
 /** 저장 시각: 오늘이면 시:분, 아니면 월/일 시:분 */

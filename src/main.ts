@@ -11,7 +11,7 @@ import { SaveSlots } from './sim/save-slots';
 import { generateRegionalWorld } from './sim/regional-map';
 import { generateTerritoryWorld, territoryName } from './sim/territory-map';
 import { TerritoryHost } from './net/territory-host';
-import { mapIcon } from './ui/icons';
+import { itemIconUrl, mapIcon } from './ui/icons';
 import { Chat } from './ui/chat';
 import { uiZoom } from './ui/crisp';
 import { Minimap } from './ui/minimap';
@@ -543,8 +543,11 @@ function startState(): StartState {
     netReady: ui.togetherReady,
     rooms: session.lanRooms.filter((r) => lanRoomCheck(r) === 'ok').length,
     version: VERSION,
+    belt: START_BELT.map(itemIconUrl),
   };
 }
+/** 시작화면 컨베이어에 실려 가는 물건: 처음 만드는 것부터 끝무렵 부품까지 */
+const START_BELT = ['iron-plate', 'gear', 'copper-wire', 'wood', 'circuit', 'bronze', 'plastic', 'motor'] as const;
 
 /** 시작화면을 닫으면 시작화면이 멈춘 공장만 원래 속도로 돌린다 */
 function leaveStart(): void {

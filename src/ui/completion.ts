@@ -13,9 +13,10 @@ export class ResearchObserver {
   }
 }
 
-export type NoticeKind = 'general' | 'research' | 'finale';
+/** goal = 목표·지역·업적 달성 (불꽃은 있고 연구 문장은 없다) */
+export type NoticeKind = 'general' | 'goal' | 'research' | 'finale';
 export interface CompletionNotice { title: string; body: string; kind: NoticeKind; ms: number }
-const priority: Record<NoticeKind, number> = { general: 0, research: 1, finale: 2 };
+const priority: Record<NoticeKind, number> = { general: 0, goal: 1, research: 1, finale: 2 };
 
 /** 큰 카드 하나. 같은 종류는 한 장으로 묶고, 최종 완료가 우선한다. */
 export class NoticeQueue {

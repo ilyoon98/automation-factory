@@ -163,6 +163,17 @@ const HOP_SEC = 0.28;
 const SHARD_G = 220;
 /** 연구를 마쳤을 때 허브 반짝임 시간 (초) */
 const SPARKLE_SEC = 0.6;
+/**
+ * 일하는 동안 굴뚝에서 오르는 연기: 굴뚝 입구 (그림 픽셀, 건물 왼쪽 위 기준)와 색 셋 (몸 · 그늘 · 밝은 점).
+ * 모래색 땅에서도 덩어리로 읽히게 오른쪽 아래에 그늘을 둔다. 발전기는 보일러 김 (푸른 흰색)
+ */
+const SMOKE: Partial<Record<BuildingType, { x: number; y: number; c: string; s: string; h: string }>> = {
+  smelter: { x: 25, y: 3, c: '#a39b8f', s: '#6f675d', h: '#d6d0c4' },
+  'fuel-generator': { x: 33, y: 1, c: '#8a847c', s: '#55504a', h: '#bdb7ad' },
+  generator: { x: 9, y: 4, c: '#e9eff2', s: '#9fb0bb', h: '#ffffff' },
+};
+/** 고른 건물 테두리가 바깥에서 조여 들어오는 시간 */
+const SELECT_SNAP = 0.14;
 
 /** 철거 조각에 쓸 건물 그림 (종류마다 대표 모양 하나, 첫 프레임) */
 function artOf(b: Building): string {
@@ -217,6 +228,11 @@ export class Renderer {
   /** 지난 프레임까지 끝난 연구 수, 허브 반짝임이 시작된 시각 (없으면 -1) */
   private seenResearch = 0;
   private seenFinale = false;
+  /** 이룬 메인 목표 수 (늘면 허브에서 반짝) */
+  private seenGoals = 0;
+  /** 고른 건물과 고른 시각 (테두리가 조여 드는 움직임) */
+  private selId: number | null = null;
+  private selAt = -Infinity;
   private sparkleT0 = -1;
   private finalSparkle = false;
   /** 밤 어둠을 그리는 화면 크기 캔버스 (불빛 자리를 도려낸 뒤 덮는다) */
@@ -270,6 +286,7 @@ export class Renderer {
     if (this.seenWorld) {
       this.seenResearch = researchCount(this.seenWorld);
       this.seenFinale = this.seenWorld.goals.has('MG36');
+      this.seenGoals = this.seenWorld.goals.size;
       this.lastGameTime = this.seenWorld.time;
       this.lastRainAt = this.seenWorld.time;
       this.revealTiles = [];
@@ -420,6 +437,7 @@ export class Renderer {
       }
     }
     for (const b of visible) if (!isLine(b) && b.type !== 'road') this.drawBuilding(world, b);
+    this.drawSmoke(visible);
     if (world.regional && z >= 6) this.drawWires(world, view, x0, y0, x1, y1);
     if (world.territory) this.drawTerritoryLabels(world);
     if (world.elevator) this.drawElevator(world);
@@ -479,12 +497,15 @@ export class Renderer {
       ctx.setLineDash([]);
     }
 
-    // 선택한 건물
+    // 선택한 건물: 고른 순간 테두리가 4px 바깥에서 조여 들어온다
+    if (view.selectedId !== this.selId) { this.selId = view.selectedId; this.selAt = performance.now() / 1000; }
     if (view.selectedId) {
       const b = world.buildings.get(view.selectedId);
       if (b) {
         const [sx, sy] = cam.worldToScreen(b.x, b.y);
-        this.outline(sx, sy, b.size * z, b.size * z, SELECT);
+        const k = reducedEffects() ? 1 : Math.min(1, (performance.now() / 1000 - this.selAt) / SELECT_SNAP);
+        const off = Math.round(4 * (1 - k) * (1 - k));
+        this.outline(sx - off, sy - off, b.size * z + off * 2, b.size * z + off * 2, SELECT);
         if (isForestType(b.type)) this.drawForestRange(b.type, b.x, b.y, b.size);
       }
     }
@@ -630,7 +651,10 @@ export class Renderer {
     const rejection = this.rejection;
     if (rejection && performance.now() / 1000 < rejection.until && this.onScreen(rejection.x, rejection.y, rejection.size)) {
       const [sx, sy] = cam.worldToScreen(rejection.x, rejection.y);
-      this.outline(sx, sy, rejection.size * z, rejection.size * z, PAL.red);
+      // 안 된다고 고개를 젓듯 좌우로 흔들리다 멈춘다 (이유 글자는 읽히게 그대로)
+      const age = 0.25 - (rejection.until - performance.now() / 1000);
+      const shake = reducedEffects() ? 0 : Math.round(Math.sin(age * 70) * 3 * (1 - age / 0.25));
+      this.outline(sx + shake, sy, rejection.size * z, rejection.size * z, PAL.red);
       this.text(rejection.reason, sx + rejection.size * z / 2, sy - 4, CREAM, 12, PAL.ink, 'center', 'bottom');
     }
   }
@@ -656,6 +680,7 @@ export class Renderer {
       this.hops.clear();
       this.seenResearch = researchCount(world);
       this.seenFinale = world.goals.has('MG36');
+      this.seenGoals = world.goals.size;
       this.sparkleT0 = -1;
       return;
     }
@@ -689,10 +714,12 @@ export class Renderer {
     this.seenCount = world.buildings.size;
     // 화면 밖에서 지어 한 번도 안 그린 건물도 잊는다
     for (const [id, t0] of this.hops) if (now - t0 >= HOP_SEC) this.hops.delete(id);
-    // 연구를 마치면 (누가 했든) 허브에서 반짝
+    // 연구를 마치거나 메인 목표를 이루면 (누가 했든) 허브에서 반짝
     const done = researchCount(world);
     const finale = world.goals.has('MG36') && !this.seenFinale;
-    if ((done > this.seenResearch || finale) && !document.hidden && !reducedEffects() && world.hub && this.onScreen(world.hub.x, world.hub.y, world.hub.size)) {
+    const goal = world.goals.size > this.seenGoals;
+    this.seenGoals = world.goals.size;
+    if ((done > this.seenResearch || finale || goal) && !document.hidden && !reducedEffects() && world.hub && this.onScreen(world.hub.x, world.hub.y, world.hub.size)) {
       this.sparkleT0 = now; this.finalSparkle = finale;
     }
     this.seenFinale = world.goals.has('MG36');
@@ -715,6 +742,45 @@ export class Renderer {
       return Math.round(h * (1 - k * k));
     }
     return Math.round((h / 3) * Math.sin((Math.PI * (t - HOP_FALL)) / (HOP_SEC - HOP_FALL)));
+  }
+
+  /**
+   * 일하는 제련로·발전기 굴뚝 위로 오르는 연기. 작업 프레임과 같은 누적 작업량(위상)을 따른다:
+   * 멈추면 연기도 멈추고, 전력이 모자라 느리게 일하면 연기도 느리게 오른다.
+   * 한 굴뚝에 세 덩이: 작게 나와 커지며 바람 쪽으로 흘러 흐려진다. 픽셀 원 모양 (모서리 한 칸씩 깎음)
+   */
+  private drawSmoke(visible: Building[]): void {
+    if (this.lod || reducedEffects()) return;
+    const ctx = this.ctx;
+    const u = this.u;
+    for (const b of visible) {
+      const s = SMOKE[b.type];
+      if (!s) continue;
+      const on = b.type === 'smelter' ? b.status === 'working' || b.status === 'low-power' : b.load > 0;
+      if (!on) continue;
+      const [sx, sy0] = this.cam.worldToScreen(b.x, b.y);
+      const sy = sy0 - this.hopLift(b) * u;
+      const phase = isGeneratorType(b.type) ? this.generatorPhase.get(b.id) ?? 0 : this.activity.work.get(b.id) ?? 0;
+      const px = (x: number, y: number, w: number, h: number, c: string) => {
+        ctx.fillStyle = c;
+        ctx.fillRect(sx + x * u, sy + y * u, w * u, h * u);
+      };
+      for (let k = 0; k < 3; k++) {
+        const life = (phase * 0.6 + k / 3 + b.id * 0.137) % 1;
+        const n = life < 0.25 ? 2 : life < 0.5 ? 3 : life < 0.75 ? 4 : 5;
+        const x = Math.round(s.x + life * 6 + Math.sin((life + k) * 6) - n / 2);
+        const y = Math.round(s.y - life * 15 - n / 2);
+        ctx.globalAlpha = life < 0.6 ? 0.9 : 0.9 * (1 - (life - 0.6) / 0.4);
+        if (n === 2) { px(x, y, 2, 2, s.c); px(x + 1, y + 1, 1, 1, s.s); continue; }
+        // 픽셀 원: 모서리 한 칸씩 깎은 몸, 오른쪽·아래 그늘, 왼쪽 위 밝은 점
+        px(x, y + 1, n, n - 2, s.c);
+        px(x + 1, y, n - 2, n, s.c);
+        px(x + 1, y + n - 1, n - 2, 1, s.s);
+        px(x + n - 1, y + 1, 1, n - 2, s.s);
+        if (n >= 4) px(x + 1, y + 1, 1, 1, s.h);
+      }
+    }
+    ctx.globalAlpha = 1;
   }
 
   private drawReveal(world: World): void {

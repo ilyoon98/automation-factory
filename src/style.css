@@ -2439,3 +2439,47 @@ html:not(.reduced-effects) #tabs .tab.active { animation: card-pick 0.2s steps(3
 #stock .stock-row b.down::after { content: ' ▼'; font-size: 9px; }
 /* 진행 막대: 이전 폭에서 새 폭으로 끊어지며 (ui-motion.ts가 이전 폭을 이어 준다) */
 html:not(.reduced-effects) [data-bar] { transition: width 0.4s steps(5); }
+
+/* ───── 손맛 (2026-11-11): 상태가 바뀐 그 순간만 짧게, steps()로 픽셀처럼 끊어서. 효과 줄이기를 켜면 모두 끈다 ───── */
+/* 아이콘이 다른 그림으로 바뀌면 (저장됨 · 하늘 · 소리) 위에서 툭 내려앉는다. pixel-icons.ts setIcon이 ico-swap을 붙인다 */
+@keyframes ico-swap { 0% { transform: translateY(-4px) scale(1.25); opacity: 0.3; } 50% { transform: translateY(1px) scale(0.9); opacity: 1; } 100% { transform: none; } }
+html:not(.reduced-effects) .ico-swap::before { animation: ico-swap 0.2s steps(3) both; }
+/* 켜고 끄는 보기: 등이 켜지는 순간 한 번 하얗게 번쩍 */
+@keyframes lamp-on { 0%, 49% { background: #fffbe0; box-shadow: 0 0 0 1px var(--ink), 0 0 0 3px rgba(255, 243, 176, 0.7); } }
+html:not(.reduced-effects) #topbar button.toggle.active::after { animation: lamp-on 0.24s steps(1); }
+/* 새 연구 보석: 2.4초마다 한 번 깡총 뛰며 반짝 (정지 화면에서도 눈에 띄게, 크기는 그대로) */
+@keyframes gem-hop {
+  0%, 84%, 100% { translate: 0 0; }
+  88% { translate: 0 -2px; box-shadow: 0 0 0 2px var(--ink), inset 2px 2px 0 #ffffff, inset -2px -2px 0 #3f8a3a; }
+  92% { translate: 0 0; }
+}
+html:not(.reduced-effects) #topbar #btn-research .dot { animation: gem-hop 2.4s steps(1) infinite; }
+/* 마우스를 올리면 한 픽셀 들린다. 터치는 누를 때 가짜 hover가 생겨 마우스일 때만 */
+@media (hover: hover) and (pointer: fine) {
+  html:not(.reduced-effects) #topbar button:hover:not(:disabled)::before { translate: 0 -1px; }
+  html:not(.reduced-effects) #palette .pal:hover:not(:disabled) { translate: 0 -2px; }
+}
+/* 알림 카드: 머리글이 도장처럼 찍힌다. 달성 불꽃은 금빛과 초록을 섞어 */
+@keyframes stamp { 0% { transform: scale(1.8) rotate(-4deg); opacity: 0; } 50% { transform: scale(0.92) rotate(1deg); opacity: 1; } 100% { transform: none; } }
+html:not(.reduced-effects) #notice:not([hidden]) h3 { transform-origin: left center; animation: stamp 0.24s steps(3) 0.05s both; }
+#notice[data-kind="goal"] .notice-sparks i:nth-child(even) { background: #7fd35a; }
+/* 목표 카드: 확인 항목이 채워지면 표시에 도장 + 줄이 금빛으로 한 번. 다음 목표 카드는 아래에서 올라온다.
+   ui.ts fresh()가 지난 시간만큼 앞당긴 지연(--t)을 줘서 카드를 다시 그려도 끊기지 않는다 */
+@keyframes check-stamp { 0% { transform: scale(2.4); opacity: 0; } 34% { transform: scale(0.8); opacity: 1; } 67% { transform: scale(1.2); } 100% { transform: none; } }
+@keyframes row-glow { 0% { background: #f6d77e; } 100% { background: transparent; } }
+html:not(.reduced-effects) #guide .checks li[data-fresh] { animation: row-glow 0.7s steps(4) var(--t, 0s); }
+html:not(.reduced-effects) #guide .checks li[data-fresh] .mark { animation: check-stamp 0.3s steps(4) var(--t, 0s); }
+html:not(.reduced-effects) #guide .now[data-fresh] { animation: card-in 0.32s steps(4) var(--t, 0s) both; }
+/* 시작화면: 제목 글자가 차례로 떨어져 내려앉고, 아래 작은 컨베이어로 물건이 지나간다 (가끔 보는 화면이라 조금 더 놀아도 된다) */
+#start .start-title span { display: inline-block; }
+#start .start-title .sp { width: 0.35em; }
+@keyframes title-drop { 0% { transform: translateY(-14px); opacity: 0; } 60% { transform: translateY(2px); opacity: 1; } 80% { transform: translateY(-1px); } 100% { transform: none; } }
+html:not(.reduced-effects) #start .start-title span { animation: title-drop 0.3s steps(4) calc(var(--i, 0) * 60ms + 80ms) both; }
+#start .start-belt { position: relative; height: 22px; margin: -6px 0 16px; overflow: hidden; background: #5a3f26; box-shadow: inset 0 2px 0 var(--ink), inset 0 -2px 0 var(--ink); }
+#start .start-belt::before { content: ''; position: absolute; inset: 2px 0; background: repeating-linear-gradient(90deg, #6e4f31 0 4px, #5a3f26 4px 8px); }
+#start .belt-track { position: relative; display: flex; width: max-content; }
+#start .belt-track img { width: 16px; height: 16px; margin: 3px 12px; image-rendering: pixelated; }
+@keyframes belt-run { from { transform: translateX(-50%); } to { transform: none; } }
+@keyframes belt-stripes { from { background-position: 0 0; } to { background-position: 8px 0; } }
+html:not(.reduced-effects) #start .belt-track { animation-name: belt-run; animation-iteration-count: infinite; }
+html:not(.reduced-effects) #start .start-belt::before { animation: belt-stripes 0.2s steps(4) infinite; }

@@ -7,6 +7,8 @@
  * 버튼 글자를 바꿔도(textContent) ::before는 남는다. 상태에 따라 바꿀 때는 setIcon(el, 이름).
  */
 
+import { reducedEffects } from '../render/effects';
+
 /** 팔레트: style.css 토큰과 같은 색 + 아이콘용 몇 가지 */
 const PAL: Record<string, string> = {
   k: '#3b2716', // 잉크
@@ -579,8 +581,13 @@ function iconUrl(name: string): string | null {
 }
 
 /** el의 아이콘을 바꾼다 (같으면 그대로). null이면 아이콘을 뗀다 */
-export function setIcon(el: HTMLElement, name: string | null): void {
-  if ((el.dataset.ico ?? null) === name) return;
+/**
+ * 상태에 따라 아이콘을 바꾼다. 그림이 다른 그림으로 바뀌면(저장됨, 하늘, 소리) 아이콘이 한 번 툭 내려앉는다.
+ * swap=false: 자주 누르는 키(Space 정지)처럼 매번 움직이면 거슬리는 곳
+ */
+export function setIcon(el: HTMLElement, name: string | null, swap = true): void {
+  const prev = el.dataset.ico ?? null;
+  if (prev === name) return;
   const url = name ? iconUrl(name) : null;
   if (name && url) {
     el.dataset.ico = name;
@@ -588,6 +595,11 @@ export function setIcon(el: HTMLElement, name: string | null): void {
   } else {
     delete el.dataset.ico;
     el.style.removeProperty('--ico');
+  }
+  if (swap && prev && name && url && !reducedEffects()) {
+    el.classList.remove('ico-swap');
+    void el.offsetWidth; // 같은 애니메이션을 처음부터 다시
+    el.classList.add('ico-swap');
   }
 }
 

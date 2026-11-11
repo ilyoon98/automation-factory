@@ -1343,7 +1343,7 @@ export class UI {
     const pause = $('btn-pause');
     pause.classList.toggle('active', paused);
     setLabel(pause, paused ? '계속' : '정지');
-    setIcon(pause, paused ? 'play' : 'pause');
+    setIcon(pause, paused ? 'play' : 'pause', false);
     pause.title = paused ? `계속 (Space) — ${this.game.lastSpeed}×로` : '정지 (Space)';
     document.querySelectorAll<HTMLButtonElement>('#topbar [data-speed]').forEach((btn) => {
       btn.classList.toggle('active', Number(btn.dataset.speed) === this.game.speed);
@@ -1678,6 +1678,10 @@ export class UI {
    * 확장 세계의 메인 목표 카드: 장 이름 · 지금 목표 · 확인 항목(최대 3) · 안내. 판정은 시뮬레이션(goals.ts)이 한다
    */
   private updateMainGoals(w: World): void {
+    // 같은 공장에서 막 바뀐 것만 움직인다 (불러오기·방 참가로 한꺼번에 채워질 때는 조용히)
+    const same = w === this.guideWorld;
+    const now = performance.now();
+    if (!same) { this.checkSeen.clear(); this.checkDoneAt.clear(); this.shownGoal = ''; }
     const done = MAIN_GOALS.filter((g) => w.goals.has(g.id)).length;
     if (w !== this.guideWorld) this.finaleShown = w.goals.has('MG36');
     if (w !== this.guideWorld) this.elevatorShown = (w.elevator?.doneAt ?? -1) >= 0;
@@ -1689,13 +1693,13 @@ export class UI {
     if (w === this.guideWorld && done > this.goalCount) {
       const last = MAIN_GOALS.filter((g) => w.goals.has(g.id)).at(-1);
       if (w.goals.has('MG36') && !this.finaleShown) this.showFinale(w);
-      else if (last) this.notice(`목표 달성: ${last.title}`);
+      else if (last) this.notice(`목표 달성: ${last.title}`, '', 3000, 'goal');
     }
     // 지역 과제를 마쳐 새 땅이 열렸으면 알린다
     const stage = currentStage(w);
     if (w === this.guideWorld && stage > this.stageCount) {
       const opened = REGION_STAGES.slice(this.stageCount, stage).flatMap((s) => siteLabels(s.opens));
-      this.notice(`${mapIcon()} 새 지역이 열렸어요`, opened.join(', '));
+      this.notice(`${mapIcon()} 새 지역이 열렸어요`, opened.join(', '), 3500, 'goal');
     }
     this.stageCount = stage;
     this.goalCount = done;
@@ -1715,13 +1719,20 @@ export class UI {
       .map(([label, have, need, hint], i) => {
         const ok = have >= need;
         const pct = Math.round(Math.min(1, need ? have / need : 1) * 100);
-        return `<li class="${ok ? 'done' : ''}"><span class="mark">${ok ? '✓' : '·'}</span><span class="lbl">${this.checkIcon(w, hint)}${label}</span><b>${Math.min(have, need).toLocaleString()}/${need.toLocaleString()}</b><span class="mini"><i data-bar="chk-${g.id}-${i}" style="width:${pct}%"></i></span></li>`;
+        const key = `${g.id}-${i}`;
+        if (same && ok && this.checkSeen.get(key) === false) this.checkDoneAt.set(key, now);
+        this.checkSeen.set(key, ok);
+        return `<li class="${ok ? 'done' : ''}"${fresh(this.checkDoneAt.get(key), 700, now)}><span class="mark">${ok ? '✓' : '·'}</span><span class="lbl">${this.checkIcon(w, hint)}${label}</span><b>${Math.min(have, need).toLocaleString()}/${need.toLocaleString()}</b><span class="mini"><i data-bar="chk-${g.id}-${i}" style="width:${pct}%"></i></span></li>`;
       })
       .join('');
     // 이 목표의 자원이 아직 안 열린 땅에 있으면: 지역 과제부터 (그때는 지역 과제를 펼쳐 둔다)
     const need = goalNeedsStage(w, g);
+    if (g.id !== this.shownGoal) {
+      if (this.shownGoal) this.shownGoalAt = now;
+      this.shownGoal = g.id;
+    }
     const html = `${head}
-      <div class="now"><small class="chapter">${g.chapter} · ${g.id}</small><b>${g.title}</b><p>${withBuildingIcons(g.hint)}</p>
+      <div class="now"${fresh(this.shownGoalAt, 320, now)}><small class="chapter">${g.chapter} · ${g.id}</small><b>${g.title}</b><p>${withBuildingIcons(g.hint)}</p>
         <ul class="checks">${checks}</ul>
         ${need ? `<p class="need">${mapIcon()} 다음 지역이 필요해요 · "${need.name}" 지역 과제 ${need.tasks.filter((t) => w.challenges.has(t.id)).length}/${REGION_NEED}</p>` : ''}
       </div>
@@ -1733,6 +1744,12 @@ export class UI {
     tweenBars($('guide'));
   }
   private guideHtml = '';
+  /** 목표 확인 항목: 지난번에 채워졌는지 · 막 채워진 시각 (도장 찍히는 움직임) */
+  private checkSeen = new Map<string, boolean>();
+  private checkDoneAt = new Map<string, number>();
+  /** 지금 보이는 목표와 바뀐 시각 (새 목표 카드가 올라오는 움직임) */
+  private shownGoal = '';
+  private shownGoalAt = -Infinity;
 
   /**
    * 지금 지역의 과제 셋 (이름·진행률), 그중 REGION_NEED개를 이루면 보상으로 다음 땅이 열린다.
@@ -1870,7 +1887,7 @@ export class UI {
           // 누르면 업적 창에서 그 업적으로
           return a ? `<a data-ach="${a.id}" title="눌러서 업적 보기">${a.name}${n ? ` ${MEDAL[Number(n) - 1]}` : ''}</a>` : k;
         });
-        this.notice(`🏅 업적: ${names.slice(0, 3).join(', ')}${names.length > 3 ? ` 외 ${names.length - 3}개` : ''}`);
+        this.notice(`🏅 업적: ${names.slice(0, 3).join(', ')}${names.length > 3 ? ` 외 ${names.length - 3}개` : ''}`, '', 3000, 'goal');
       }
     }
     this.achSeen = { world: w, got };
@@ -3676,4 +3693,14 @@ function offline(net: Session): boolean {
 /** 플레이어가 정한 이름처럼 남이 입력한 글자를 HTML에 넣을 때 */
 function escapeHtml(s: string): string {
   return s.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
+}
+
+/**
+ * 막 바뀐 칸에 붙이는 속성. 칸을 다시 그려도 움직임이 처음부터 다시 시작하지 않게
+ * 지난 시간만큼 앞당겨(음수 지연) 이어서 재생한다. 끝났거나 효과 줄이기면 빈 글자
+ */
+function fresh(at: number | undefined, ms: number, now: number): string {
+  if (at === undefined || reducedEffects()) return '';
+  const t = now - at;
+  return t >= 0 && t < ms ? ` data-fresh style="--t:-${Math.round(t)}ms"` : '';
 }

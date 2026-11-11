@@ -264,7 +264,7 @@ export const GUIDE: GuideStep[] = [
   },
   {
     title: '숲 되살리기',
-    hint: `광맥을 다 캔 빈 땅에 식목기로 나무를 심으세요. 다 자란 나무 ${FOREST.revive}그루면 성공이에요. 공장 통계에서 몇 그루인지 볼 수 있어요.`,
+    hint: `광맥을 다 캔 빈 땅에 식목기로 나무를 심으세요. 다 자란 나무 ${FOREST.revive}그루면 성공이에요. 운영 창(P)에서 몇 그루인지 볼 수 있어요.`,
     done: (w) => w.revivedLand().revived >= FOREST.revive,
     focus: () => ({ build: 'planter', target: 'spent' }),
   },

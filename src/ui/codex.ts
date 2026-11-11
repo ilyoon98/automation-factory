@@ -256,6 +256,7 @@ export class Codex {
     const w = this.getWorld();
     const p = this.current;
     const nav = `<header>
+        <h2>도감</h2>
         <button data-act="back" ${this.history.length ? '' : 'disabled'}>← 뒤로</button>
         <button data-act="index" ${p ? '' : 'disabled'}>전체 목록</button>
         <span class="muted">아이템·건물을 누르면 그리로 넘어가요</span>

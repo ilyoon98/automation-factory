@@ -573,6 +573,17 @@ export class UI {
       }
       this.update();
     });
+    // 지역 과제 접기·펼치기 (버튼이라 Enter·Space로도)
+    $('guide').addEventListener('click', (e) => {
+      if (!(e.target as HTMLElement).closest('[data-region]')) return;
+      this.regionOpenFlag = !this.regionOpenFlag;
+      try {
+        localStorage.setItem('automation-region-open', this.regionOpenFlag ? '1' : '0');
+      } catch {
+        // 저장 공간이 막혀도 이번 실행 동안은 기억한다
+      }
+      this.update();
+    });
     // 운영 개요·회수 목록: 누르면 그 자리로
     $('stats').addEventListener('pointerdown', (e) => {
       const f = (e.target as HTMLElement).closest<HTMLElement>('[data-focus]')?.dataset.focus;
@@ -1698,20 +1709,23 @@ export class UI {
       $('guide').innerHTML = `${head}<p class="muted">공장망 완성! 지도는 계속 운영할 수 있어요. 끝없는 연구와 거점 확장을 이어 가 보세요.</p>`;
       return;
     }
+    // 확인 항목: [표시] [아이콘 이름] [개수] + 아래 얇은 막대. 개수는 늘 오른쪽 열에 (줄이 넘쳐도 이름만 접힌다)
     const checks = g.checks(w)
       .slice(0, 3)
-      .map(([label, have, need, hint]) => {
+      .map(([label, have, need, hint], i) => {
         const ok = have >= need;
-        return `<li class="${ok ? 'done' : ''}"><span class="mark">${ok ? '✓' : '·'}</span>${this.checkIcon(w, hint)}${label} <b>${Math.min(have, need).toLocaleString()}/${need.toLocaleString()}</b></li>`;
+        const pct = Math.round(Math.min(1, need ? have / need : 1) * 100);
+        return `<li class="${ok ? 'done' : ''}"><span class="mark">${ok ? '✓' : '·'}</span><span class="lbl">${this.checkIcon(w, hint)}${label}</span><b>${Math.min(have, need).toLocaleString()}/${need.toLocaleString()}</b><span class="mini"><i data-bar="chk-${g.id}-${i}" style="width:${pct}%"></i></span></li>`;
       })
       .join('');
-    // 이 목표의 자원이 아직 안 열린 땅에 있으면: 지역 과제부터
+    // 이 목표의 자원이 아직 안 열린 땅에 있으면: 지역 과제부터 (그때는 지역 과제를 펼쳐 둔다)
     const need = goalNeedsStage(w, g);
     const html = `${head}
-      <div class="now"><small class="muted">${g.chapter} · ${g.id}</small><b>${g.title}</b><p>${withBuildingIcons(g.hint)}</p></div>
-      <ul class="steps">${checks}</ul>
-      ${need ? `<p class="reward">${mapIcon()} 다음 지역이 필요해요: 아래 "${need.name}" 지역 과제 ${need.tasks.filter((t) => w.challenges.has(t.id)).length}/${REGION_NEED}</p>` : ''}
-      ${this.regionHtml(w)}${this.territoryTaskHtml(w)}${this.elevatorHtml(w)}${this.trackedAchHtml(w)}`;
+      <div class="now"><small class="chapter">${g.chapter} · ${g.id}</small><b>${g.title}</b><p>${withBuildingIcons(g.hint)}</p>
+        <ul class="checks">${checks}</ul>
+        ${need ? `<p class="need">${mapIcon()} 다음 지역이 필요해요 · "${need.name}" 지역 과제 ${need.tasks.filter((t) => w.challenges.has(t.id)).length}/${REGION_NEED}</p>` : ''}
+      </div>
+      ${this.regionHtml(w, !!need)}${this.territoryTaskHtml(w)}${this.elevatorHtml(w)}${this.trackedAchHtml(w)}`;
     // 선택 도전 목록을 펼친 동안 다시 그리면 목록이 바로 닫힌다: 고르는 중이면 그대로 둔다
     if (html === this.guideHtml || $('guide').contains(document.activeElement) && document.activeElement instanceof HTMLSelectElement) return;
     this.guideHtml = html;
@@ -1724,7 +1738,7 @@ export class UI {
    * 지금 지역의 과제 셋 (이름·진행률), 그중 REGION_NEED개를 이루면 보상으로 다음 땅이 열린다.
    * 줄을 누르면 그 과제의 세부가 펼쳐진다 (펼친 것은 이 PC에만 기억)
    */
-  private regionHtml(w: World): string {
+  private regionHtml(w: World, needed = false): string {
     if (!w.revealed) return '';
     const i = currentStage(w);
     const s = REGION_STAGES[i];
@@ -1746,7 +1760,12 @@ export class UI {
         .join('');
       return `${head}<li class="sub muted">${c.hint}</li>${detail}`;
     }).join('');
-    return `<div class="row"><span>지역 과제 · ${s.name} <small class="muted">셋 중 ${REGION_NEED}개</small></span><b>${got}/${REGION_NEED}</b></div>
+    // 접어 두면 제목 한 줄만. 지금 목표가 다음 지역을 기다리면 저절로 펼친다
+    const expanded = needed || this.regionOpen();
+    const head = `<button class="fold ${expanded ? 'open' : ''}" data-region aria-expanded="${expanded}" title="${needed ? '지금 목표에 다음 지역이 필요해요' : expanded ? '눌러서 접기' : '눌러서 펼치기'}"><span class="mark">${expanded ? '▾' : '▸'}</span><span class="lbl">지역 과제 · ${s.name}</span><b>${got}/${REGION_NEED}</b></button>`;
+    if (!expanded) return head;
+    return `${head}
+      <p class="fold-note">셋 중 ${REGION_NEED}개를 이루면 새 땅이 열려요</p>
       <ul class="steps chals">${rows}</ul>
       <p class="reward">보상: ${mapIcon()} ${siteLabels(s.opens).join(', ')}</p>`;
   }
@@ -1808,6 +1827,18 @@ export class UI {
       .join('');
     const reward = open < w.territories.length ? `<p class="reward">보상: ${mapIcon()} 닫힌 산지 1곳이 열려요</p>` : '';
     return `${head}<ul class="steps chals"><li class="chal"><span class="mark">▾</span>${t.title}</li><li class="sub muted">${t.hint}</li>${rows}</ul>${reward}`;
+  }
+
+  /** 지역 과제를 펼쳐 둘지 (이 PC에만 기억, 처음은 접힘) */
+  private regionOpenFlag = (() => {
+    try {
+      return localStorage.getItem('automation-region-open') === '1';
+    } catch {
+      return false;
+    }
+  })();
+  private regionOpen(): boolean {
+    return this.regionOpenFlag;
   }
 
   private trackedChallenge(): string {
@@ -3325,7 +3356,7 @@ export class UI {
         ? `<p>🌲 숲: 다 자란 나무 <b>${trees.grown}</b>그루 · 자라는 중 ${trees.growing}
             ${land.spent ? ` · 다 캔 광맥 땅 ${land.spent}칸 중 <b>${land.revived}</b>칸에 다 자란 나무 <small>(숲 되살리기 ${Math.min(land.revived, FOREST.revive)}/${FOREST.revive})</small>` : ''}</p>`
         : '';
-    replacePanel($('stats'), `<div class="panel stats-panel"><header><h2>공장 통계</h2><button class="x" data-act="close-modal">×</button></header>
+    replacePanel($('stats'), `<div class="panel stats-panel"><header><h2>운영</h2><button class="x" data-act="close-modal">×</button></header>
       ${w.regional ? this.overviewHtml(w) : ''}
       <p class="muted">단위: 개/분 · 현재 / 최대 · 증감 = 생산 − 사용</p>
       ${forest}

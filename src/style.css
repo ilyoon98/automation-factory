@@ -38,11 +38,14 @@
   --panel: var(--paper);
   --panel-border: var(--ink);
   --text: var(--ink);
-  --muted: #8a6e4b;
-  --accent: #b35c12;
+  /* 글자색은 종이(--paper·--paper-2) 위에서 4.5:1 이상. 막대·채움은 밝은 --good·--warn을 그대로 */
+  --muted: #73593a;
+  --accent: #9a4f0f;
   --good: #3f8a3a;
   --bad: #c0392b;
   --warn: #b7791f;
+  --good-text: #2f6e2b;
+  --warn-text: #8f5a12;
   --font: 'Galmuri11', 'Malgun Gothic', system-ui, sans-serif;
   --font-s: 'Galmuri9', 'Galmuri11', 'Malgun Gothic', sans-serif;
   --font-l: 'Galmuri14', 'Galmuri11', 'Malgun Gothic', sans-serif;
@@ -173,6 +176,16 @@ select {
   box-shadow: var(--bevel-in);
   padding: 3px 6px;
 }
+/* 고르는 칸: 브라우저 기본 화살표 대신 픽셀 화살표 (펼친 목록은 OS가 그린다) */
+select {
+  appearance: none;
+  padding-right: 22px;
+  background: var(--hi) url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%208%205%22%20shape-rendering%3D%22crispEdges%22%3E%3Crect%20x%3D%220%22%20y%3D%220%22%20width%3D%228%22%20height%3D%221%22%20fill%3D%22%233b2716%22%2F%3E%3Crect%20x%3D%221%22%20y%3D%221%22%20width%3D%226%22%20height%3D%221%22%20fill%3D%22%233b2716%22%2F%3E%3Crect%20x%3D%222%22%20y%3D%222%22%20width%3D%224%22%20height%3D%221%22%20fill%3D%22%233b2716%22%2F%3E%3Crect%20x%3D%223%22%20y%3D%223%22%20width%3D%222%22%20height%3D%221%22%20fill%3D%22%233b2716%22%2F%3E%3C%2Fsvg%3E") no-repeat right 7px center / 8px 5px;
+  cursor: pointer;
+}
+select:hover:not(:disabled) {
+  background-color: #fff6dc;
+}
 
 kbd {
   font: 10px var(--font-s);
@@ -225,7 +238,7 @@ h3 small {
 }
 .row em {
   font-style: normal;
-  color: var(--good);
+  color: var(--good-text);
   font: 10px var(--font-s);
   min-width: 52px;
   text-align: right;
@@ -432,10 +445,10 @@ h3 small {
 }
 /* 위쪽 바 상태 글자: 12px라 대비 4.5:1 이상 (초록 5.0 · 주황 4.7) */
 #topbar #btn-save.good {
-  color: #2f6e2b;
+  color: var(--good-text);
 }
 #topbar #btn-save.warn {
-  color: #8f5a12;
+  color: var(--warn-text);
 }
 #topbar #btn-save.bad {
   color: var(--bad);
@@ -451,10 +464,10 @@ h3 small {
   text-overflow: ellipsis;
 }
 #topbar #net.live {
-  color: #2f6e2b;
+  color: var(--good-text);
 }
 #topbar #net.wait {
-  color: #8f5a12;
+  color: var(--warn-text);
 }
 /* 새 연구 가능: 오른쪽 위 작은 초록 보석 (열린 창의 금빛 전체 강조와 구분) */
 #topbar #btn-research .dot {
@@ -643,7 +656,7 @@ h3 small {
 }
 #players .warn {
   margin: 6px 0;
-  color: var(--warn);
+  color: var(--warn-text);
   font-size: 12px;
 }
 #players .invite {
@@ -701,7 +714,29 @@ h3 small {
   padding: 8px 10px;
   pointer-events: auto;
 }
-#guide .now b {
+/*
+ * 목표 카드: 머리(이름·전체 진행) → 지금 할 일(들어간 판) → 접히는 지역 과제.
+ * 지금 할 일 판 안에 확인 항목이 있고, 개수는 늘 오른쪽 열에 맞춘다
+ */
+/* 한글은 낱말 단위로 줄바꿈 ("철 / 판 생산"처럼 갈리지 않게) */
+#guide {
+  word-break: keep-all;
+  overflow-wrap: anywhere;
+}
+#guide .now {
+  margin: 0 -4px;
+  padding: 6px 8px 8px;
+  background: var(--paper-2);
+  box-shadow: var(--bevel-in);
+}
+#guide .now .chapter {
+  display: block;
+  font: 10px var(--font-s);
+  color: var(--muted);
+  margin-bottom: 2px;
+}
+#guide .now > b {
+  display: block;
   color: var(--accent);
   font-size: 12px;
 }
@@ -710,7 +745,7 @@ h3 small {
   background: #fdf0c4;
 }
 #ore-alerts h3 {
-  color: var(--warn);
+  color: var(--warn-text);
 }
 #ore-alerts .ore-alert {
   display: flex;
@@ -734,7 +769,7 @@ h3 small {
   font: 10px var(--font-s);
 }
 #ore-alerts .warn {
-  color: var(--warn);
+  color: var(--warn-text);
 }
 #ore-alerts .bad {
   color: var(--bad);
@@ -743,17 +778,108 @@ h3 small {
   margin: 4px 0 0;
   line-height: 1.55;
 }
-/* 목표 진행 막대 */
+/* 목표 진행 막대: 잉크 테두리 홈 + 초록 막대 (위 1px 밝은 줄로 픽셀 입체) */
 #guide .gbar {
-  height: 6px;
-  margin: 2px 0 6px;
-  background: rgba(59, 39, 22, 0.12);
-  border: 1px solid var(--ink);
+  height: 10px;
+  margin: 2px 0 8px;
+  background: var(--paper-3);
+  border: 2px solid var(--ink);
 }
 #guide .gbar i {
   display: block;
   height: 100%;
   background: var(--good);
+  box-shadow: inset 0 2px 0 #7cc46a;
+}
+/* 지금 목표의 확인 항목: [표시] [아이콘 이름] [개수] / 아래 얇은 막대 */
+#guide ul.checks {
+  list-style: none;
+  margin: 6px 0 0;
+  padding: 6px 0 0;
+  border-top: 2px dotted rgba(59, 39, 22, 0.25);
+}
+#guide .checks li {
+  display: grid;
+  grid-template-columns: 12px 1fr auto;
+  column-gap: 4px;
+  row-gap: 2px;
+  align-items: center;
+  margin: 0 0 5px;
+}
+#guide .checks li:last-child {
+  margin-bottom: 0;
+}
+#guide .checks .mark {
+  color: var(--muted);
+}
+#guide .checks .lbl {
+  min-width: 0;
+}
+#guide .checks b {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+#guide .checks .mini {
+  grid-column: 2 / 4;
+  height: 4px;
+  background: var(--paper-3);
+  box-shadow: 0 0 0 1px rgba(59, 39, 22, 0.35);
+}
+#guide .checks .mini i {
+  display: block;
+  height: 100%;
+  background: #b7791f;
+}
+#guide .checks li.done .mark,
+#guide .checks li.done b {
+  color: var(--good-text);
+}
+#guide .checks li.done .mini i {
+  background: var(--good);
+}
+#guide .now .need {
+  margin: 8px 0 0;
+  padding: 4px 6px;
+  background: #fdf0c4;
+  box-shadow: 0 0 0 2px #d7a63d;
+  color: #6b4410;
+  font-weight: 700;
+}
+/* 접히는 줄 (지역 과제): 판 폭 전체를 누르는 버튼, 개수는 오른쪽 */
+#guide .fold {
+  display: grid;
+  grid-template-columns: 12px 1fr auto;
+  column-gap: 4px;
+  align-items: center;
+  width: calc(100% + 8px);
+  margin: 8px -4px 0;
+  padding: 4px;
+  text-align: left;
+  font-weight: 700;
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+  border-top: 2px dotted rgba(59, 39, 22, 0.25);
+}
+#guide .fold:hover {
+  background: rgba(59, 39, 22, 0.06);
+}
+#guide .fold:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+#guide .fold b {
+  font-variant-numeric: tabular-nums;
+}
+#guide .fold-note + ul.steps {
+  margin-top: 4px;
+  padding-top: 0;
+  border-top: 0;
+}
+#guide .fold-note {
+  margin: 0 0 2px;
+  font: 10px var(--font-s);
+  color: var(--muted);
 }
 /* 진행도: 앞 목표(끝남, 빗금) · 지금 · 다음 */
 #guide ul.steps {
@@ -775,7 +901,7 @@ h3 small {
   opacity: 0.6;
 }
 #guide .steps li.done .mark {
-  color: var(--good);
+  color: var(--good-text);
 }
 #guide .steps li.cur {
   color: var(--accent);
@@ -795,7 +921,8 @@ h3 small {
   bottom: 10px;
   left: 50%;
   transform: translateX(-50%);
-  width: min(980px, calc((100vw / var(--uiz)) - 20px));
+  /* 넓은 화면에서는 카드가 더 많이 보이게 (물류 탭 7장이 한 번에) */
+  width: min(1180px, calc((100vw / var(--uiz)) - 20px));
   display: flex;
   flex-direction: column;
   gap: 6px;
@@ -975,7 +1102,7 @@ body[data-top='narrow'] #tabs {
   margin: 2px -14px -8px -8px;
   padding: 1px 8px;
   font: 10px var(--font-s);
-  color: var(--good);
+  color: var(--good-text);
   border-top: 2px solid rgba(59, 39, 22, 0.15);
   white-space: nowrap;
 }
@@ -1010,7 +1137,7 @@ body[data-top='narrow'] #tabs {
   background: #f8dcb4;
 }
 .pal.poor .state {
-  color: var(--bad);
+  color: #a8301f;
   background: rgba(192, 57, 43, 0.12);
 }
 .pal.locked:hover:not(:disabled),
@@ -1561,7 +1688,7 @@ html.reduced-effects #toast { transition: none; }
   background: rgba(192, 57, 43, 0.1);
 }
 .stats-table .pos {
-  color: var(--good);
+  color: var(--good-text);
 }
 .stats-table .neg {
   color: var(--bad);
@@ -1777,7 +1904,7 @@ html.reduced-effects #toast { transition: none; }
 }
 .tech .req {
   font: 10px var(--font-s);
-  color: var(--warn);
+  color: var(--warn-text);
 }
 .tech .cost {
   margin: 6px 0;
@@ -1787,7 +1914,7 @@ html.reduced-effects #toast { transition: none; }
   white-space: nowrap;
 }
 .tech .badge {
-  color: var(--good);
+  color: var(--good-text);
   font-weight: 700;
 }
 .tech button {
@@ -1863,6 +1990,9 @@ html.reduced-effects #toast { transition: none; }
   background: var(--paper);
   border-bottom: 2px solid var(--ink);
   z-index: 1;
+}
+.codex header h2 {
+  margin-right: 6px;
 }
 .codex header .muted {
   flex: 1;
@@ -2016,7 +2146,7 @@ html.reduced-effects #toast { transition: none; }
   line-height: 1.4;
 }
 .flow-tag .ok {
-  color: var(--good);
+  color: var(--good-text);
   font-weight: 700;
 }
 .chips {
@@ -2223,7 +2353,7 @@ body.one-panel #left {
   color: var(--muted);
 }
 #goals .goal-list li.done .mark {
-  color: var(--good);
+  color: var(--good-text);
 }
 #goals .goal-list li.cur {
   font-weight: 700;

@@ -15,55 +15,57 @@
     -->
     <div id="topbar">
       <div class="tb-group" id="g-time">
-        <button id="clock" title="게임 시간 · 날씨">☀️ 1일차 · 낮</button>
+        <button id="clock" class="readout" data-ico="sun" title="게임 시간 · 날씨"><span class="lbl">1일차 · 낮</span></button>
       </div>
-      <div class="tb-group" id="g-speed">
-        <button id="btn-pause" title="정지 (Space)">⏸ 정지</button>
+      <!-- 진행: 하나만 고르는 판(.tb-seg). 정지도 배속 0이라 같은 판에 -->
+      <div class="tb-group tb-seg" id="g-speed" role="group" aria-label="게임 속도">
+        <button id="btn-pause" data-ico="pause" title="정지 (Space)"><span class="lbl">정지</span></button>
         <button data-speed="1">1×</button>
         <button data-speed="2">2×</button>
         <button data-speed="4">4×</button>
       </div>
       <div class="tb-group" id="g-edit">
-        <button id="btn-undo" class="edit">↶ 되돌리기</button>
-        <button id="btn-redo" class="edit">↷ 다시 실행</button>
+        <button id="btn-undo" class="edit" data-ico="undo">되돌리기</button>
+        <button id="btn-redo" class="edit" data-ico="redo">다시 실행</button>
       </div>
       <div class="tb-group" id="g-save">
-        <button id="btn-save" title="지금 저장 (30초마다 저절로). 다른 PC로 옮기려면 메뉴 → 도움말 아래 '공장 파일로 내보내기'">✓ 저장됨</button>
+        <button id="btn-save" data-ico="save" title="지금 저장 (30초마다 저절로). 다른 PC로 옮기려면 메뉴 → 도움말 아래 '공장 파일로 내보내기'"><span class="lbl">저장됨</span></button>
       </div>
       <div class="tb-group" id="g-net">
-        <button id="net">👥 함께 하기</button>
+        <button id="net" data-ico="people"><span class="lbl">함께 하기</span></button>
       </div>
       <div class="tb-group" id="g-chat">
-        <button id="btn-chat">채팅</button>
+        <button id="btn-chat" data-ico="chat">채팅</button>
       </div>
       <div class="tb-group" id="g-menu">
-        <button id="btn-menu" title="새 게임 · 도움말 · 소리">메뉴 ▾</button>
+        <button id="btn-menu" data-ico="menu" title="새 게임 · 도움말 · 소리">메뉴</button>
       </div>
       <div class="tb-group" id="g-windows">
-        <button id="btn-stats" title="운영: 아이템별 생산·소비, 모자란 것, 지역 운영 개요">운영 <kbd>P</kbd></button>
-        <button id="btn-goals" title="목표판: 메인 목표와 선택 도전 전체">목표 <kbd>O</kbd></button>
-        <button id="btn-ach" title="업적: 최초 달성·심화 메달·숨은 업적">업적 <kbd>J</kbd></button>
-        <button id="btn-codex" title="아이템별 얻는 법·쓰는 곳">도감 <kbd>G</kbd></button>
-        <button id="btn-research" title="연구: 새 건물·레시피 해금">연구 <kbd>T</kbd><i class="dot" hidden></i></button>
+        <button id="btn-stats" data-ico="stats" title="운영: 아이템별 생산·소비, 모자란 것, 지역 운영 개요">운영 <kbd>P</kbd></button>
+        <button id="btn-goals" data-ico="goals" title="목표판: 메인 목표와 선택 도전 전체">목표 <kbd>O</kbd></button>
+        <button id="btn-ach" data-ico="ach" title="업적: 최초 달성·심화 메달·숨은 업적">업적 <kbd>J</kbd></button>
+        <button id="btn-codex" data-ico="codex" title="아이템별 얻는 법·쓰는 곳">도감 <kbd>G</kbd></button>
+        <button id="btn-research" data-ico="research" title="연구: 새 건물·레시피 해금">연구 <kbd>T</kbd><i class="dot" hidden></i></button>
       </div>
+      <!-- 켜고 끄는 보기(.toggle): 오른쪽 작은 등이 켜짐을 알린다 -->
       <div class="tb-group" id="g-map">
-        <button id="btn-map" title="맵 전체 지도 (광맥·호수·도로·트럭)">지도 <kbd>M</kbd></button>
+        <button id="btn-map" class="toggle" data-ico="map" title="맵 전체 지도 (광맥·호수·도로·트럭)">지도 <kbd>M</kbd></button>
       </div>
-      <div class="tb-group" id="layers" hidden title="지도 정보 보기 (확장 지도): 위치·건물은 그대로, 한 주제만 강조">
-        <button data-layer="base" class="active" title="Shift+1">기본 <kbd>⇧1</kbd></button><button data-layer="power" title="Shift+2">전력 <kbd>⇧2</kbd></button><button data-layer="transport" title="Shift+3">운송 <kbd>⇧3</kbd></button><button data-layer="resource" title="Shift+4">자원 <kbd>⇧4</kbd></button>
+      <div class="tb-group tb-seg" id="layers" hidden role="group" aria-label="지도 정보 보기" title="지도 정보 보기 (확장 지도): 위치·건물은 그대로, 한 주제만 강조">
+        <button data-layer="base" class="active" data-ico="layer-base" title="Shift+1">기본 <kbd>⇧1</kbd></button><button data-layer="power" data-ico="layer-power" title="Shift+2">전력 <kbd>⇧2</kbd></button><button data-layer="transport" data-ico="layer-transport" title="Shift+3">운송 <kbd>⇧3</kbd></button><button data-layer="resource" data-ico="layer-resource" title="Shift+4">자원 <kbd>⇧4</kbd></button>
       </div>
       <div class="tb-group" id="g-rates">
-        <button id="btn-rates" title="기계마다 분당 생산량과 가동률 표시">생산량 <kbd>I</kbd></button>
+        <button id="btn-rates" class="toggle" data-ico="rates" title="기계마다 분당 생산량과 가동률 표시">생산량 <kbd>I</kbd></button>
       </div>
     </div>
 
     <!-- 위쪽 바 팝오버: 한 번에 하나만, 위쪽 바 전체 아래에서 연다 (ui/topbar.ts) -->
     <div id="time-pop" class="popover" hidden></div>
     <div id="menu-pop" class="popover" hidden>
-      <button id="btn-home">🏠 시작화면</button>
-      <button id="btn-new">새 게임</button>
-      <button id="btn-help">도움말 <kbd>H</kbd></button>
-      <button id="btn-sound" title="효과음·배경음 켜기·끄기 (음량은 도움말 아래)">🔊 소리 켜짐</button>
+      <button id="btn-home" data-ico="home">시작화면</button>
+      <button id="btn-new" data-ico="new-game">새 게임</button>
+      <button id="btn-help" data-ico="help">도움말 <kbd>H</kbd></button>
+      <button id="btn-sound" data-ico="sound-on" title="효과음·배경음 켜기·끄기 (음량은 도움말 아래)"><span class="lbl">소리 켜짐</span></button>
     </div>
     <div id="players" class="popover" hidden></div>
     <!-- 연구 완료·목표 달성 알림: 위쪽 바 아래 가운데에 한 장 -->
@@ -110,7 +112,7 @@
     <div id="newgame" class="modal" hidden>
       <div class="panel">
         <header><h2>새 게임</h2><button class="x" data-act="close-modal">×</button></header>
-        <p class="muted">새 공장은 새 칸에 만들어요. 지금 공장은 공장 목록(메뉴 → 🏠 시작화면)에 남아요.</p>
+        <p class="muted">새 공장은 새 칸에 만들어요. 지금 공장은 공장 목록(메뉴 → 시작화면)에 남아요.</p>
         <div class="actions" style="flex-direction: column; align-items: stretch">
           <button data-rules="regional-v1">새 공장 시작 <span class="muted">256×256 · 지형 7종 · 특화 자원 · 전봇대 전력망 · 목표로 넓어지는 지도</span></button>
           <button data-rules="territory">산지 협동 공장 <span class="muted">같이 하기 전용 · 가운데 광장과 산지 8곳 · 산지마다 자원 하나 · 내 산지에서만 짓기 (혼자면 모든 산지)</span></button>

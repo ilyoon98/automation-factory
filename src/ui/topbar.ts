@@ -1,4 +1,5 @@
 import { onUiZoom, uiZoom } from './crisp';
+import { applyIcons } from './pixel-icons';
 
 /**
  * 위쪽 바의 줄 배치와 팝오버 (docs/상단-UI-배치-앵커-상세기획.md).
@@ -50,6 +51,8 @@ export class Topbar {
   private openId: string | null = null;
 
   constructor() {
+    // 버튼마다 data-ico에 적힌 픽셀 아이콘을 붙인다 (위쪽 바와 그 팝오버들)
+    applyIcons(document);
     // 바 크기가 바뀌면 (창 폭·글자·접속 상태) 줄 배치를 다시 보고 실제 높이를 알린다.
     // 폭이 같으면 줄은 그대로라 높이만 바뀌어 다시 불려도 멈춘다
     new ResizeObserver(() => {
@@ -94,6 +97,8 @@ export class Topbar {
     const w = this.width;
     const mode: TopLayout = w >= 900 ? 'wide' : w >= 640 ? 'mid' : 'narrow';
     document.body.dataset.top = mode;
+    // 두 줄 배치에서 폭이 빠듯하면(1000px 미만) 둘째 줄 단축키 배지를 숨기고 툴팁에만 남긴다
+    this.bar.classList.toggle('tight', mode === 'wide' && w < 1000);
     if (mode !== this.layout) {
       this.layout = mode;
       this.build(mode === 'wide' ? WIDE : mode === 'mid' ? MID : NARROW);

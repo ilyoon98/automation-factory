@@ -294,15 +294,23 @@ h3 small {
 #topbar .tb-group[hidden] {
   display: none;
 }
+/* 묶음 사이 구분선: 2px 점선 (픽셀 두 칸씩) */
 #topbar .tb-sep {
-  width: 1px;
+  width: 2px;
   height: 22px;
-  background: rgba(138, 110, 75, 0.55);
+  background: repeating-linear-gradient(to bottom, var(--muted) 0 2px, transparent 2px 4px);
 }
+/*
+ * 버튼 문법 (생김새 = 하는 일):
+ *  - 보통 버튼: 창 열기·실행 (운영·목표…, 되돌리기, 저장, 메뉴)
+ *  - .tb-seg  : 하나만 고르는 판. 어두운 나무 홈에 건반처럼 박혀 있고, 고른 칸만 금빛으로 눌린다 (배속, 지도 레이어)
+ *  - .toggle  : 켜고 끄는 보기. 끝의 작은 등이 켜지면 초록 (지도, 생산량)
+ *  - .readout : 지금 상태를 보여 주는 계기판 (시계). 눌러서 자세히 볼 수 있지만 들어간 판처럼 보인다
+ */
 #topbar button {
   position: relative;
   height: 30px;
-  padding: 0 8px;
+  padding: 0 7px;
   font-size: 12px;
   white-space: nowrap;
   display: inline-flex;
@@ -310,26 +318,108 @@ h3 small {
   gap: 4px;
   font-variant-numeric: tabular-nums;
 }
-#topbar kbd {
-  font-size: 11px;
-  padding: 0 3px;
-  margin: 0;
-  line-height: 14px;
+#topbar button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
 }
-/* 눌린(선택된) 버튼: 금빛 + 눌림 (배속·지도 레이어·생산량·열린 창·열린 팝오버) */
+/* 픽셀 아이콘 (ui/pixel-icons.ts가 --ico에 12×12 그림을 넣는다). 글꼴 한 픽셀 = 아이콘 한 픽셀 */
+[data-ico]::before,
+.px-ico {
+  content: '';
+  flex: none;
+  width: 12px;
+  height: 12px;
+  background: var(--ico) center / 12px 12px no-repeat;
+  image-rendering: pixelated;
+}
+/* 단축키: 작은 키캡 (아래 2px이 키 두께). Galmuri9는 10px에서 또렷하다 */
+#topbar kbd {
+  font: 10px var(--font-s);
+  color: #5c4329;
+  background: var(--hi);
+  border: 1px solid #a88a5e;
+  border-bottom-width: 2px;
+  padding: 0 3px;
+  margin: 0 0 0 2px;
+  line-height: 11px;
+}
+/* 눌린(선택된) 버튼: 금빛 + 눌림 (열린 창·열린 팝오버) */
 #topbar button.active {
   box-shadow: inset 2px 2px 0 #d7a63d, inset -2px -2px 0 #fff0b8;
 }
+
+/* 하나만 고르는 판: 어두운 나무 홈 + 건반 */
+#topbar .tb-seg {
+  flex-wrap: nowrap;
+  gap: 2px;
+  height: 30px;
+  padding: 2px;
+  background: #5a3f26;
+  border: 2px solid var(--ink);
+  box-shadow: inset 2px 2px 0 #3e2a17;
+}
+#topbar .tb-seg button {
+  height: 22px;
+  padding: 0 6px;
+  border: 0;
+  background: var(--paper-2);
+  box-shadow: var(--bevel);
+}
+#topbar .tb-seg button:hover:not(:disabled) {
+  background: #fff6dc;
+}
+#topbar .tb-seg button.active {
+  background: #f6d77e;
+  box-shadow: inset 2px 2px 0 #c8962f, inset -2px -2px 0 #fff0b8;
+}
+/* 레이어 단축키(Shift+1~4)는 툴팁에만: 판이 넓어지지 않게 */
+#topbar #layers kbd,
+#topbar.tight #g-windows kbd,
+#topbar.tight #g-map kbd,
+#topbar.tight #g-rates kbd {
+  display: none;
+}
+#topbar .tb-seg button:focus-visible {
+  outline-offset: -2px;
+}
+
+/* 켜고 끄는 보기: 끝에 작은 등 (꺼짐 = 흐린 갈색, 켜짐 = 초록 + 반짝이는 한 픽셀) */
+#topbar button.toggle::after {
+  content: '';
+  flex: none;
+  width: 6px;
+  height: 6px;
+  margin-left: 2px;
+  background: #c9b48a;
+  box-shadow: 0 0 0 1px var(--ink);
+}
+#topbar button.toggle.active::after {
+  background: #7fd35a;
+  box-shadow: 0 0 0 1px var(--ink), inset 1px 1px 0 #e4ffcf, inset -1px -1px 0 #3f8a3a;
+}
+
+/* 계기판: 시계 (들어간 판 + 그늘진 종이) */
+#topbar button.readout {
+  background: var(--paper-3);
+  box-shadow: var(--bevel-in);
+}
+#topbar button.readout:hover {
+  background: #efe2c2;
+}
+#topbar button.readout.active {
+  background: #f6d77e;
+}
+
 /* 이름이 바뀌어도 자리가 움직이지 않게 폭을 고정 */
 #topbar #clock {
-  min-width: 108px;
+  min-width: 112px;
   justify-content: flex-start;
 }
 #topbar #btn-pause {
-  min-width: 64px;
+  min-width: 60px;
 }
 #topbar #g-speed [data-speed] {
-  min-width: 32px;
+  min-width: 30px;
   justify-content: center;
 }
 #topbar button.edit {
@@ -340,39 +430,41 @@ h3 small {
   min-width: 88px;
   justify-content: center;
 }
+/* 위쪽 바 상태 글자: 12px라 대비 4.5:1 이상 (초록 5.0 · 주황 4.7) */
 #topbar #btn-save.good {
-  color: var(--good);
+  color: #2f6e2b;
 }
 #topbar #btn-save.warn {
-  color: var(--warn);
+  color: #8f5a12;
 }
 #topbar #btn-save.bad {
   color: var(--bad);
   font-weight: 700;
 }
-/* 함께 하기: 방 상태에 따라 초록(접속) · 주황(기다림) */
+/* 함께 하기: 방 상태에 따라 초록(접속) · 주황(기다림). 긴 이름은 말줄임 */
 #topbar #net {
-  display: inline-block;
-  max-width: 150px;
+  max-width: 170px;
+}
+#topbar #net .lbl {
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
-  line-height: 26px;
 }
 #topbar #net.live {
-  color: var(--good);
+  color: #2f6e2b;
 }
 #topbar #net.wait {
-  color: var(--warn);
+  color: #8f5a12;
 }
-/* 새 연구 가능: 작은 점 (열린 창의 금빛 전체 강조와 구분) */
+/* 새 연구 가능: 오른쪽 위 작은 초록 보석 (열린 창의 금빛 전체 강조와 구분) */
 #topbar #btn-research .dot {
   position: absolute;
-  top: 3px;
-  right: 3px;
-  width: 6px;
-  height: 6px;
-  background: var(--good);
-  box-shadow: 0 0 0 1px var(--paper);
+  top: -3px;
+  right: -3px;
+  width: 8px;
+  height: 8px;
+  background: #7fd35a;
+  box-shadow: 0 0 0 2px var(--ink), inset 2px 2px 0 #e4ffcf, inset -2px -2px 0 #3f8a3a;
 }
 #topbar #btn-research .dot[hidden] {
   display: none;
@@ -415,9 +507,19 @@ h3 small {
 }
 #menu-pop button {
   display: flex;
-  justify-content: space-between;
+  justify-content: flex-start;
   align-items: center;
+  gap: 6px;
   text-align: left;
+}
+#menu-pop button kbd {
+  margin-left: auto;
+}
+/* 글 안 아이콘 (팝오버 제목·목록) */
+.px-ico {
+  display: inline-block;
+  vertical-align: -1px;
+  margin-right: 4px;
 }
 
 /* 연구 완료·목표 달성 알림 카드: 위쪽 바 아래 가운데, 한 장 */

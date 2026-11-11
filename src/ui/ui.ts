@@ -64,6 +64,7 @@ import { crispTarget, crispText, onUiZoom, setCrispText, uiZoom } from './crisp'
 import { letScrollbarDrag } from './left-scroll';
 import { Toolbar, blockReason, buildState } from './toolbar';
 import { topbar } from './topbar';
+import { iconHtml, setIcon, setLabel, skyIcon } from './pixel-icons';
 import { reducedEffects, setReducedEffects } from '../render/effects';
 import { ResearchObserver, NoticeQueue, completionSummary, type NoticeKind } from './completion';
 import { focusRouteStation, reachableStations, refreshTransportItemSelect, replaceTransportInfo, sourceStock, stationMapButton, transportItemOptions, transportSection } from './transport';
@@ -412,7 +413,7 @@ export class UI {
       const file = input.files?.[0];
       input.value = '';
       if (!file) return;
-      if (!confirm('이 파일의 공장을 새 칸으로 불러올까요? 지금 공장은 공장 목록(메뉴 → 🏠 시작화면)에 남아요.')) return;
+      if (!confirm('이 파일의 공장을 새 칸으로 불러올까요? 지금 공장은 공장 목록(메뉴 → 시작화면)에 남아요.')) return;
       const err = game.importSave(await file.text());
       this.toast(err ?? '공장을 불러왔어요');
       if (!err) $('help').hidden = true;
@@ -856,25 +857,25 @@ export class UI {
     const lan = net.lanRooms.filter((r) => lanRoomCheck(r) === 'ok');
     let text: string;
     let cls = '';
-    if (net.asking) [text, cls] = ['🚪 허락 기다리는 중…', 'wait'];
-    else if (net.role === 'host' && net.requests.length) [text, cls] = [`🔔 참가 신청 ${net.requests.length}명`, 'wait'];
-    else if (net.joining) [text, cls] = ['🚪 들어가는 중…', 'wait'];
+    if (net.asking) [text, cls] = ['허락 기다리는 중…', 'wait'];
+    else if (net.role === 'host' && net.requests.length) [text, cls] = [`참가 신청 ${net.requests.length}명`, 'wait'];
+    else if (net.joining) [text, cls] = ['들어가는 중…', 'wait'];
     else if (!net.connected)
-      [text, cls] = [!net.desktop ? '연결 끊김 · 다시 붙는 중' : net.borrowed ? '⏳ 방장 기다리는 중' : '연결 중…', 'wait'];
+      [text, cls] = [!net.desktop ? '연결 끊김 · 다시 붙는 중' : net.borrowed ? '방장 기다리는 중' : '연결 중…', 'wait'];
     else if (net.role === 'host') {
       const shaky = [...net.links.values()].filter((l) => l.unstable).length;
-      [text, cls] = [net.players > 1 ? `🏠 내 방 · ${net.players}명${shaky ? ` · ⚠ 불안정 ${shaky}명` : ''}` : net.desktop ? '🏠 방 열림 · 1명' : '🏠 방 열림 · 주소 복사', shaky ? 'wait' : 'live'];
+      [text, cls] = [net.players > 1 ? `내 방 · ${net.players}명${shaky ? ` · ⚠ 불안정 ${shaky}명` : ''}` : net.desktop ? '방 열림 · 1명' : '방 열림 · 주소 복사', shaky ? 'wait' : 'live'];
     } else if (net.role === 'guest' && net.hostSilent) [text, cls] = ['⚠ 방장 연결 불안정', 'wait'];
     else if (net.role === 'guest') {
       const ms = net.linkOf(net.me)?.ms;
-      [text, cls] = [net.synced ? `🚪 ${net.hostName}의 방 · ${net.players}명${ms != null ? ` · ${ms}ms` : ''}` : '맞추는 중…', net.synced ? 'live' : 'wait'];
+      [text, cls] = [net.synced ? `${net.hostName}의 방 · ${net.players}명${ms != null ? ` · ${ms}ms` : ''}` : '맞추는 중…', net.synced ? 'live' : 'wait'];
     }
-    else if (net.waitingForHost || net.borrowed) [text, cls] = ['⏳ 방장 기다리는 중', 'wait'];
-    else if (net.roomOpen) [text, cls] = [`🚪 ${net.hostName}의 방 · 참가`, 'wait'];
-    else if (lan.length) [text, cls] = [lan.length > 1 ? `🚪 열린 방 ${lan.length}개 · 참가` : `🚪 ${lan[0].host || '누군가'}의 방 · 참가`, 'wait'];
-    else text = '👥 함께 하기';
-    if (off) [text, cls] = ['👥 함께 하기', ''];
-    el.textContent = text;
+    else if (net.waitingForHost || net.borrowed) [text, cls] = ['방장 기다리는 중', 'wait'];
+    else if (net.roomOpen) [text, cls] = [`${net.hostName}의 방 · 참가`, 'wait'];
+    else if (lan.length) [text, cls] = [lan.length > 1 ? `열린 방 ${lan.length}개 · 참가` : `${lan[0].host || '누군가'}의 방 · 참가`, 'wait'];
+    else text = '함께 하기';
+    if (off) [text, cls] = ['함께 하기', ''];
+    setLabel(el, text);
     el.title = off
       ? '함께 하기는 게임 서버(npm run host 또는 exe)로 열었을 때 쓸 수 있어요'
       : '함께 하기: 방 만들기 · 참가 · 주소 복사 · 접속자 목록';
@@ -919,7 +920,7 @@ export class UI {
     // 방장: 허락을 기다리는 참가 신청
     const requests = net.role === 'host' && net.requests.length
       ? `<label class="hint">참가 신청</label>${net.requests
-          .map((r) => `<div class="row"><span class="who">🙋 ${escapeHtml(r.name || `P${r.id}`)}</span>
+          .map((r) => `<div class="row"><span class="who">${iconHtml('people')}${escapeHtml(r.name || `P${r.id}`)}</span>
             <button class="primary" data-approve="${r.id}">허락</button><button data-deny="${r.id}" title="거절하면 그 PC는 30초 동안 다시 신청하지 못해요">거절</button></div>`)
           .join('')}`
       : '';
@@ -950,7 +951,7 @@ export class UI {
               ? ['옛 버전', '방장이 옛 버전이에요. 방장에게 업데이트를 부탁하세요']
               : ['파일이 달라요', '버전은 같지만 따로 빌드한 파일이에요. 같은 파일로 켜 주세요'];
         return `<div class="row${check === 'ok' ? '' : ' dim'}" ${check === 'ok' ? '' : `title="${why[1]}"`}>
-          <span class="who">🚪 ${escapeHtml(r.host || '이름 없음')}의 방
+          <span class="who">${iconHtml('door')}${escapeHtml(r.host || '이름 없음')}의 방
             <span class="tag">${r.players}명 · ${escapeHtml(r.version || '옛 버전')}</span></span>${
               check === 'ok'
                 ? `<button class="primary" data-act="join-lan" data-room="${escapeHtml(r.id)}">참가</button>`
@@ -967,30 +968,30 @@ export class UI {
     let html: string;
     if (state === 'host') {
       html = net.desktop
-        ? `<h3>🏠 내 방 · ${net.players}명</h3>${requests}
+        ? `<h3>${iconHtml('home')}내 방 · ${net.players}명</h3>${requests}
           <p class="hint">같은 와이파이에서 exe를 켠 사람들의 방 목록에 이 방이 저절로 떠요. 들어오려면 방장의 허락이 필요해요.</p>${members}${name}${invite}
           <button class="wide" data-act="leave">방 닫기</button>`
-        : `<h3>🏠 내 방 · ${net.players}명</h3>${requests}${invite}${members}${name}
+        : `<h3>${iconHtml('home')}내 방 · ${net.players}명</h3>${requests}${invite}${members}${name}
         <button class="wide" data-act="leave">방 닫기</button>`;
     } else if (state === 'asking') {
-      html = `<h3>🙋 허락을 기다리는 중…</h3>
+      html = `<h3>${iconHtml('hourglass')}허락을 기다리는 중…</h3>
         <p class="hint">방장에게 참가를 신청했어요. 방장이 허락하면 바로 들어가요.</p>
         <button class="wide" data-act="leave">신청 취소 (내 공장으로)</button>`;
     } else if (state === 'joining') {
-      html = `<h3>🚪 방에 들어가는 중…</h3>
+      html = `<h3>${iconHtml('door')}방에 들어가는 중…</h3>
         <p class="hint">방장 PC에 붙는 중이에요. 방이 잠깐 닫혀 있으면 다시 열릴 때 저절로 들어가요.</p>
         <button class="wide" data-act="leave">그만두고 내 공장으로</button>`;
     } else if (state === 'guest') {
-      html = `<h3>🚪 ${escapeHtml(net.hostName)}의 방 · ${net.players}명</h3>${members}${name}${net.reachable ? invite : ''}
+      html = `<h3>${iconHtml('door')}${escapeHtml(net.hostName)}의 방 · ${net.players}명</h3>${members}${name}${net.reachable ? invite : ''}
         <button class="wide" data-act="leave">나가기 (내 공장으로)</button>`;
     } else if (state === 'wait') {
-      html = `<h3>⏳ 방장을 기다리는 중</h3>
+      html = `<h3>${iconHtml('hourglass')}방장을 기다리는 중</h3>
         <p class="hint">방장이 새로고침했거나 연결이 잠깐 끊겼어요. 방이 다시 열리면 저절로 들어가요.</p>
         <button class="wide" data-act="leave">기다리지 않고 내 공장으로</button>`;
     } else if (state === 'open') {
       // 방장 버전이 다르면 미리 알려 준다 (빌드까지 다른 건 참가를 눌러야 서버가 알려 준다)
       const other = net.roomVersion !== VERSION;
-      html = `<h3>🚪 ${escapeHtml(net.hostName)}의 방 · ${net.roster.length}명</h3>${members}${name}
+      html = `<h3>${iconHtml('door')}${escapeHtml(net.hostName)}의 방 · ${net.roster.length}명</h3>${members}${name}
         ${
           other
             ? `<div class="warn">방장 버전 ${escapeHtml(net.roomVersion || '옛 버전')}, 내 버전 ${VERSION}. 버전이 같아야 같이 할 수 있어요</div>`
@@ -998,7 +999,7 @@ export class UI {
         }
         <p class="hint">참가하면 방장의 공장에서 같이 지어요. 내 공장은 저장된 채로 남아 있다가, 나오면 돌아와요.</p>${byAddress}`;
     } else if (net.desktop) {
-      html = `<h3>👥 같이 하기</h3>${lan}
+      html = `<h3>${iconHtml('people')}같이 하기</h3>${lan}
         <p class="hint">참가하면 방장의 공장에서 같이 지어요. 내 공장은 저장된 채로 남아 있다가, 나오면 돌아와요.
           방을 만들면 지금 내 공장에 다른 사람들이 들어와요. 허브 재고와 연구는 모두 함께 써요.</p>
         ${name}<button class="primary wide" data-act="create">방 만들기</button>
@@ -1006,7 +1007,7 @@ export class UI {
         <button class="wide" data-act="solo">혼자 하기</button>
         ${net.reachable ? '' : invite}`;
     } else {
-      html = `<h3>👥 같이 하기</h3>
+      html = `<h3>${iconHtml('people')}같이 하기</h3>
         <p class="hint">방을 만들면 지금 내 공장에 다른 사람들이 들어와 같이 지어요. 허브 재고와 연구는 모두 함께 써요.</p>
         ${name}<button class="primary wide" data-act="create">방 만들기</button>
         ${byAddress}
@@ -1051,7 +1052,8 @@ export class UI {
   private updateSound(): void {
     const off = sound.muted || (sound.volume <= 0 && sound.musicVolume <= 0);
     const btn = $('btn-sound');
-    btn.textContent = off ? '🔇 소리 꺼짐' : '🔊 소리 켜짐';
+    setLabel(btn, off ? '소리 꺼짐' : '소리 켜짐');
+    setIcon(btn, off ? 'sound-off' : 'sound-on');
     btn.classList.toggle('off', off);
     const pct = Math.round(sound.volume * 100);
     $<HTMLInputElement>('sound-volume').value = String(pct);
@@ -1209,8 +1211,9 @@ export class UI {
   private updateSave(canSave: boolean): void {
     const btn = $<HTMLButtonElement>('btn-save');
     const s = this.game.saveState;
-    const [text, cls] = !canSave ? ['저장 안 함', ''] : !s.ok ? ['⚠ 저장 실패', 'bad'] : s.dirty ? ['● 저장 필요', 'warn'] : ['✓ 저장됨', 'good'];
-    if (btn.textContent !== text) btn.textContent = text;
+    const [text, cls] = !canSave ? ['저장 안 함', ''] : !s.ok ? ['저장 실패', 'bad'] : s.dirty ? ['저장 필요', 'warn'] : ['저장됨', 'good'];
+    setLabel(btn, text);
+    setIcon(btn, cls === 'bad' ? 'save-bad' : cls === 'warn' ? 'save-dirty' : 'save');
     btn.disabled = !canSave;
     btn.classList.toggle('bad', cls === 'bad');
     btn.classList.toggle('warn', cls === 'warn');
@@ -1229,7 +1232,7 @@ export class UI {
     const html = `<h3>${dayNumber(w.time)}일차 · ${dayPart(w.time)}</h3>
       <div class="row"><span>지난 게임 시간</span><b class="num">${hms}</b></div>
       <div class="row"><span>하루 길이</span><b>${DAY_SEC / 60}분</b></div>
-      <div class="row"><span>날씨</span><b>${sky.icon}</b></div>
+      <div class="row"><span>날씨</span><b>${iconHtml(skyIcon(sky.icon)) || sky.icon}</b></div>
       <p class="muted">${sky.text}</p>
       ${
         w.regional
@@ -1318,16 +1321,18 @@ export class UI {
     const time = `${Math.floor(t / 60)}:${String(t % 60).padStart(2, '0')}`;
     // 하늘 아이콘 (낮·해 질 녘·밤·흐림·비). 태양광·풍력 출력이 하늘을 따르니 화면 효과를 꺼도 보인다
     const sky = w.regional ? this.regionalSky(w) : skyLabel(w.seed, w.time);
-    const clock = `${sky.icon} ${dayNumber(w.time)}일차 · ${dayPart(w.time)}`;
-    if ($('clock').textContent !== clock) $('clock').textContent = clock;
+    // 하늘은 픽셀 아이콘으로 (모르는 하늘이면 이모지를 글자 앞에 그대로)
+    const skyIco = skyIcon(sky.icon);
+    setIcon($('clock'), skyIco);
+    setLabel($('clock'), `${skyIco ? '' : sky.icon + ' '}${dayNumber(w.time)}일차 · ${dayPart(w.time)}`);
     $('clock').title = `${sky.text} · 게임 시간 ${time} · 누르면 자세히`;
     this.updateTimePop(w);
     // 정지 중이면 "계속"과 정지 표시만. 직전 배속은 기억하되 도는 것처럼 표시하지 않는다
     const paused = this.game.speed === 0;
     const pause = $('btn-pause');
     pause.classList.toggle('active', paused);
-    const pauseHtml = paused ? '▶ 계속' : '⏸ 정지';
-    if (pause.innerHTML !== pauseHtml) pause.innerHTML = pauseHtml;
+    setLabel(pause, paused ? '계속' : '정지');
+    setIcon(pause, paused ? 'play' : 'pause');
     pause.title = paused ? `계속 (Space) — ${this.game.lastSpeed}×로` : '정지 (Space)';
     document.querySelectorAll<HTMLButtonElement>('#topbar [data-speed]').forEach((btn) => {
       btn.classList.toggle('active', Number(btn.dataset.speed) === this.game.speed);
@@ -1529,7 +1534,7 @@ export class UI {
         const solar = Math.round(SOLAR_POWER * sun * TERRAIN[t].solar * fx.solar);
         const wind = Math.round(fx.wind * TERRAIN[t].wind);
         const cell = (s: string) => (t === here ? `<b>${s}</b>` : s);
-        return `<tr><td>${cell(TERRAIN[t].name)}</td><td>${LOCAL_WEATHER_ICON[lw.kind]} ${cell(LOCAL_WEATHER_LABEL[lw.kind])}</td><td>${solar}</td><td>${wind}</td><td>×${fx.truck.toFixed(2)}</td></tr>`;
+        return `<tr><td>${cell(TERRAIN[t].name)}</td><td>${iconHtml(skyIcon(LOCAL_WEATHER_ICON[lw.kind])) || LOCAL_WEATHER_ICON[lw.kind] + ' '}${cell(LOCAL_WEATHER_LABEL[lw.kind])}</td><td>${solar}</td><td>${wind}</td><td>×${fx.truck.toFixed(2)}</td></tr>`;
       })
       .join('');
     return `<table class="stats-table"><thead><tr><th>땅</th><th>날씨</th><th>태양광 kW</th><th>풍력 kW</th><th>트럭</th></tr></thead><tbody>${rows}</tbody></table>

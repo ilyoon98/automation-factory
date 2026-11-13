@@ -299,22 +299,13 @@ export class UI {
       () => game.getWorld(),
       (x, y) => game.focus(x, y),
     );
-    // 어디서든 아이템([data-item])을 누르면 도감에서 그 아이템을 연다
+    // 목표, 재고, 도감에서 같은 클릭으로 상세 페이지를 연다.
     document.addEventListener('click', (e) => {
-      const el = (e.target as HTMLElement).closest<HTMLElement>('[data-item], [data-building], [data-deposit]');
+      const el = (e.target as HTMLElement).closest<HTMLElement>('[data-item], [data-building], [data-deposit], [data-goal-tech]');
       if (el?.dataset.item) this.codex.open({ item: el.dataset.item as ItemId });
       else if (el?.dataset.building) this.codex.open({ building: el.dataset.building as BuildingType });
       else if (el?.dataset.deposit) this.codex.open({ deposit: el.dataset.deposit as DepositId });
-    });
-    // 아래 툴바의 건물을 우클릭하면 도감에서 그 건물을 연다
-    document.addEventListener('contextmenu', (e) => {
-      const el = (e.target as HTMLElement).closest<HTMLElement>('[data-codex-building], [data-codex-item], [data-codex-tech]');
-      if (!el) return;
-      e.preventDefault();
-      // 목표 확인 항목의 아이콘: 아이템은 도감, 연구는 연구 창
-      if (el.dataset.codexItem) this.codex.open({ item: el.dataset.codexItem as ItemId });
-      else if (el.dataset.codexTech) this.openResearchTech(el.dataset.codexTech);
-      else this.codex.open({ building: el.dataset.codexBuilding as BuildingType });
+      else if (el?.dataset.goalTech) this.openResearchTech(el.dataset.goalTech);
     });
 
     document.querySelectorAll<HTMLButtonElement>('#topbar [data-speed]').forEach((btn) =>
@@ -1116,13 +1107,12 @@ export class UI {
     this.update();
   }
 
-  /** 이 건물을 여는 연구를 연구 창에서 그 탭으로 열어 반짝인다 (선행이 남았으면 카드에 선행이 보인다) */
-  /** 목표 확인 항목 앞 아이콘: 만들 아이템(우클릭 = 도감에서 얻는 법) · 연구(우클릭 = 연구 창의 그 연구) */
-  private checkIcon(w: World, hint?: GoalHint): string {
-    if (hint?.item) return `<span class="goal-ico" data-codex-item="${hint.item}" title="${ITEMS[hint.item].name} · 우클릭: 도감">${itemIcon(hint.item)}</span>`;
+  /** 아이콘과 항목 이름을 함께 누르면 도감이나 해당 연구를 연다. */
+  private checkLabel(w: World, label: string, hint?: GoalHint): string {
+    if (hint?.item) return `<button type="button" class="goal-link" data-item="${hint.item}" title="${ITEMS[hint.item].name} 도감 열기">${itemIcon(hint.item)}${label}</button>`;
     const t = hint?.tech ? w.tech(hint.tech) : undefined;
-    if (t) return `<span class="goal-ico" data-codex-tech="${t.id}" title="${t.name} · 우클릭: 연구">${techIcon(t)}</span>`;
-    return '';
+    if (t) return `<button type="button" class="goal-link" data-goal-tech="${t.id}" title="${t.name} 연구 열기">${techIcon(t)}${label}</button>`;
+    return label;
   }
 
   /** 연구 창을 그 연구의 탭으로 열어 반짝인다 */
@@ -1722,7 +1712,7 @@ export class UI {
         const key = `${g.id}-${i}`;
         if (same && ok && this.checkSeen.get(key) === false) this.checkDoneAt.set(key, now);
         this.checkSeen.set(key, ok);
-        return `<li class="${ok ? 'done' : ''}"${fresh(this.checkDoneAt.get(key), 700, now)}><span class="mark">${ok ? '✓' : '·'}</span><span class="lbl">${this.checkIcon(w, hint)}${label}</span><b>${Math.min(have, need).toLocaleString()}/${need.toLocaleString()}</b><span class="mini"><i data-bar="chk-${g.id}-${i}" style="width:${pct}%"></i></span></li>`;
+        return `<li class="${ok ? 'done' : ''}"${fresh(this.checkDoneAt.get(key), 700, now)}><span class="mark">${ok ? '✓' : '·'}</span><span class="lbl">${this.checkLabel(w, label, hint)}</span><b>${Math.min(have, need).toLocaleString()}/${need.toLocaleString()}</b><span class="mini"><i data-bar="chk-${g.id}-${i}" style="width:${pct}%"></i></span></li>`;
       })
       .join('');
     // 이 목표의 자원이 아직 안 열린 땅에 있으면: 지역 과제부터 (그때는 지역 과제를 펼쳐 둔다)
@@ -1738,10 +1728,11 @@ export class UI {
       </div>
       ${this.regionHtml(w, !!need)}${this.territoryTaskHtml(w)}${this.elevatorHtml(w)}${this.trackedAchHtml(w)}`;
     // 선택 도전 목록을 펼친 동안 다시 그리면 목록이 바로 닫힌다: 고르는 중이면 그대로 둔다
-    if (html === this.guideHtml || $('guide').contains(document.activeElement) && document.activeElement instanceof HTMLSelectElement) return;
+    const guide = $('guide');
+    if (html === this.guideHtml || guide.querySelector('.goal-link:active') || guide.contains(document.activeElement) && document.activeElement instanceof HTMLSelectElement) return;
     this.guideHtml = html;
-    $('guide').innerHTML = html;
-    tweenBars($('guide'));
+    replacePanel(guide, html, g.id);
+    tweenBars(guide);
   }
   private guideHtml = '';
   /** 목표 확인 항목: 지난번에 채워졌는지 · 막 채워진 시각 (도장 찍히는 움직임) */
@@ -1773,7 +1764,7 @@ export class UI {
       if (c.id !== open) return head;
       const detail = c
         .checks(w)
-        .map(([label, have, need, hint]) => `<li class="sub ${have >= need ? 'done' : ''}"><span class="mark">${have >= need ? '✓' : '·'}</span>${this.checkIcon(w, hint)}${label} <b>${Math.min(have, need).toLocaleString()}/${need.toLocaleString()}</b></li>`)
+        .map(([label, have, need, hint]) => `<li class="sub ${have >= need ? 'done' : ''}"><span class="mark">${have >= need ? '✓' : '·'}</span>${this.checkLabel(w, label, hint)} <b>${Math.min(have, need).toLocaleString()}/${need.toLocaleString()}</b></li>`)
         .join('');
       return `${head}<li class="sub muted">${c.hint}</li>${detail}`;
     }).join('');
@@ -1840,7 +1831,7 @@ export class UI {
     if (!t) return `${head}<p class="muted">산지 과제를 모두 이뤘어요.</p>`;
     const rows = t
       .checks(w)
-      .map(([label, have, need, hint]) => `<li class="sub ${have >= need ? 'done' : ''}"><span class="mark">${have >= need ? '✓' : '·'}</span>${this.checkIcon(w, hint)}${label} <b>${Math.min(have, need).toLocaleString()}/${need.toLocaleString()}</b></li>`)
+      .map(([label, have, need, hint]) => `<li class="sub ${have >= need ? 'done' : ''}"><span class="mark">${have >= need ? '✓' : '·'}</span>${this.checkLabel(w, label, hint)} <b>${Math.min(have, need).toLocaleString()}/${need.toLocaleString()}</b></li>`)
       .join('');
     const reward = open < w.territories.length ? `<p class="reward">보상: ${mapIcon()} 닫힌 산지 1곳이 열려요</p>` : '';
     return `${head}<ul class="steps chals"><li class="chal"><span class="mark">▾</span>${t.title}</li><li class="sub muted">${t.hint}</li>${rows}</ul>${reward}`;

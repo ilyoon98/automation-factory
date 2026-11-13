@@ -15,6 +15,7 @@ import {
 import { copyText } from './clipboard';
 import { ITEMS } from '../data/items';
 import { buildingIconUrl, itemIcon, lockIcon, techIcon, truckIconUrl } from './icons';
+import { iconHtml } from './pixel-icons';
 
 /** 건물 탭들 + 맨 끝 청사진 탭 (K) */
 type Tab = Category | 'blueprints';
@@ -221,11 +222,12 @@ export class Toolbar {
   private reveal(type: BuildingType): void {
     const btn = this.buttons.get(type);
     const palette = document.getElementById('palette');
-    if (!btn || !palette) return;
+    const card = btn?.parentElement;
+    if (!card || !palette) return;
     const pad = 24; // 가장자리 흐림·넘기기 단추에 가리지 않게
     // 카드·스크롤을 같은 UI 논리 좌표로 비교한다 (CSS zoom 배율과 무관).
-    const left = btn.offsetLeft;
-    const right = left + btn.offsetWidth;
+    const left = card.offsetLeft;
+    const right = left + card.offsetWidth;
     let to = palette.scrollLeft;
     if (left - pad < to) to = left - pad;
     else if (right + pad > to + palette.clientWidth) to = right + pad - palette.clientWidth;
@@ -297,8 +299,7 @@ export class Toolbar {
     tabs.appendChild(bp);
     const hint = document.createElement('span');
     hint.className = 'hint';
-    // 탭 글자 옆에 단축키가 이미 있으니 Tab과 우클릭만
-    hint.innerHTML = `<kbd>Tab</kbd>: 탭 바꾸기 · 우클릭: 도감`;
+    hint.innerHTML = `<kbd>Tab</kbd>: 탭 바꾸기`;
     tabs.appendChild(hint);
   }
 
@@ -317,9 +318,10 @@ export class Toolbar {
     const items = categoryItems(this.category, this.regional);
     items.forEach((type, i) => {
       const def = BUILDINGS[type];
+      const card = document.createElement('div');
+      card.className = 'pal-slot';
       const btn = document.createElement('button');
       btn.className = 'pal';
-      btn.dataset.codexBuilding = type; // 우클릭: 도감
       // 비용은 늘 보이게 (아이콘 + 개수). 상태 띠: 건설 가능 · 연구 잠김 · 재료 부족 (update에서 채운다)
       btn.innerHTML = `
         <span class="key">${i + 1}</span>
@@ -327,14 +329,22 @@ export class Toolbar {
         <span class="name">${def.name}</span>
         <span class="cost"></span>
         <span class="state"></span>`;
-      btn.title = `${def.name} · ${def.size}×${def.size}${def.power ? ` · 전력 ${def.power}kW` : ''}\n${def.description}\n비용: ${def.cost.map((c) => `${ITEMS[c.item].name} ${c.count}`).join(', ')}\n우클릭: 도감`;
+      btn.title = `${def.name} · ${def.size}×${def.size}${def.power ? ` · 전력 ${def.power}kW` : ''}\n${def.description}\n비용: ${def.cost.map((c) => `${ITEMS[c.item].name} ${c.count}`).join(', ')}`;
       btn.addEventListener('click', () => {
         this.input.setTool(type);
         this.reveal(type);
         // 연구로 잠긴 건물을 누르면 그 건물을 여는 연구를 바로 보여 준다
         if (this.input.blocked?.type === type && this.input.blocked.why === 'locked') this.onLockedClick?.(type);
       });
-      palette.appendChild(btn);
+      const codex = document.createElement('button');
+      codex.type = 'button';
+      codex.className = 'pal-codex';
+      codex.dataset.building = type;
+      codex.title = `${def.name} 도감 열기`;
+      codex.setAttribute('aria-label', codex.title);
+      codex.innerHTML = iconHtml('codex');
+      card.append(btn, codex);
+      palette.appendChild(card);
       this.buttons.set(type, btn);
     });
     if (this.world) this.paintCards(this.world);

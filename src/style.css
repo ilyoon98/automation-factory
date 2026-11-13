@@ -1068,6 +1068,30 @@ body[data-top='narrow'] #tabs {
   width: 32px;
   height: 32px;
 }
+.pal-slot {
+  position: relative;
+  display: grid;
+  flex: 1 0 auto;
+}
+.pal-slot .pal {
+  padding-right: 28px;
+}
+.pal-slot .state {
+  margin-right: -28px;
+}
+.pal-codex {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+}
+.pal-codex .px-ico {
+  margin: 0;
+}
 .pal .name {
   font-weight: 700;
   font-size: 12px;
@@ -1945,13 +1969,25 @@ html.reduced-effects #toast { transition: none; }
   cursor: pointer;
   margin: 0;
 }
-/* 목표 확인 항목 앞 아이콘 (우클릭: 도감·연구) */
-#guide .goal-ico {
-  cursor: context-menu;
-  margin-right: 3px;
+/* 목표 항목을 누르면 도감 또는 연구를 연다. */
+#guide .goal-link {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+  color: inherit;
+  text-align: left;
+  max-width: 100%;
 }
-#guide .goal-ico .icon {
-  image-rendering: pixelated;
+#guide .goal-link:hover,
+#guide .goal-link:focus-visible {
+  background: var(--hi);
+  text-decoration: underline;
+}
+#guide .goal-link:focus-visible,
+.pal-codex:focus-visible {
+  outline: 2px solid var(--ink);
+  outline-offset: 1px;
 }
 #guide .chals .chal {
   cursor: pointer;
@@ -2420,16 +2456,16 @@ html:not(.reduced-effects) #info:not([hidden]) { animation: ui-slide 0.12s steps
 /* 버튼은 눌린 동안 한 칸 내려앉는다 */
 html:not(.reduced-effects) button:active:not(:disabled) { transform: translateY(1px); }
 /* 툴바: 탭을 바꾸면 카드가 차례로 올라오고, 고른 카드는 한 번 튄다 */
-html:not(.reduced-effects) #palette .pal { animation: card-in 0.16s steps(3) both; }
-html:not(.reduced-effects) #palette .pal:nth-child(2) { animation-delay: 20ms; }
-html:not(.reduced-effects) #palette .pal:nth-child(3) { animation-delay: 40ms; }
-html:not(.reduced-effects) #palette .pal:nth-child(4) { animation-delay: 60ms; }
-html:not(.reduced-effects) #palette .pal:nth-child(5) { animation-delay: 80ms; }
-html:not(.reduced-effects) #palette .pal:nth-child(6) { animation-delay: 100ms; }
-html:not(.reduced-effects) #palette .pal:nth-child(7) { animation-delay: 120ms; }
-html:not(.reduced-effects) #palette .pal:nth-child(8) { animation-delay: 140ms; }
-html:not(.reduced-effects) #palette .pal:nth-child(9) { animation-delay: 160ms; }
-html:not(.reduced-effects) #palette .pal:nth-child(10) { animation-delay: 180ms; }
+html:not(.reduced-effects) #palette > :is(.pal, .pal-slot) { animation: card-in 0.16s steps(3) both; }
+html:not(.reduced-effects) #palette > :nth-child(2) { animation-delay: 20ms; }
+html:not(.reduced-effects) #palette > :nth-child(3) { animation-delay: 40ms; }
+html:not(.reduced-effects) #palette > :nth-child(4) { animation-delay: 60ms; }
+html:not(.reduced-effects) #palette > :nth-child(5) { animation-delay: 80ms; }
+html:not(.reduced-effects) #palette > :nth-child(6) { animation-delay: 100ms; }
+html:not(.reduced-effects) #palette > :nth-child(7) { animation-delay: 120ms; }
+html:not(.reduced-effects) #palette > :nth-child(8) { animation-delay: 140ms; }
+html:not(.reduced-effects) #palette > :nth-child(9) { animation-delay: 160ms; }
+html:not(.reduced-effects) #palette > :nth-child(10) { animation-delay: 180ms; }
 html:not(.reduced-effects) #palette .pal.active { animation: card-pick 0.24s steps(4); }
 html:not(.reduced-effects) #tabs .tab.active { animation: card-pick 0.2s steps(3); }
 /* 허브 재고: 늘면 초록, 줄면 빨강으로 잠깐 */

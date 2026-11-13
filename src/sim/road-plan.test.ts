@@ -5,7 +5,7 @@ import { applyCommand } from './commands';
 import { DX, DY } from './dir';
 import { buildRoad, planRoad, type RoadPlan } from './road-plan';
 import { World } from './world';
-import { MAIN_GOAL_BY_ID } from './goals';
+import { MAIN_GOAL_BY_ID, goalMet } from './goals';
 
 function setup(bx = 20, by = 5, width = 32, height = 24) {
   const w = new World(width, height); w.rules = 'regional-v1'; w.createHub(0, 0);
@@ -191,8 +191,12 @@ describe('정류장 사이 도로 계획', () => {
     w.setStops(v, [{ id: a.id, act: 'load' }, { id: b.id, act: 'unload' }]);
     for (let tick = 0; tick < 3600 && w.stats.delivered < 20; tick++) w.tick();
     expect(w.stats.delivered).toBe(20);
-    const checks = MAIN_GOAL_BY_ID.MG10.checks(w);
-    expect(checks[1][1]).toBe(different ? 20 : 0);
-    expect(checks[0][1]).toBe(0); // 허브 재고나 배송 자체는 주석판 생산이 아니다.
+    expect(w.stats.itemDelivered.get('tin-ore') ?? 0).toBe(different ? 12 : 0);
+    expect(w.stats.itemDelivered.get('tin-plate') ?? 0).toBe(different ? 8 : 0);
+    expect(w.stats.deliveredTin).toBe(true);
+    expect(goalMet(w, MAIN_GOAL_BY_ID.MG10)).toBe(false);
+    w.stats.made.set('tin-plate', 20);
+    const loaded = World.deserialize(w.serialize());
+    expect(goalMet(loaded, MAIN_GOAL_BY_ID.MG10)).toBe(true);
   });
 });

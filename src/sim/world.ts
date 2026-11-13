@@ -267,6 +267,8 @@ export interface FactoryStats {
   /** 트럭이 실은 곳이 아닌 정류장에 내린 화물, 그중 정기편 계획 운송 */
   delivered: number;
   scheduledDelivered: number;
+  /** 주석광석이나 주석판을 실은 곳과 다른 정류장에 내린 적이 있는지 */
+  deliveredTin: boolean;
   /** 다른 구역으로 배송한 품목별 개수 */
   itemDelivered: Map<ItemId, number>;
   /** 구역 사이 배송 "출발>도착": 개수와 품목 */
@@ -297,6 +299,7 @@ export function newStats(): FactoryStats {
     formalWork: 0,
     delivered: 0,
     scheduledDelivered: 0,
+    deliveredTin: false,
     itemDelivered: new Map(),
     pairs: new Map(),
     zoneMade: new Map(),
@@ -3913,6 +3916,7 @@ export class World {
     this.credit(this.contribKey(v.owner, v.ownerKey), 'hauled', 1);
     const s = this.stats;
     s.delivered++;
+    if (item === 'tin-ore' || item === 'tin-plate') s.deliveredTin = true;
     if (this.planned(v) && v.period > 0) s.scheduledDelivered++;
     const to = this.siteId(st);
     if (v.fromZone && to && v.fromZone !== to) {
@@ -5918,6 +5922,7 @@ export class World {
     const st = this.stats;
     h.num(this.ach.digest());
     h.num(st.genWork).num(st.formalWork).num(st.delivered).num(st.scheduledDelivered).num(st.projectDelivered).num(st.projectOn ? 1 : 0).num(this.goals.size).num(this.challenges.size).num(st.geoWork).num(st.linkWork).num(st.nightStorage).num(st.treesMatured);
+    if (st.deliveredTin) h.str('delivered-tin');
     for (const [item, n] of st.made) h.str(item).num(n);
     for (const [k, p] of st.pairs) h.str(k).num(p.n);
     for (const p of this.piles) h.num(p.tile).str(p.item).num(p.n).num(p.ev);
@@ -6313,6 +6318,7 @@ function saveStats(s: FactoryStats) {
     formalWork: s.formalWork,
     delivered: s.delivered,
     scheduledDelivered: s.scheduledDelivered,
+    deliveredTin: s.deliveredTin,
     itemDelivered: [...s.itemDelivered],
     pairs: [...s.pairs].map(([k, p]): [string, number, ItemId[]] => [k, p.n, [...p.items]]),
     zoneMade: [...s.zoneMade],
@@ -6332,6 +6338,7 @@ function saveStats(s: FactoryStats) {
 }
 
 function loadStats(d: Partial<ReturnType<typeof saveStats>>): FactoryStats {
+  const itemDelivered = new Map(d.itemDelivered ?? []);
   return {
     made: new Map(d.made ?? []),
     hubIn: new Map(d.hubIn ?? []),
@@ -6339,7 +6346,8 @@ function loadStats(d: Partial<ReturnType<typeof saveStats>>): FactoryStats {
     formalWork: d.formalWork ?? 0,
     delivered: d.delivered ?? 0,
     scheduledDelivered: d.scheduledDelivered ?? 0,
-    itemDelivered: new Map(d.itemDelivered ?? []),
+    deliveredTin: d.deliveredTin ?? ((itemDelivered.get('tin-ore') ?? 0) + (itemDelivered.get('tin-plate') ?? 0) > 0),
+    itemDelivered,
     pairs: new Map((d.pairs ?? []).map(([k, n, items]) => [k, { n, items: new Set(items) }])),
     zoneMade: new Map(d.zoneMade ?? []),
     zoneWork: new Map(d.zoneWork ?? []),

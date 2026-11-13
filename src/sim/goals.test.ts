@@ -62,6 +62,22 @@ describe('메인 목표', () => {
     expect(legacy.goals.size).toBe(0);
   });
 
+  it('기존 저장의 주석 배송을 인정하며, 주석 생산만으로는 배송 항목을 채우지 않는다', () => {
+    const w = regional();
+    for (const g of MAIN_GOALS.slice(0, 9)) w.goals.add(g.id);
+    w.stats.made.set('tin-plate', 20);
+    w.stats.delivered = 20; // 다른 품목의 배송 이력
+    run(w, 1);
+    expect(w.goals.has('MG10')).toBe(false);
+    w.stats.itemDelivered.set('tin-plate', 1);
+    const save = JSON.parse(JSON.stringify(w.serialize()));
+    delete save.stats.deliveredTin; // 0.8.5 저장은 거점 간 주석 배송만 품목별로 기록한다.
+    const loaded = World.deserialize(save);
+    run(loaded, 1);
+    expect(loaded.goals.has('MG10')).toBe(true);
+    expect(currentGoal(loaded)?.id).toBe('MG11');
+  });
+
   it('채굴기→제련로→허브로 철판을 바로 보내도 첫 목표와 다음 철판 목표를 인정한다', () => {
     const w = regional();
     for (let dy = 0; dy < 2; dy++) for (let dx = 0; dx < 2; dx++) w.setResource(10 + dx, 10 + dy, 'iron-ore', 1000);
